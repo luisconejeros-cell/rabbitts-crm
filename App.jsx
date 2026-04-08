@@ -210,9 +210,11 @@ export default function App() {
       setUsers(us)
       const { data: ls } = await supabase.from('crm_leads').select('*').order('fecha', {ascending:false})
       setLeads(ls || [])
-      // Load custom stages
-      const { data: st } = await supabase.from('crm_settings').select('value').eq('key','stages').single()
-      if (st?.value) setStages(st.value)
+      // Load custom stages (safe — table may not exist yet)
+      try {
+        const { data: st } = await supabase.from('crm_settings').select('value').eq('key','stages').single()
+        if (st?.value) setStages(st.value)
+      } catch(_) {}
       setDbReady(true)
     } catch (e) {
       console.warn('Supabase not configured, using localStorage fallback')
@@ -594,7 +596,7 @@ export default function App() {
                       <span style={{fontSize:11,color:'#9ca3af',marginLeft:'auto'}}>{cols.length}</span>
                     </div>
                     <div style={{background:st.bg,borderRadius:12,padding:8,minHeight:60,border:'1px solid '+st.dot+'44'}}>
-                      {cols.map(l=><KCard key={l.id} lead={l} users={users} isAdmin={isAdmin} isPartner={isPartner} onOpen={()=>{setSel(l);setModal('lead')}} onMove={reqMove}/>)}
+                      {cols.map(l=><KCard key={l.id} lead={l} users={users} isAdmin={isAdmin} isPartner={isPartner} onOpen={()=>{setSel(l);setModal('lead')}} onMove={reqMove} stages={stages}/>)}
                       {cols.length===0&&<div style={{fontSize:11,color:'#9ca3af',textAlign:'center',padding:'14px 0'}}>—</div>}
                     </div>
                   </div>
@@ -970,7 +972,7 @@ function LeadForm({data, onChange, onSubmit}) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KCard({lead, users, isAdmin, isPartner, onOpen, onMove}) {
+function KCard({lead, users, isAdmin, isPartner, onOpen, onMove, stages=[]}) {
   const si = stages.findIndex(x=>x.id===lead.stage)
   const ag = (users||[]).find(u=>u.id===lead.assigned_to)
   const cal = CAL[lead.calificacion]
