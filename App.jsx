@@ -152,6 +152,8 @@ export default function App() {
   const [newStage, setNewStage] = useState({label:'', colorIdx:0})
   const [editStageId, setEditStageId] = useState(null)
   const [editStageLabel, setEditStageLabel] = useState('')
+  const [editLead, setEditLead] = useState(null)
+  const [editUser, setEditUser] = useState(null)
 
   useEffect(() => { initDB() }, [])
 
@@ -462,6 +464,22 @@ export default function App() {
     }
   }
 
+  async function updateLeadData(lid, fields) {
+    const ls = leads.map(l => l.id===lid ? {...l,...fields} : l)
+    await saveLeads(ls)
+    if (sel?.id===lid) setSel(ls.find(l=>l.id===lid))
+    setEditLead(null)
+    msg('Lead actualizado')
+  }
+
+  async function updateUserData(uid, fields) {
+    const us = users.map(u => u.id===uid ? {...u,...fields} : u)
+    await saveUsers(us)
+    if (me.id===uid) setMe(m=>({...m,...fields}))
+    setEditUser(null)
+    msg('Usuario actualizado')
+  }
+
   async function deleteLead(id) {
     if (dbReady) await supabase.from('crm_leads').delete().eq('id', id)
     await saveLeads(leads.filter(l => l.id!==id))
@@ -720,7 +738,10 @@ export default function App() {
                     </div>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10}}>
                       <span style={{fontSize:12,color:B.mid,fontWeight:500}}>{uL.length} leads</span>
-                      {u.id!==me.id && <button onClick={()=>deleteUser(u.id)} style={{...sty.btnD,fontSize:11,padding:'3px 8px'}}>Eliminar</button>}
+                      <div style={{display:'flex',gap:6}}>
+                        <button onClick={()=>setEditUser({...u})} style={{...sty.btnO,fontSize:11,padding:'3px 10px'}}>Editar</button>
+                        {u.id!==me.id && <button onClick={()=>deleteUser(u.id)} style={{...sty.btnD,fontSize:11,padding:'3px 8px'}}>Eliminar</button>}
+                      </div>
                     </div>
                   </div>
                 )
@@ -1263,7 +1284,12 @@ export default function App() {
                 {(users||[]).filter(u=>u.role==='agent').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </Fld>}
-            {isAdmin && <button onClick={()=>deleteLead(sel.id)} style={{...sty.btnD,width:'100%',marginBottom:14}}>Eliminar lead</button>}
+            {!isPartner && (
+              <div style={{display:'flex',gap:8,marginBottom:14}}>
+                <button onClick={()=>setEditLead({nombre:sel.nombre,telefono:sel.telefono,email:sel.email,renta:sel.renta,resumen:sel.resumen})} style={{...sty.btnO,flex:1}}>Editar datos</button>
+                {isAdmin && <button onClick={()=>deleteLead(sel.id)} style={{...sty.btnD,flex:1}}>Eliminar lead</button>}
+              </div>
+            )}
           </>}
           {isPartner && <div style={{padding:'10px 12px',background:B.light,borderRadius:8,fontSize:12,color:B.primary,marginBottom:12}}>Vista de solo lectura — socio comercial</div>}
           <HR/>
@@ -1283,6 +1309,82 @@ export default function App() {
             <input value={comment} onChange={e=>setComment(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addComment(sel.id)} placeholder="Escribe un comentario..." style={{...sty.inp,flex:1}}/>
             <button onClick={()=>addComment(sel.id)} disabled={!comment.trim()} style={{...sty.btnP,opacity:!comment.trim()?0.5:1}}>Enviar</button>
           </div>}
+        </Modal>
+      )}
+
+
+      {/* EDITAR LEAD */}
+      {editLead && sel && (
+        <Modal title={'Editar — '+sel.nombre} onClose={()=>setEditLead(null)} wide>
+          <Fld label="Nombre completo *">
+            <input value={editLead.nombre} onChange={e=>setEditLead(p=>({...p,nombre:e.target.value}))} style={sty.inp} placeholder="Nombre completo"/>
+          </Fld>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <Fld label="Teléfono">
+              <input value={editLead.telefono} onChange={e=>setEditLead(p=>({...p,telefono:e.target.value}))} style={sty.inp} placeholder="+56 9 ..."/>
+            </Fld>
+            <Fld label="Email">
+              <input value={editLead.email} onChange={e=>setEditLead(p=>({...p,email:e.target.value}))} style={sty.inp} placeholder="email@dominio.com"/>
+            </Fld>
+          </div>
+          <Fld label="Renta / Presupuesto">
+            <input value={editLead.renta} onChange={e=>setEditLead(p=>({...p,renta:e.target.value}))} style={sty.inp} placeholder="$1.500.000 CLP"/>
+          </Fld>
+          <Fld label="Resumen">
+            <textarea value={editLead.resumen} onChange={e=>setEditLead(p=>({...p,resumen:e.target.value}))} style={{...sty.inp,minHeight:80,resize:'vertical'}} placeholder="Resumen del cliente..."/>
+          </Fld>
+          <div style={{display:'flex',gap:8,marginTop:4}}>
+            <button onClick={()=>updateLeadData(sel.id,editLead)} disabled={!editLead.nombre?.trim()} style={{...sty.btnP,flex:1,opacity:!editLead.nombre?.trim()?0.5:1}}>Guardar cambios</button>
+            <button onClick={()=>setEditLead(null)} style={{...sty.btn,flex:1}}>Cancelar</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* EDITAR USUARIO */}
+      {editUser && (
+        <Modal title={'Editar — '+editUser.name} onClose={()=>setEditUser(null)} wide>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <Fld label="Nombre completo *">
+              <input value={editUser.name} onChange={e=>setEditUser(p=>({...p,name:e.target.value}))} style={sty.inp} placeholder="Nombre completo"/>
+            </Fld>
+            <Fld label="RUT">
+              <input value={editUser.rut||''} onChange={e=>setEditUser(p=>({...p,rut:e.target.value}))} style={sty.inp} placeholder="12.345.678-9"/>
+            </Fld>
+            <Fld label="Teléfono">
+              <input value={editUser.phone||''} onChange={e=>setEditUser(p=>({...p,phone:e.target.value}))} style={sty.inp} placeholder="+56 9 ..."/>
+            </Fld>
+            <Fld label="Email">
+              <input value={editUser.email||''} onChange={e=>setEditUser(p=>({...p,email:e.target.value}))} style={sty.inp} placeholder="email@dominio.com"/>
+            </Fld>
+            <Fld label="Usuario (login)">
+              <input value={editUser.username||''} onChange={e=>setEditUser(p=>({...p,username:e.target.value.toLowerCase()}))} style={sty.inp} placeholder="usuario.login"/>
+            </Fld>
+            <Fld label="Nuevo PIN (dejar vacío para no cambiar)">
+              <input type="password" value={editUser._newPin||''} onChange={e=>setEditUser(p=>({...p,_newPin:e.target.value}))} style={sty.inp} placeholder="••••"/>
+            </Fld>
+          </div>
+          <Fld label="Rol">
+            <select value={editUser.role} onChange={e=>setEditUser(p=>({...p,role:e.target.value}))} style={sty.sel}>
+              <option value="agent">Agente / Vendedor</option>
+              <option value="partner">Socio Comercial</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </Fld>
+          <div style={{display:'flex',gap:8,marginTop:4}}>
+            <button
+              onClick={()=>{
+                const fields = {
+                  name:editUser.name, rut:editUser.rut, phone:editUser.phone,
+                  email:editUser.email, username:editUser.username, role:editUser.role
+                }
+                if (editUser._newPin && editUser._newPin.length>=4) fields.pin = editUser._newPin
+                updateUserData(editUser.id, fields)
+              }}
+              disabled={!editUser.name?.trim()}
+              style={{...sty.btnP,flex:1,opacity:!editUser.name?.trim()?0.5:1}}
+            >Guardar cambios</button>
+            <button onClick={()=>setEditUser(null)} style={{...sty.btn,flex:1}}>Cancelar</button>
+          </div>
         </Modal>
       )}
 
