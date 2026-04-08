@@ -329,7 +329,7 @@ export default function App() {
     const u = (users||[]).find(x => x.username === lu.trim().toLowerCase())
     if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
-    setNav(u.role === 'admin' ? 'dashboard' : u.role === 'partner' ? 'pool' : 'kanban')
+    setNav(u.role === 'admin' || u.role === 'partner' ? 'dashboard' : 'kanban')
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────
@@ -495,7 +495,7 @@ export default function App() {
     : isPartner ? leads.filter(l => l.tag==='pool')
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin ? ['dashboard','kanban','lista','usuarios','etapas','extraer'] : isPartner ? ['pool'] : ['kanban','lista','nuevo lead']
+  const NAV = isAdmin ? ['dashboard','kanban','lista','usuarios','etapas','extraer'] : isPartner ? ['dashboard','pool'] : ['kanban','lista','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
@@ -995,6 +995,188 @@ export default function App() {
                             </div>
                           )
                         })
+                  }
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
+
+        {/* DASHBOARD SOCIO COMERCIAL */}
+        {nav==='dashboard' && isPartner && (() => {
+          const poolLeads = leads.filter(l => l.tag === 'pool')
+          const now = new Date()
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+          const startOfLastMonth = new Date(now.getFullYear(), now.getMonth()-1, 1)
+          const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0)
+
+          const poolThisMonth  = poolLeads.filter(l => new Date(l.fecha) >= startOfMonth).length
+          const poolLastMonth  = poolLeads.filter(l => new Date(l.fecha) >= startOfLastMonth && new Date(l.fecha) <= endOfLastMonth).length
+          const poolGanados    = poolLeads.filter(l => l.stage === 'ganado').length
+          const poolPerdidos   = poolLeads.filter(l => l.stage === 'perdido').length
+          const poolEnProceso  = poolLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido').length
+          const convRate       = poolLeads.length > 0 ? Math.round((poolGanados / poolLeads.length) * 100) : 0
+          const tendencia      = poolLastMonth > 0 ? Math.round(((poolThisMonth - poolLastMonth) / poolLastMonth)*100) : null
+          const stancados      = poolLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido' && daysIn(l) > 7).length
+
+          // Pool por etapa
+          const byStage = stages.map(st => ({
+            ...st,
+            count: poolLeads.filter(l => l.stage === st.id).length,
+            pct: poolLeads.length > 0 ? Math.round((poolLeads.filter(l=>l.stage===st.id).length / poolLeads.length)*100) : 0
+          })).filter(st => st.count > 0)
+
+          // Pool por agente
+          const agents = (users||[]).filter(u => u.role === 'agent')
+          const byAgent = agents.map(ag => {
+            const agLeads = poolLeads.filter(l => l.assigned_to === ag.id)
+            const agGanados = agLeads.filter(l => l.stage === 'ganado').length
+            return {
+              ...ag,
+              total: agLeads.length,
+              ganados: agGanados,
+              enProceso: agLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido').length,
+              convRate: agLeads.length > 0 ? Math.round((agGanados/agLeads.length)*100) : 0
+            }
+          }).filter(ag => ag.total > 0).sort((a,b) => b.total - a.total)
+
+          // Cal distribution for pool
+          const byCal = ['Alta','Media','Baja'].map(cal => ({
+            cal,
+            count: poolLeads.filter(l => l.calificacion === cal).length,
+            pct: poolLeads.length > 0 ? Math.round((poolLeads.filter(l=>l.calificacion===cal).length/poolLeads.length)*100) : 0
+          }))
+
+          return (
+            <div>
+              {/* Header */}
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:14,borderBottom:'2px solid #E8EFFE'}}>
+                <div style={{width:40,height:40,borderRadius:10,background:B.light,border:`1px solid ${B.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>📊</div>
+                <div>
+                  <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Dashboard Pool</div>
+                  <div style={{fontSize:12,color:B.mid}}>Rendimiento de leads etiquetados como pool</div>
+                </div>
+              </div>
+
+              {/* KPIs */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10,marginBottom:20}}>
+                {[
+                  {label:'Total pool',    value:poolLeads.length,  bg:'#E8EFFE', col:B.primary},
+                  {label:'Este mes',      value:poolThisMonth,     bg:'#F5F3FF', col:'#5b21b6',
+                    sub: tendencia!==null ? (tendencia>=0?`+${tendencia}%`:`${tendencia}%`)+' vs mes ant.' : null,
+                    subCol: tendencia>=0?'#166534':'#991b1b'
+                  },
+                  {label:'En proceso',   value:poolEnProceso,     bg:'#FFFBEB', col:'#92400e'},
+                  {label:'Ganados',      value:poolGanados,       bg:'#DCFCE7', col:'#14532d'},
+                  {label:'Perdidos',     value:poolPerdidos,      bg:'#FEF2F2', col:'#991b1b'},
+                  {label:'Conversión',   value:convRate+'%',      bg: convRate>=30?'#DCFCE7':convRate>=15?'#FFFBEB':'#F9FAFB', col: convRate>=30?'#14532d':convRate>=15?'#92400e':'#374151'},
+                  {label:'Estancados +7d',value:stancados,        bg: stancados>0?'#FFF7ED':'#F9FAFB', col: stancados>0?'#9a3412':'#374151'},
+                ].map((k,i) => (
+                  <div key={i} style={{background:k.bg,borderRadius:10,padding:'12px 14px',border:'1px solid '+k.col+'33'}}>
+                    <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:4,opacity:.8}}>{k.label}</div>
+                    <div style={{fontSize:26,fontWeight:800,color:k.col,lineHeight:1}}>{k.value}</div>
+                    {k.sub && <div style={{fontSize:10,color:k.subCol,marginTop:4,fontWeight:600}}>{k.sub}</div>}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+
+                {/* Pipeline pool por etapa */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Pipeline pool por etapa</p>
+                  {byStage.length === 0
+                    ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads pool aún</p>
+                    : byStage.map(st => (
+                      <div key={st.id} style={{marginBottom:10}}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                          <span style={{fontSize:12,color:'#374151',fontWeight:500}}>{st.label}</span>
+                          <span style={{fontSize:12,fontWeight:700,color:st.col}}>{st.count} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>({st.pct}%)</span></span>
+                        </div>
+                        <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:st.pct+'%',background:st.col,borderRadius:99,minWidth:st.count>0?8:0}}/>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+
+                {/* Calificación */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Calificación de pool</p>
+                  {byCal.map(({cal,count,pct}) => {
+                    const c = CAL[cal] || {bg:'#F9FAFB',col:'#374151'}
+                    return (
+                      <div key={cal} style={{marginBottom:12}}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                          <span style={{fontSize:12,padding:'2px 10px',borderRadius:99,background:c.bg,color:c.col,fontWeight:600}}>{cal}</span>
+                          <span style={{fontSize:12,fontWeight:700,color:c.col}}>{count} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>({pct}%)</span></span>
+                        </div>
+                        <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:pct+'%',background:c.col,borderRadius:99,opacity:.7}}/>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+
+                {/* Brokers asignados */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Brokers asignados</p>
+                  {byAgent.length === 0
+                    ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads asignados a brokers</p>
+                    : byAgent.map(ag => (
+                      <div key={ag.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
+                        <AV name={ag.name} size={34}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
+                          <div style={{display:'flex',gap:8,marginTop:2}}>
+                            <span style={{fontSize:11,color:'#6b7280'}}>{ag.total} leads</span>
+                            <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} ganados</span>
+                            <span style={{fontSize:11,color:'#92400e'}}>{ag.enProceso} en proceso</span>
+                          </div>
+                          <div style={{height:4,background:'#f0f4ff',borderRadius:99,marginTop:5,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:(poolLeads.length>0?Math.round((ag.total/poolLeads.length)*100):0)+'%',background:B.primary,borderRadius:99}}/>
+                          </div>
+                        </div>
+                        <div style={{textAlign:'right',flexShrink:0}}>
+                          <div style={{fontSize:16,fontWeight:800,color:ag.convRate>=30?'#166534':ag.convRate>=15?'#92400e':'#374151'}}>{ag.convRate}%</div>
+                          <div style={{fontSize:10,color:'#9ca3af'}}>conv.</div>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+
+                {/* Pool recientes */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Últimos leads pool</p>
+                  {poolLeads.length === 0
+                    ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads pool registrados</p>
+                    : [...poolLeads].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,7).map(l => {
+                        const st = stages.find(x=>x.id===l.stage)||stages[0]||{}
+                        const ag = (users||[]).find(u=>u.id===l.assigned_to)
+                        const cal = CAL[l.calificacion]
+                        return (
+                          <div key={l.id} onClick={()=>{setSel(l);setModal('lead')}} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'7px 10px',borderRadius:8,background:'#f9fbff',border:'1px solid #dce8ff',cursor:'pointer'}}>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:12,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.nombre}</div>
+                              <div style={{display:'flex',gap:6,alignItems:'center',marginTop:2}}>
+                                <span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:st.bg,color:st.col,fontWeight:600}}>{st.label}</span>
+                                {ag && <span style={{fontSize:10,color:'#9ca3af'}}>{ag.name.split(' ')[0]}</span>}
+                              </div>
+                            </div>
+                            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:2,flexShrink:0}}>
+                              {cal && <span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:cal.bg,color:cal.col,fontWeight:600}}>{l.calificacion}</span>}
+                              <span style={{fontSize:10,color:'#9ca3af'}}>{fmt(l.fecha)}</span>
+                            </div>
+                          </div>
+                        )
+                      })
                   }
                 </div>
               </div>
