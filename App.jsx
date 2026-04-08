@@ -147,6 +147,7 @@ export default function App() {
   const [dbReady, setDbReady] = useState(false)
   const [notifications, setNotifications] = useState([])
   const [showNotifs, setShowNotifs] = useState(false)
+  const [indicators, setIndicators] = useState({uf:null, dolar:null, updatedAt:null})
   const [stages, setStages] = useState(DEFAULT_STAGES)
   const [newStage, setNewStage] = useState({label:'', colorIdx:0})
   const [editStageId, setEditStageId] = useState(null)
@@ -195,6 +196,25 @@ export default function App() {
     return () => { supabase.removeChannel(channel) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbReady, me?.id])
+
+  // ── Chilean financial indicators ─────────────────────────────────────────
+  useEffect(() => {
+    async function fetchIndicators() {
+      try {
+        const r = await fetch('https://mindicador.cl/api')
+        const d = await r.json()
+        setIndicators({
+          uf:    d.uf?.valor    ? parseFloat(d.uf.valor).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}) : null,
+          dolar: d.dolar?.valor ? parseFloat(d.dolar.valor).toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0}) : null,
+          updatedAt: d.uf?.fecha ? new Date(d.uf.fecha).toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit'}) : null
+        })
+      } catch(e) { console.warn('No se pudieron obtener indicadores') }
+    }
+    fetchIndicators()
+    // Refresh every hour
+    const t = setInterval(fetchIndicators, 3600000)
+    return () => clearInterval(t)
+  }, [])
 
   // ── DB init ───────────────────────────────────────────────────────────────
   async function initDB() {
@@ -521,6 +541,27 @@ export default function App() {
             ))}
           </div>
         </div>
+        {/* Financial indicators */}
+        {(indicators.uf || indicators.dolar) && (
+          <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
+            {indicators.uf && (
+              <div style={{display:'flex',alignItems:'center',gap:5,background:'#E8EFFE',borderRadius:8,padding:'4px 10px',border:'1px solid #A8C0F0'}}>
+                <span style={{fontSize:10,fontWeight:700,color:B.primary,letterSpacing:'0.3px'}}>UF</span>
+                <span style={{fontSize:12,fontWeight:700,color:B.primary}}>${indicators.uf}</span>
+              </div>
+            )}
+            {indicators.dolar && (
+              <div style={{display:'flex',alignItems:'center',gap:5,background:'#F0FDF4',borderRadius:8,padding:'4px 10px',border:'1px solid #86efac'}}>
+                <span style={{fontSize:10,fontWeight:700,color:'#166534',letterSpacing:'0.3px'}}>USD</span>
+                <span style={{fontSize:12,fontWeight:700,color:'#166534'}}>${indicators.dolar}</span>
+              </div>
+            )}
+            {indicators.updatedAt && (
+              <span style={{fontSize:10,color:'#9ca3af'}}>{indicators.updatedAt}</span>
+            )}
+          </div>
+        )}
+
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <AV name={me.name} size={28}/>
           <span style={{fontSize:13,color:'#6b7280',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{me.name}</span>
