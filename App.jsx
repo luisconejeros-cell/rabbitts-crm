@@ -356,31 +356,29 @@ export default function App() {
 
   async function extractLead() {
     if (!conv.trim()) return
-    if (!ANTHROPIC_KEY) { setXerr('API key de Anthropic no configurada. Agrégala en Settings → Environment Variables de Bolt.'); return }
     setXing(true); setXerr('')
     try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method:'POST',
-        headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-ipc':'true'},
-        body: JSON.stringify({
-          model:'claude-sonnet-4-20250514', max_tokens:1000,
-          system:`Extrae datos del cliente de conversaciones inmobiliarias. Responde SOLO JSON sin backticks:\n{"nombre":"nombre completo o null","telefono":"teléfono o null","email":"email o null","renta":"presupuesto con moneda o null","calificacion":"Alta/Media/Baja","resumen":"2-3 oraciones sobre necesidad e interés del cliente"}`,
-          messages:[{role:'user',content:'Conversación:\n\n'+conv}]
-        })
+      // Llamada via endpoint del servidor (evita CORS y protege la API key)
+      const r = await fetch('/api/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation: conv })
       })
       const d = await r.json()
-      const txt = (d.content||[]).find(b=>b.type==='text')?.text||'{}'
-      const p = JSON.parse(txt.replace(/```json|```/g,'').trim())
+      if (!r.ok || !d.success) throw new Error(d.error || 'Error desconocido')
+      const p = d.data
       const lead = {
         id:'l-'+Date.now(), fecha:new Date().toISOString(), stage_moved_at:new Date().toISOString(),
-        stage:'nuevo', assigned_to:null, tag:'lead', origen:'whatsapp',
+        stage: stages[0]?.id || 'nuevo', assigned_to:null, tag:'lead', origen:'whatsapp',
         nombre:p.nombre||'—', telefono:p.telefono||'—', email:p.email||'—',
         renta:p.renta||'—', calificacion:p.calificacion||'—', resumen:p.resumen||'—',
-        conversacion:conv, creado_por:me.id, comments:[], stage_history:[{stage:'nuevo',date:new Date().toISOString()}]
+        conversacion:conv, creado_por:me.id, comments:[], stage_history:[{stage:stages[0]?.id||'nuevo',date:new Date().toISOString()}]
       }
       await saveLeads([lead, ...leads])
       setConv(''); msg('Lead extraído con IA')
-    } catch (e) { setXerr('Error al procesar. Verifica tu API key de Anthropic.') }
+    } catch (e) {
+      setXerr('Error: ' + (e.message || 'Verifica que VITE_ANTHROPIC_KEY esté configurada en Vercel'))
+    }
     setXing(false)
   }
 
@@ -794,7 +792,7 @@ export default function App() {
           <div style={{maxWidth:560}}>
             <p style={{margin:'0 0 4px',fontSize:14,fontWeight:700,color:B.primary}}>Extraer lead calificado desde WhatsApp</p>
             <p style={{margin:'0 0 12px',fontSize:12,color:B.mid}}>Solo pasan al CRM los clientes que califican por renta.</p>
-            {!ANTHROPIC_KEY && <div style={{background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:8,padding:'10px 14px',fontSize:12,color:'#92400e',marginBottom:12}}>⚠ Para activar la IA: en Bolt ve a <strong>Settings → Environment Variables</strong> y agrega <code>VITE_ANTHROPIC_KEY</code> con tu API key de <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{color:B.primary}}>console.anthropic.com</a></div>}
+            {/* API key is server-side — no warning needed */}
             <textarea value={conv} onChange={e=>setConv(e.target.value)} placeholder="Pega aquí la conversación completa de WhatsApp..." style={{...sty.inp,minHeight:160,resize:'vertical'}}/>
             <div style={{display:'flex',gap:8,marginTop:8}}>
               <button onClick={extractLead} disabled={xing||!conv.trim()} style={{...sty.btnP,opacity:xing||!conv.trim()?0.5:1}}>{xing?'Procesando con IA...':'Extraer con IA'}</button>
