@@ -131,7 +131,7 @@ export default function App() {
   const [users,  setUsers]  = useState(null)
   const [leads,  setLeads]  = useState(null)
   const [me,     setMe]     = useState(null)
-  const [nav,    setNav]    = useState('kanban')
+  const [nav,    setNav]    = useState('dashboard')
   const [modal,  setModal]  = useState(null)
   const [sel,    setSel]    = useState(null)
   const [lu, setLu] = useState(''); const [lp, setLp] = useState(''); const [lerr, setLerr] = useState('')
@@ -494,7 +494,7 @@ export default function App() {
     : isPartner ? leads.filter(l => l.tag==='pool')
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin ? ['kanban','lista','usuarios','etapas','extraer'] : isPartner ? ['pool'] : ['kanban','lista','nuevo lead']
+  const NAV = isAdmin ? ['dashboard','kanban','lista','usuarios','etapas','extraer'] : isPartner ? ['pool'] : ['kanban','lista','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
@@ -827,6 +827,179 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* DASHBOARD */}
+        {nav==='dashboard' && isAdmin && (() => {
+          const now = new Date()
+          const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay() + 1); startOfWeek.setHours(0,0,0,0)
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+          const startOfLastMonth = new Date(now.getFullYear(), now.getMonth()-1, 1)
+          const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0)
+
+          const leadsThisWeek  = leads.filter(l => new Date(l.fecha) >= startOfWeek).length
+          const leadsThisMonth = leads.filter(l => new Date(l.fecha) >= startOfMonth).length
+          const leadsLastMonth = leads.filter(l => new Date(l.fecha) >= startOfLastMonth && new Date(l.fecha) <= endOfLastMonth).length
+          const ganados        = leads.filter(l => l.stage === 'ganado').length
+          const perdidos       = leads.filter(l => l.stage === 'perdido').length
+          const sinAsignar     = leads.filter(l => !l.assigned_to).length
+          const convRate       = leads.length > 0 ? Math.round((ganados / leads.length) * 100) : 0
+
+          // Leads por etapa
+          const byStage = stages.map(st => ({
+            ...st,
+            count: leads.filter(l => l.stage === st.id).length,
+            pct: leads.length > 0 ? Math.round((leads.filter(l=>l.stage===st.id).length / leads.length)*100) : 0
+          }))
+
+          // Leads por agente
+          const agents = (users||[]).filter(u => u.role === 'agent')
+          const byAgent = agents.map(ag => {
+            const agLeads = leads.filter(l => l.assigned_to === ag.id)
+            const agGanados = agLeads.filter(l => l.stage === 'ganado').length
+            const agPerdidos = agLeads.filter(l => l.stage === 'perdido').length
+            return {
+              ...ag,
+              total: agLeads.length,
+              ganados: agGanados,
+              perdidos: agPerdidos,
+              enProceso: agLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido').length,
+              convRate: agLeads.length > 0 ? Math.round((agGanados/agLeads.length)*100) : 0
+            }
+          }).sort((a,b) => b.total - a.total)
+
+          // Leads por etiqueta
+          const byTag = ['lead','referido','pool'].map(tag => ({
+            tag, count: leads.filter(l => l.tag === tag).length
+          }))
+
+          // Leads stancados (más de 7 días en la misma etapa, no ganados ni perdidos)
+          const stancados = leads.filter(l => {
+            if (l.stage === 'ganado' || l.stage === 'perdido') return false
+            return daysIn(l) > 7
+          }).length
+
+          // Tendencia vs mes anterior
+          const tendencia = leadsLastMonth > 0 ? Math.round(((leadsThisMonth - leadsLastMonth) / leadsLastMonth)*100) : null
+
+          return (
+            <div>
+              {/* KPI cards row */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:10,marginBottom:20}}>
+                {[
+                  {label:'Total leads', value:leads.length, bg:'#E8EFFE', col:B.primary},
+                  {label:'Esta semana',  value:leadsThisWeek, bg:'#F0FDF4', col:'#166534'},
+                  {label:'Este mes',    value:leadsThisMonth, bg:'#F5F3FF', col:'#5b21b6',
+                    sub: tendencia!==null ? (tendencia>=0?`+${tendencia}%`:`${tendencia}%`) + ' vs mes ant.' : null,
+                    subCol: tendencia>=0 ? '#166534' : '#991b1b'
+                  },
+                  {label:'Ganados',     value:ganados, bg:'#DCFCE7', col:'#14532d'},
+                  {label:'Perdidos',    value:perdidos, bg:'#FEF2F2', col:'#991b1b'},
+                  {label:'Conversión',  value:convRate+'%', bg:'#FFFBEB', col:'#92400e'},
+                  {label:'Sin asignar', value:sinAsignar, bg: sinAsignar>0 ? '#FEF2F2' : '#F9FAFB', col: sinAsignar>0 ? '#991b1b' : '#374151'},
+                  {label:'Estancados +7d', value:stancados, bg: stancados>0 ? '#FFF7ED' : '#F9FAFB', col: stancados>0 ? '#9a3412' : '#374151'},
+                ].map((k,i) => (
+                  <div key={i} style={{background:k.bg,borderRadius:10,padding:'12px 14px',border:'1px solid '+k.col+'33'}}>
+                    <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:4,opacity:.8}}>{k.label}</div>
+                    <div style={{fontSize:26,fontWeight:800,color:k.col,lineHeight:1}}>{k.value}</div>
+                    {k.sub && <div style={{fontSize:10,color:k.subCol,marginTop:4,fontWeight:600}}>{k.sub}</div>}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+
+                {/* Pipeline por etapa */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Pipeline por etapa</p>
+                  {byStage.map(st => (
+                    <div key={st.id} style={{marginBottom:10}}>
+                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                        <span style={{fontSize:12,color:'#374151',fontWeight:500}}>{st.label}</span>
+                        <span style={{fontSize:12,fontWeight:700,color:st.col}}>{st.count} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>({st.pct}%)</span></span>
+                      </div>
+                      <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:st.pct+'%',background:st.col,borderRadius:99,transition:'width .4s ease',minWidth:st.count>0?8:0}}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Rendimiento por agente */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Rendimiento por agente</p>
+                  {byAgent.length === 0 && <p style={{fontSize:12,color:'#9ca3af'}}>Sin agentes registrados</p>}
+                  {byAgent.map(ag => (
+                    <div key={ag.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
+                      <AV name={ag.name} size={34}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
+                        <div style={{display:'flex',gap:10,marginTop:3}}>
+                          <span style={{fontSize:11,color:'#6b7280'}}>{ag.total} leads</span>
+                          <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} ganados</span>
+                          <span style={{fontSize:11,color:'#991b1b'}}>{ag.perdidos} perdidos</span>
+                        </div>
+                        <div style={{height:4,background:'#f0f4ff',borderRadius:99,marginTop:5,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:(leads.length>0?Math.round((ag.total/leads.length)*100):0)+'%',background:B.primary,borderRadius:99}}/>
+                        </div>
+                      </div>
+                      <div style={{textAlign:'right',flexShrink:0}}>
+                        <div style={{fontSize:16,fontWeight:800,color:ag.convRate>=30?'#166534':ag.convRate>=15?'#92400e':'#374151'}}>{ag.convRate}%</div>
+                        <div style={{fontSize:10,color:'#9ca3af'}}>conv.</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+
+                {/* Por etiqueta */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Distribución por etiqueta</p>
+                  {byTag.map(({tag,count}) => {
+                    const t = TAG_ST[tag]||TAG_ST.lead
+                    const pct = leads.length>0 ? Math.round((count/leads.length)*100) : 0
+                    return (
+                      <div key={tag} style={{marginBottom:10}}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                          <Tag tag={tag}/>
+                          <span style={{fontSize:12,fontWeight:700,color:t.col}}>{count} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>({pct}%)</span></span>
+                        </div>
+                        <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:pct+'%',background:t.col,borderRadius:99,opacity:.7}}/>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Leads estancados */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Leads estancados {stancados>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontWeight:600,marginLeft:4}}>+7 días</span>}</p>
+                  {leads.filter(l=>l.stage!=='ganado'&&l.stage!=='perdido'&&daysIn(l)>7).length===0
+                    ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads estancados. ¡Todo fluye bien!</p>
+                    : leads.filter(l=>l.stage!=='ganado'&&l.stage!=='perdido'&&daysIn(l)>7)
+                        .sort((a,b)=>daysIn(b)-daysIn(a))
+                        .slice(0,6)
+                        .map(l => {
+                          const st = stages.find(x=>x.id===l.stage)||stages[0]||{}
+                          const ag = (users||[]).find(u=>u.id===l.assigned_to)
+                          return (
+                            <div key={l.id} onClick={()=>{setSel(l);setModal('lead')}} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'6px 8px',borderRadius:8,background:'#FFF7ED',border:'1px solid #fdba74',cursor:'pointer'}}>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:12,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.nombre}</div>
+                                <div style={{fontSize:11,color:'#9ca3af'}}>{st.label} {ag?'· '+ag.name.split(' ')[0]:''}</div>
+                              </div>
+                              <Days d={daysIn(l)}/>
+                            </div>
+                          )
+                        })
+                  }
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* EXTRAER */}
         {nav==='extraer' && isAdmin && (
