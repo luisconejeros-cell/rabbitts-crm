@@ -62,23 +62,7 @@ const AV = ({name, size=32}) => {
 }
 
 const RabbitsLogo = ({size=36}) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="none">
-    <circle cx="50" cy="50" r="46" fill="#fff" stroke={B.primary} strokeWidth="4"/>
-    <ellipse cx="50" cy="50" rx="25" ry="46" fill="none" stroke={B.primary} strokeWidth="1.5" opacity=".35"/>
-    <line x1="4" y1="50" x2="96" y2="50" stroke={B.primary} strokeWidth="1.5" opacity=".35"/>
-    <path d="M10 30 Q50 38 90 30" stroke={B.primary} strokeWidth="1.2" fill="none" opacity=".25"/>
-    <path d="M10 70 Q50 62 90 70" stroke={B.primary} strokeWidth="1.2" fill="none" opacity=".25"/>
-    <ellipse cx="50" cy="60" rx="16" ry="20" fill={B.primary}/>
-    <ellipse cx="50" cy="40" rx="11" ry="10" fill={B.primary}/>
-    <ellipse cx="42" cy="25" rx="4" ry="12" fill={B.primary}/>
-    <ellipse cx="58" cy="25" rx="4" ry="12" fill={B.primary}/>
-    <ellipse cx="42" cy="25" rx="2" ry="8" fill="#A8C0F0" opacity=".6"/>
-    <ellipse cx="58" cy="25" rx="2" ry="8" fill="#A8C0F0" opacity=".6"/>
-    <circle cx="46" cy="39" r="1.5" fill="#fff"/>
-    <circle cx="54" cy="39" r="1.5" fill="#fff"/>
-    <ellipse cx="50" cy="43" rx="2.5" ry="1.5" fill="#A8C0F0"/>
-    <circle cx="64" cy="68" r="5" fill="#E8EFFE" stroke={B.primary} strokeWidth="1.5"/>
-  </svg>
+  <img src="/logo.png" alt="Rabbitts Capital" style={{width:size,height:size,objectFit:'contain'}}/>
 )
 
 const Tag = ({tag, sm}) => {
@@ -592,11 +576,21 @@ export default function App() {
             <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:14}}>
               {STAGES.map(st=><button key={st.id} onClick={()=>reqMove(sel.id,st.id)} style={{fontSize:11,padding:'4px 10px',borderRadius:99,border:sel.stage===st.id?'2px solid '+st.dot:'1px solid #dce8ff',background:sel.stage===st.id?st.bg:'transparent',color:sel.stage===st.id?st.col:B.mid,cursor:'pointer',fontWeight:sel.stage===st.id?700:400}}>{st.label}</button>)}
             </div>
-            <Fld label="Etiqueta">
-              <select value={sel.tag||'lead'} onChange={e=>updateTag(sel.id,e.target.value)} style={sty.sel}>
-                <option value="pool">Pool</option><option value="lead">Lead</option><option value="referido">Referido</option>
-              </select>
-            </Fld>
+            {isAdmin ? (
+              <Fld label="Etiqueta">
+                <select value={sel.tag||'lead'} onChange={e=>updateTag(sel.id,e.target.value)} style={sty.sel}>
+                  <option value="pool">Pool</option><option value="lead">Lead</option><option value="referido">Referido</option>
+                </select>
+              </Fld>
+            ) : (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,color:'#4b6cb7',marginBottom:6,fontWeight:500}}>Etiqueta</div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <Tag tag={sel.tag||'lead'}/>
+                  <span style={{fontSize:11,color:'#9ca3af'}}>Solo el administrador puede cambiar la etiqueta</span>
+                </div>
+              </div>
+            )}
             {isAdmin && <Fld label="Asignar a agente">
               <select value={sel.assigned_to||''} onChange={e=>assignLead(sel.id,e.target.value)} style={sty.sel}>
                 <option value="">Sin asignar</option>
