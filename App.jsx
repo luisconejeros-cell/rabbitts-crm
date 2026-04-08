@@ -129,8 +129,52 @@ export default function App() {
   const [editP, setEditP] = useState({name:'',phone:'',email:''})
   const [pinF,  setPinF]  = useState({cur:'',n1:'',n2:''}); const [pinErr, setPinErr] = useState(''); const [profErr, setProfErr] = useState('')
   const [dbReady, setDbReady] = useState(false)
+  const [notifications, setNotifications] = useState([])
+  const [showNotifs, setShowNotifs] = useState(false)
 
   useEffect(() => { initDB() }, [])
+
+  // ── Supabase Realtime ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!dbReady || !me) return
+    const channel = supabase
+      .channel('crm_leads_rt_' + me.id)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'crm_leads' }, payload => {
+        const updated = payload.new
+        if (!updated) return
+        setLeads(prev => {
+          if (!prev) return prev
+          const exists = prev.find(l => l.id === updated.id)
+          const next = exists ? prev.map(l => l.id === updated.id ? updated : l) : [updated, ...prev]
+          setSel(s => s?.id === updated.id ? updated : s)
+          if (me.role !== 'admin' && updated.assigned_to === me.id && exists) {
+            const oldC = (exists.comments || []).length
+            const newC = (updated.comments || []).length
+            if (newC > oldC) {
+              const latest = (updated.comments || [])[newC - 1]
+              if (latest && latest.author_name !== me.name) {
+                setNotifications(n => [{
+                  id: latest.id,
+                  text: `${latest.author_name} comentó en "${updated.nombre}": ${latest.text.slice(0,80)}`,
+                  leadId: updated.id,
+                  read: false,
+                  date: latest.date
+                }, ...n].slice(0, 20))
+              }
+            }
+          }
+          return next
+        })
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'crm_leads' }, payload => {
+        const inserted = payload.new
+        if (!inserted) return
+        setLeads(prev => prev ? [inserted, ...prev.filter(l => l.id !== inserted.id)] : [inserted])
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbReady, me?.id])
 
   // ── DB init: create tables if not exist via Supabase RPC ──────────────────
   async function initDB() {
@@ -293,9 +337,30 @@ export default function App() {
 
   async function addComment(lid) {
     if (!comment.trim()) return
+    const lead = leads.find(l => l.id === lid)
     const c = {id:'c-'+Date.now(), text:comment.trim(), author_name:me.name, date:new Date().toISOString()}
     const ls = leads.map(l => l.id===lid ? {...l, comments:[...(l.comments||[]),c]} : l)
     await saveLeads(ls); if (sel?.id===lid) setSel(ls.find(l=>l.id===lid)); setComment('')
+    // Email notification: only when admin comments and lead has an assigned agent with email
+    if (me.role === 'admin' && lead?.assigned_to) {
+      const agent = (users||[]).find(u => u.id === lead.assigned_to)
+      if (agent?.email) {
+        try {
+          await fetch('/api/notify', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              to: agent.email,
+              agentName: agent.name,
+              adminName: me.name,
+              leadName: lead.nombre,
+              comment: comment.trim(),
+              leadId: lid
+            })
+          })
+        } catch(e) { console.warn('Email notification failed:', e) }
+      }
+    }
   }
 
   async function deleteLead(id) {
@@ -382,6 +447,30 @@ export default function App() {
           <AV name={me.name} size={28}/>
           <span style={{fontSize:13,color:'#6b7280',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{me.name}</span>
           <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':'#1d4ed8',fontWeight:700}}>{me.role}</span>
+          {!isAdmin && (
+            <div style={{position:'relative'}}>
+              <button onClick={()=>{setShowNotifs(v=>!v);setNotifications(n=>n.map(x=>({...x,read:true})))}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid,position:'relative'}}>
+                🔔
+                {notifications.filter(n=>!n.read).length>0 && (
+                  <span style={{position:'absolute',top:-4,right:-4,width:16,height:16,borderRadius:'50%',background:'#E24B4A',color:'#fff',fontSize:9,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    {notifications.filter(n=>!n.read).length}
+                  </span>
+                )}
+              </button>
+              {showNotifs && (
+                <div style={{position:'absolute',top:36,right:0,width:320,background:'#fff',border:'1px solid #dce8ff',borderRadius:12,boxShadow:'0 8px 32px rgba(27,79,200,0.15)',zIndex:500,maxHeight:360,overflowY:'auto'}}>
+                  <div style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',fontWeight:700,fontSize:13,color:B.primary}}>Notificaciones</div>
+                  {notifications.length===0 && <div style={{padding:'20px 14px',fontSize:12,color:'#9ca3af',textAlign:'center'}}>Sin notificaciones</div>}
+                  {notifications.map(n=>(
+                    <div key={n.id} onClick={()=>{setShowNotifs(false);const l=leads.find(x=>x.id===n.leadId);if(l){setSel(l);setModal('lead')}}} style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:n.read?'#fff':B.light}}>
+                      <div style={{fontSize:12,color:'#111827',lineHeight:1.5}}>{n.text}</div>
+                      <div style={{fontSize:11,color:'#9ca3af',marginTop:3}}>{fmt(n.date)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid}}>Mi perfil</button>
           <button onClick={()=>setMe(null)} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'none',background:'transparent',cursor:'pointer',color:'#9ca3af'}}>Salir</button>
         </div>
