@@ -131,7 +131,7 @@ export default function App() {
   const [users,  setUsers]  = useState(null)
   const [leads,  setLeads]  = useState(null)
   const [me,     setMe]     = useState(null)
-  const [nav,    setNav]    = useState('dashboard')
+  const [nav,    setNav]    = useState('kanban')
   const [modal,  setModal]  = useState(null)
   const [sel,    setSel]    = useState(null)
   const [lu, setLu] = useState(''); const [lp, setLp] = useState(''); const [lerr, setLerr] = useState('')
@@ -329,6 +329,7 @@ export default function App() {
     const u = (users||[]).find(x => x.username === lu.trim().toLowerCase())
     if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
+    setNav(u.role === 'admin' ? 'dashboard' : u.role === 'partner' ? 'pool' : 'kanban')
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────
