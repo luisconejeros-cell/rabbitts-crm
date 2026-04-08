@@ -19,7 +19,7 @@ const B = {
 }
 
 // ─── Data ────────────────────────────────────────────────────────────────────
-const STAGES = [
+const DEFAULT_STAGES = [
   { id:'nuevo',      label:'Nuevo lead',          bg:'#F1F5FF', col:'#1B4FC8', dot:'#A8C0F0' },
   { id:'contactado', label:'Contactado',           bg:'#EFF6FF', col:'#1d4ed8', dot:'#93c5fd' },
   { id:'agenda',     label:'Agenda reunión',       bg:'#F5F3FF', col:'#5b21b6', dot:'#c4b5fd' },
@@ -28,6 +28,22 @@ const STAGES = [
   { id:'firma',      label:'Firma promesa',        bg:'#FFF7ED', col:'#9a3412', dot:'#fdba74' },
   { id:'ganado',     label:'Ganado',               bg:'#DCFCE7', col:'#14532d', dot:'#4ade80' },
   { id:'perdido',    label:'Perdido',              bg:'#FEF2F2', col:'#991b1b', dot:'#fca5a5' },
+]
+
+// Color presets for stage editor
+const COLOR_PRESETS = [
+  { label:'Azul',     bg:'#EFF6FF', col:'#1d4ed8', dot:'#93c5fd' },
+  { label:'Azul Rabbitts', bg:'#F1F5FF', col:'#1B4FC8', dot:'#A8C0F0' },
+  { label:'Violeta',  bg:'#F5F3FF', col:'#5b21b6', dot:'#c4b5fd' },
+  { label:'Amarillo', bg:'#FFFBEB', col:'#92400e', dot:'#fcd34d' },
+  { label:'Verde',    bg:'#F0FDF4', col:'#166534', dot:'#86efac' },
+  { label:'Verde osc.',bg:'#DCFCE7',col:'#14532d', dot:'#4ade80' },
+  { label:'Naranja',  bg:'#FFF7ED', col:'#9a3412', dot:'#fdba74' },
+  { label:'Rojo',     bg:'#FEF2F2', col:'#991b1b', dot:'#fca5a5' },
+  { label:'Gris',     bg:'#F9FAFB', col:'#374151', dot:'#9ca3af' },
+  { label:'Teal',     bg:'#F0FDFA', col:'#065f46', dot:'#6ee7b7' },
+  { label:'Rosa',     bg:'#FDF2F8', col:'#86198f', dot:'#e879f9' },
+  { label:'Cyan',     bg:'#ECFEFF', col:'#155e75', dot:'#22d3ee' },
 ]
 const LOSS_REASONS = [
   'Sin capacidad de crédito','Encontró otra propiedad','Desistió de la compra',
@@ -131,6 +147,10 @@ export default function App() {
   const [dbReady, setDbReady] = useState(false)
   const [notifications, setNotifications] = useState([])
   const [showNotifs, setShowNotifs] = useState(false)
+  const [stages, setStages] = useState(DEFAULT_STAGES)
+  const [newStage, setNewStage] = useState({label:'', colorIdx:0})
+  const [editStageId, setEditStageId] = useState(null)
+  const [editStageLabel, setEditStageLabel] = useState('')
 
   useEffect(() => { initDB() }, [])
 
@@ -176,9 +196,8 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbReady, me?.id])
 
-  // ── DB init: create tables if not exist via Supabase RPC ──────────────────
+  // ── DB init ───────────────────────────────────────────────────────────────
   async function initDB() {
-    // Try to load users — if fails, Supabase not configured, use localStorage fallback
     try {
       const { data, error } = await supabase.from('crm_users').select('*')
       if (error) throw error
@@ -191,17 +210,76 @@ export default function App() {
       setUsers(us)
       const { data: ls } = await supabase.from('crm_leads').select('*').order('fecha', {ascending:false})
       setLeads(ls || [])
+      // Load custom stages
+      const { data: st } = await supabase.from('crm_settings').select('value').eq('key','stages').single()
+      if (st?.value) setStages(st.value)
       setDbReady(true)
     } catch (e) {
-      // Fallback to localStorage if Supabase not configured yet
       console.warn('Supabase not configured, using localStorage fallback')
       let us = JSON.parse(localStorage.getItem('rcrm_users') || '[]')
       if (!us.find(u => u.role === 'admin'))
         us = [{id:'u-admin',name:'Luis Burgos',rut:'',phone:'',email:'',username:'admin',pin:'1234',role:'admin'}, ...us]
       setUsers(us)
       setLeads(JSON.parse(localStorage.getItem('rcrm_leads') || '[]'))
+      const savedStages = localStorage.getItem('rcrm_stages')
+      if (savedStages) setStages(JSON.parse(savedStages))
       setDbReady(false)
     }
+  }
+
+  async function saveStages(st) {
+    setStages(st)
+    if (dbReady) {
+      await supabase.from('crm_settings').upsert({key:'stages', value:st})
+    } else {
+      localStorage.setItem('rcrm_stages', JSON.stringify(st))
+    }
+  }
+
+  async function addStage() {
+    if (!newStage.label.trim()) { msg('Escribe un nombre para la etapa'); return }
+    const preset = COLOR_PRESETS[newStage.colorIdx] || COLOR_PRESETS[0]
+    const s = {
+      id: 'st-' + Date.now(),
+      label: newStage.label.trim(),
+      bg: preset.bg, col: preset.col, dot: preset.dot
+    }
+    await saveStages([...stages, s])
+    setNewStage({label:'', colorIdx:0})
+    msg('Etapa creada')
+  }
+
+  async function deleteStage(id) {
+    const inUse = leads.filter(l => l.stage === id).length
+    if (inUse > 0) { msg(`No se puede eliminar: hay ${inUse} leads en esta etapa`); return }
+    await saveStages(stages.filter(s => s.id !== id))
+    msg('Etapa eliminada')
+  }
+
+  async function moveStageUp(idx) {
+    if (idx === 0) return
+    const st = [...stages]
+    ;[st[idx-1], st[idx]] = [st[idx], st[idx-1]]
+    await saveStages(st)
+  }
+
+  async function moveStageDown(idx) {
+    if (idx === stages.length - 1) return
+    const st = [...stages]
+    ;[st[idx], st[idx+1]] = [st[idx+1], st[idx]]
+    await saveStages(st)
+  }
+
+  async function renameStage(id, label) {
+    if (!label.trim()) return
+    await saveStages(stages.map(s => s.id === id ? {...s, label: label.trim()} : s))
+    setEditStageId(null)
+    msg('Etapa renombrada')
+  }
+
+  async function changeStageColor(id, colorIdx) {
+    const preset = COLOR_PRESETS[colorIdx]
+    await saveStages(stages.map(s => s.id === id ? {...s, bg:preset.bg, col:preset.col, dot:preset.dot} : s))
   }
 
   async function saveUsers(us) {
@@ -373,7 +451,7 @@ export default function App() {
     const H = ['Nombre','Teléfono','Email','Renta','Etiqueta','Etapa','Motivo pérdida','Cal.','Agente','Creado','Días','Resumen']
     const rows = (vL||[]).map(l => {
       const ag = (users||[]).find(u=>u.id===l.assigned_to)
-      const st = STAGES.find(x=>x.id===l.stage)||STAGES[0]
+      const st = stages.find(x=>x.id===l.stage)||stages[0]
       return [`"${l.nombre}"`,l.telefono,l.email,l.renta,l.tag,st.label,l.loss_reason||'',l.calificacion,ag?ag.name:'—',fmt(l.fecha),daysIn(l),`"${(l.resumen||'').replace(/"/g,"'")}"`].join(',')
     })
     const csv = [H.join(','),...rows].join('\n')
@@ -396,7 +474,7 @@ export default function App() {
     : isPartner ? leads.filter(l => l.tag==='pool')
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin ? ['kanban','lista','usuarios','extraer'] : isPartner ? ['pool'] : ['kanban','lista','nuevo lead']
+  const NAV = isAdmin ? ['kanban','lista','usuarios','etapas','extraer'] : isPartner ? ['pool'] : ['kanban','lista','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
@@ -491,7 +569,7 @@ export default function App() {
                   </select>
                   <select value={fs} onChange={e=>setFs(e.target.value)} style={{...sty.sel,width:'auto'}}>
                     <option value="all">Todas las etapas</option>
-                    {STAGES.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}
+                    {stages.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}
                   </select>
                   <select value={ft} onChange={e=>setFt(e.target.value)} style={{...sty.sel,width:'auto'}}>
                     <option value="all">Todas las etiquetas</option>
@@ -506,7 +584,7 @@ export default function App() {
               </div>
             </div>
             <div style={{display:'flex',gap:10,overflowX:'auto',paddingBottom:8,alignItems:'flex-start'}}>
-              {STAGES.map(st => {
+              {stages.map(st => {
                 const cols = (vL||[]).filter(l=>l.stage===st.id)
                 return (
                   <div key={st.id} style={{minWidth:190,flexShrink:0}}>
@@ -544,7 +622,7 @@ export default function App() {
                 <tbody>
                   {(vL||[]).length===0&&<tr><td colSpan={11} style={{padding:32,textAlign:'center',color:'#9ca3af'}}>Sin leads registrados</td></tr>}
                   {(vL||[]).map(lead => {
-                    const st = STAGES.find(x=>x.id===lead.stage)||STAGES[0]
+                    const st = stages.find(x=>x.id===lead.stage)||stages[0]
                     const ag = (users||[]).find(u=>u.id===lead.assigned_to)
                     const cal = CAL[lead.calificacion]
                     return (
@@ -609,6 +687,106 @@ export default function App() {
           </div>
         )}
 
+        {/* ETAPAS */}
+        {nav==='etapas' && isAdmin && (
+          <div style={{maxWidth:700}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+              <div>
+                <p style={{margin:'0 0 2px',fontSize:14,fontWeight:700,color:B.primary}}>Gestión de etapas del pipeline</p>
+                <p style={{margin:0,fontSize:12,color:B.mid}}>Crea, renombra, reordena y elimina etapas. Solo tú puedes modificarlas.</p>
+              </div>
+            </div>
+
+            {/* Existing stages list */}
+            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,overflow:'hidden',marginBottom:16}}>
+              {stages.map((st, idx) => (
+                <div key={st.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderBottom: idx<stages.length-1 ? '1px solid #f0f4ff' : 'none'}}>
+                  {/* Color dot */}
+                  <div style={{width:12,height:12,borderRadius:'50%',background:st.dot,flexShrink:0}}/>
+
+                  {/* Label — editable inline */}
+                  {editStageId===st.id ? (
+                    <input
+                      autoFocus
+                      value={editStageLabel}
+                      onChange={e=>setEditStageLabel(e.target.value)}
+                      onKeyDown={e=>{ if(e.key==='Enter') renameStage(st.id,editStageLabel); if(e.key==='Escape') setEditStageId(null) }}
+                      style={{flex:1,fontSize:13,padding:'4px 8px',borderRadius:6,border:'1px solid #A8C0F0',background:'#f0f4ff',color:'#111827'}}
+                    />
+                  ) : (
+                    <span style={{flex:1,fontSize:13,fontWeight:600,color:st.col}}>{st.label}</span>
+                  )}
+
+                  {/* Lead count badge */}
+                  <span style={{fontSize:11,color:'#9ca3af',minWidth:56,textAlign:'center'}}>{leads.filter(l=>l.stage===st.id).length} leads</span>
+
+                  {/* Color picker */}
+                  <select
+                    value={COLOR_PRESETS.findIndex(p=>p.col===st.col)}
+                    onChange={e=>changeStageColor(st.id,parseInt(e.target.value))}
+                    style={{fontSize:11,padding:'3px 6px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',color:'#374151',cursor:'pointer'}}
+                  >
+                    {COLOR_PRESETS.map((p,i)=><option key={i} value={i}>{p.label}</option>)}
+                  </select>
+
+                  {/* Action buttons */}
+                  <div style={{display:'flex',gap:4,flexShrink:0}}>
+                    {editStageId===st.id ? (
+                      <>
+                        <button onClick={()=>renameStage(st.id,editStageLabel)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #A8C0F0',background:B.light,color:B.primary,cursor:'pointer',fontWeight:600}}>✓</button>
+                        <button onClick={()=>setEditStageId(null)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #e5e7eb',background:'transparent',color:'#9ca3af',cursor:'pointer'}}>✕</button>
+                      </>
+                    ) : (
+                      <button onClick={()=>{setEditStageId(st.id);setEditStageLabel(st.label)}} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'transparent',color:B.mid,cursor:'pointer'}}>Renombrar</button>
+                    )}
+                    <button onClick={()=>moveStageUp(idx)} disabled={idx===0} style={{fontSize:12,padding:'3px 7px',borderRadius:6,border:'1px solid #dce8ff',background:'transparent',color:idx===0?'#e5e7eb':B.mid,cursor:idx===0?'not-allowed':'pointer'}}>↑</button>
+                    <button onClick={()=>moveStageDown(idx)} disabled={idx===stages.length-1} style={{fontSize:12,padding:'3px 7px',borderRadius:6,border:'1px solid #dce8ff',background:'transparent',color:idx===stages.length-1?'#e5e7eb':B.mid,cursor:idx===stages.length-1?'not-allowed':'pointer'}}>↓</button>
+                    <button onClick={()=>deleteStage(st.id)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>Eliminar</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Add new stage */}
+            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+              <p style={{margin:'0 0 10px',fontSize:13,fontWeight:600,color:B.primary}}>+ Nueva etapa</p>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end'}}>
+                <div style={{flex:1,minWidth:160}}>
+                  <label style={{fontSize:12,color:'#4b6cb7',display:'block',marginBottom:4,fontWeight:500}}>Nombre</label>
+                  <input
+                    value={newStage.label}
+                    onChange={e=>setNewStage(p=>({...p,label:e.target.value}))}
+                    onKeyDown={e=>e.key==='Enter'&&addStage()}
+                    placeholder="Ej: Visita propiedad"
+                    style={{...sty.inp}}
+                  />
+                </div>
+                <div style={{minWidth:140}}>
+                  <label style={{fontSize:12,color:'#4b6cb7',display:'block',marginBottom:4,fontWeight:500}}>Color</label>
+                  <select
+                    value={newStage.colorIdx}
+                    onChange={e=>setNewStage(p=>({...p,colorIdx:parseInt(e.target.value)}))}
+                    style={sty.sel}
+                  >
+                    {COLOR_PRESETS.map((p,i)=><option key={i} value={i}>{p.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{fontSize:12,color:'transparent',display:'block',marginBottom:4}}>.</label>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <div style={{width:24,height:24,borderRadius:'50%',background:COLOR_PRESETS[newStage.colorIdx]?.dot,border:'2px solid '+COLOR_PRESETS[newStage.colorIdx]?.col}}/>
+                    <button onClick={addStage} disabled={!newStage.label.trim()} style={{...sty.btnP,opacity:!newStage.label.trim()?0.5:1}}>Crear etapa</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{marginTop:12,padding:'10px 14px',background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:8,fontSize:12,color:'#92400e'}}>
+              <strong>Nota:</strong> No puedes eliminar una etapa que tenga leads. Mueve los leads primero a otra etapa antes de eliminar.
+            </div>
+          </div>
+        )}
+
         {/* EXTRAER */}
         {nav==='extraer' && isAdmin && (
           <div style={{maxWidth:560}}>
@@ -639,7 +817,7 @@ export default function App() {
       {modal==='lead' && sel && (
         <Modal title={sel.nombre} onClose={()=>{setModal(null);setSel(null);setComment('')}} wide>
           <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
-            {(()=>{const st=STAGES.find(x=>x.id===sel.stage)||STAGES[0];return<span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:st.bg,color:st.col,fontWeight:600}}>{st.label}</span>})()}
+            {(()=>{const st=stages.find(x=>x.id===sel.stage)||stages[0];return<span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:st.bg,color:st.col,fontWeight:600}}>{st.label}</span>})()}
             <Tag tag={sel.tag||'lead'}/>
             {CAL[sel.calificacion]&&<span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:CAL[sel.calificacion].bg,color:CAL[sel.calificacion].col,fontWeight:600}}>Cal. {sel.calificacion}</span>}
             <Days d={daysIn(sel)}/>
@@ -658,14 +836,14 @@ export default function App() {
             <div style={{marginBottom:12}}>
               <div style={{fontSize:12,fontWeight:600,color:B.mid,marginBottom:6}}>Historial de etapas</div>
               <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-                {(sel.stage_history||[]).map((h,i)=>{const st=STAGES.find(x=>x.id===h.stage)||STAGES[0];return<div key={i} style={{fontSize:11,padding:'3px 8px',borderRadius:8,background:st.bg,color:st.col}}>{st.label} <span style={{opacity:.65}}>{fmt(h.date)}</span></div>})}
+                {(sel.stage_history||[]).map((h,i)=>{const st=stages.find(x=>x.id===h.stage)||stages[0];return<div key={i} style={{fontSize:11,padding:'3px 8px',borderRadius:8,background:st.bg,color:st.col}}>{st.label} <span style={{opacity:.65}}>{fmt(h.date)}</span></div>})}
               </div>
             </div>
           )}
           {!isPartner && <>
             <div style={{marginBottom:6,fontSize:12,color:B.mid,fontWeight:600}}>Mover a etapa</div>
             <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:14}}>
-              {STAGES.map(st=><button key={st.id} onClick={()=>reqMove(sel.id,st.id)} style={{fontSize:11,padding:'4px 10px',borderRadius:99,border:sel.stage===st.id?'2px solid '+st.dot:'1px solid #dce8ff',background:sel.stage===st.id?st.bg:'transparent',color:sel.stage===st.id?st.col:B.mid,cursor:'pointer',fontWeight:sel.stage===st.id?700:400}}>{st.label}</button>)}
+              {stages.map(st=><button key={st.id} onClick={()=>reqMove(sel.id,st.id)} style={{fontSize:11,padding:'4px 10px',borderRadius:99,border:sel.stage===st.id?'2px solid '+st.dot:'1px solid #dce8ff',background:sel.stage===st.id?st.bg:'transparent',color:sel.stage===st.id?st.col:B.mid,cursor:'pointer',fontWeight:sel.stage===st.id?700:400}}>{st.label}</button>)}
             </div>
             {isAdmin ? (
               <Fld label="Etiqueta">
@@ -793,7 +971,7 @@ function LeadForm({data, onChange, onSubmit}) {
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
 function KCard({lead, users, isAdmin, isPartner, onOpen, onMove}) {
-  const si = STAGES.findIndex(x=>x.id===lead.stage)
+  const si = stages.findIndex(x=>x.id===lead.stage)
   const ag = (users||[]).find(u=>u.id===lead.assigned_to)
   const cal = CAL[lead.calificacion]
   return (
@@ -815,8 +993,8 @@ function KCard({lead, users, isAdmin, isPartner, onOpen, onMove}) {
       </div>
       {!isAdmin&&!isPartner&&(
         <div style={{display:'flex',gap:4,marginTop:8}} onClick={e=>e.stopPropagation()}>
-          {si>0&&<button onClick={()=>onMove(lead.id,STAGES[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
-          {si<STAGES.length-1&&<button onClick={()=>onMove(lead.id,STAGES[si+1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',color:B.primary,fontWeight:600}}>Avanzar →</button>}
+          {si>0&&<button onClick={()=>onMove(lead.id,stages[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
+          {si<stages.length-1&&<button onClick={()=>onMove(lead.id,stages[si+1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',color:B.primary,fontWeight:600}}>Avanzar →</button>}
         </div>
       )}
     </div>
