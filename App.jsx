@@ -481,7 +481,7 @@ export default function App() {
     if (sid==='perdido') { setLossTgt(lid); setLossR(LOSS_REASONS[0]); setLossOth(''); setModal('lost'); return }
     // Restricted stages require property form (admin or operaciones only)
     if (RESTRICTED_STAGES.includes(sid)) {
-      if (!isAdmin && !isOps) { msg('Solo Operaciones o el Administrador puede mover a esta etapa'); return }
+      if (me?.role !== 'admin' && me?.role !== 'operaciones') { msg('Solo Operaciones o el Administrador puede mover a esta etapa'); return }
       const lead = leads.find(l => l.id === lid)
       const existingProps = lead?.propiedades || []
       setEditingProps(existingProps.length > 0 ? [...existingProps] : [{...EMPTY_PROP, id:'p-'+Date.now()}])
@@ -707,6 +707,7 @@ export default function App() {
   const isAdmin   = me?.role === 'admin'
   const isPartner = me?.role === 'partner'
   const isAgent   = me?.role === 'agent'
+  const isOps     = me?.role === 'operaciones'
 
   const OPS_STAGES = ['reserva','firma','escritura','ganado','perdido']
   const vL = !me ? [] : isAdmin
@@ -715,7 +716,6 @@ export default function App() {
     : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
     : leads.filter(l => l.assigned_to===me.id)
 
-  const isOps = me?.role === 'operaciones'
   const NAV = isAdmin   ? ['dashboard','kanban','lista','usuarios','ranking','etapas','importar','extraer']
             : isPartner ? ['dashboard','pool']
             : isOps     ? ['kanban','lista']
@@ -2041,6 +2041,7 @@ export default function App() {
           <Fld label="Rol">
             <select value={nu.role} onChange={e=>setNu(p=>({...p,role:e.target.value}))} style={sty.sel}>
               <option value="agent">Agente / Vendedor</option>
+              <option value="operaciones">Operaciones</option>
               <option value="partner">Socio Comercial</option>
               <option value="admin">Administrador</option>
             </select>
