@@ -164,7 +164,22 @@ export default function App() {
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
-  useEffect(() => { initDB() }, [])
+  useEffect(() => {
+    initDB()
+    // Restore session if not expired
+    try {
+      const saved = localStorage.getItem('rcrm_session')
+      if (saved) {
+        const { id, expires } = JSON.parse(saved)
+        if (Date.now() < expires) {
+          // Will be set once users are loaded
+          window.__sessionUserId = id
+        } else {
+          localStorage.removeItem('rcrm_session')
+        }
+      }
+    } catch(_) {}
+  }, [])
 
   // ── Supabase Realtime ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -179,19 +194,32 @@ export default function App() {
           const exists = prev.find(l => l.id === updated.id)
           const next = exists ? prev.map(l => l.id === updated.id ? updated : l) : [updated, ...prev]
           setSel(s => s?.id === updated.id ? updated : s)
-          if (me.role !== 'admin' && updated.assigned_to === me.id && exists) {
-            const oldC = (exists.comments || []).length
-            const newC = (updated.comments || []).length
-            if (newC > oldC) {
-              const latest = (updated.comments || [])[newC - 1]
-              if (latest && latest.author_name !== me.name) {
-                setNotifications(n => [{
-                  id: latest.id,
-                  text: `${latest.author_name} comentó en "${updated.nombre}": ${latest.text.slice(0,80)}`,
-                  leadId: updated.id,
-                  read: false,
-                  date: latest.date
-                }, ...n].slice(0, 20))
+          if (me.role !== 'admin') {
+            // Notify when a lead is assigned to this agent
+            if (updated.assigned_to === me.id && (!exists || exists.assigned_to !== me.id)) {
+              setNotifications(n => [{
+                id: 'assign-' + updated.id,
+                text: 'Te asignaron el lead de ' + updated.nombre,
+                leadId: updated.id,
+                read: false,
+                date: new Date().toISOString()
+              }, ...n].slice(0, 20))
+            }
+            // Notify on new comment
+            if (updated.assigned_to === me.id && exists) {
+              const oldC = (exists.comments || []).length
+              const newC = (updated.comments || []).length
+              if (newC > oldC) {
+                const latest = (updated.comments || [])[newC - 1]
+                if (latest && latest.author_name !== me.name) {
+                  setNotifications(n => [{
+                    id: latest.id,
+                    text: latest.author_name + ' comentó en "' + updated.nombre + '": ' + latest.text.slice(0,80),
+                    leadId: updated.id,
+                    read: false,
+                    date: latest.date
+                  }, ...n].slice(0, 20))
+                }
               }
             }
           }
@@ -239,6 +267,15 @@ export default function App() {
         us = [admin, ...us]
       }
       setUsers(us)
+      // Auto-login from saved session
+      if (window.__sessionUserId) {
+        const saved = us.find(u => u.id === window.__sessionUserId)
+        if (saved) {
+          setMe(saved)
+          setNav(saved.role === 'admin' || saved.role === 'partner' ? 'dashboard' : 'kanban')
+        }
+        window.__sessionUserId = null
+      }
       const { data: ls } = await supabase.from('crm_leads').select('*').order('fecha', {ascending:false})
       setLeads(ls || [])
       // Load custom stages (safe — table may not exist yet)
@@ -253,6 +290,11 @@ export default function App() {
       if (!us.find(u => u.role === 'admin'))
         us = [{id:'u-admin',name:'Luis Burgos',rut:'',phone:'',email:'',username:'admin',pin:'1234',role:'admin'}, ...us]
       setUsers(us)
+      if (window.__sessionUserId) {
+        const saved = us.find(u => u.id === window.__sessionUserId)
+        if (saved) { setMe(saved); setNav(saved.role === 'admin' || saved.role === 'partner' ? 'dashboard' : 'kanban') }
+        window.__sessionUserId = null
+      }
       setLeads(JSON.parse(localStorage.getItem('rcrm_leads') || '[]'))
       const savedStages = localStorage.getItem('rcrm_stages')
       if (savedStages) setStages(JSON.parse(savedStages))
@@ -341,6 +383,8 @@ export default function App() {
     if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
     setNav(u.role === 'admin' || u.role === 'partner' ? 'dashboard' : 'kanban')
+    // Persist session for 8 hours
+    localStorage.setItem('rcrm_session', JSON.stringify({id:u.id, expires: Date.now() + 8*60*60*1000}))
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────
@@ -719,7 +763,7 @@ export default function App() {
             </div>
           )}
           <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid}}>Mi perfil</button>
-          <button onClick={()=>setMe(null)} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'none',background:'transparent',cursor:'pointer',color:'#9ca3af'}}>Salir</button>
+          <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'none',background:'transparent',cursor:'pointer',color:'#9ca3af'}}>Salir</button>
         </div>
       </div>
 
