@@ -1199,7 +1199,7 @@ export default function App() {
           const leadsThisWeek  = leads.filter(l => new Date(l.fecha) >= startOfWeek).length
           const leadsThisMonth = leads.filter(l => new Date(l.fecha) >= startOfMonth).length
           const leadsLastMonth = leads.filter(l => new Date(l.fecha) >= startOfLastMonth && new Date(l.fecha) <= endOfLastMonth).length
-          const ganados        = filteredLeads.filter(l => l.stage === 'ganado').length
+          const ganados        = filteredLeads.filter(l => ['firma','escritura'].includes(l.stage)).length
           const perdidos       = filteredLeads.filter(l => l.stage === 'perdido').length
           const sinAsignar     = filteredLeads.filter(l => !l.assigned_to).length
           const convRate       = filteredLeads.length > 0 ? Math.round((ganados / filteredLeads.length) * 100) : 0
@@ -1216,14 +1216,14 @@ export default function App() {
           const agents = (users||[]).filter(u => u.role === 'agent')
           const byAgent = agents.map(ag => {
             const agLeads = filteredLeads.filter(l => l.assigned_to === ag.id)
-            const agGanados = agLeads.filter(l => l.stage === 'ganado').length
+            const agGanados = agLeads.filter(l => ['firma','escritura'].includes(l.stage)).length
             const agPerdidos = agLeads.filter(l => l.stage === 'perdido').length
             return {
               ...ag,
               total: agLeads.length,
               ganados: agGanados,
               perdidos: agPerdidos,
-              enProceso: agLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido').length,
+              enProceso: agLeads.filter(l => !['firma','escritura','perdido'].includes(l.stage)).length,
               convRate: agLeads.length > 0 ? Math.round((agGanados/agLeads.length)*100) : 0
             }
           }).sort((a,b) => b.total - a.total)
@@ -1235,7 +1235,7 @@ export default function App() {
 
           // Leads estancados (filtrados)
           const stancados = filteredLeads.filter(l => {
-            if (l.stage === 'ganado' || l.stage === 'perdido') return false
+            if (['firma','escritura','perdido'].includes(l.stage)) return false
             return daysIn(l) > 7
           }).length
 
@@ -1286,7 +1286,7 @@ export default function App() {
                   {label:'Total período', value:filteredLeads.length, bg:'#E8EFFE', col:B.primary},
                   {label:'Esta semana',   value:leadsThisWeek, bg:'#F0FDF4', col:'#166534'},
                   {label:'Este mes',      value:leadsThisMonth, bg:'#F5F3FF', col:'#5b21b6'},
-                  {label:'Ganados',       value:ganados, bg:'#DCFCE7', col:'#14532d'},
+                  {label:'En cierre',     value:ganados, bg:'#DCFCE7', col:'#14532d'},
                   {label:'Perdidos',      value:perdidos, bg:'#FEF2F2', col:'#991b1b'},
                   {label:'Conversión',    value:convRate+'%', bg:'#FFFBEB', col:'#92400e'},
                   {label:'Sin asignar',   value:sinAsignar, bg: sinAsignar>0 ? '#FEF2F2' : '#F9FAFB', col: sinAsignar>0 ? '#991b1b' : '#374151'},
@@ -1329,7 +1329,7 @@ export default function App() {
                         <div style={{fontSize:13,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
                         <div style={{display:'flex',gap:10,marginTop:3}}>
                           <span style={{fontSize:11,color:'#6b7280'}}>{ag.total} leads</span>
-                          <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} ganados</span>
+                          <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} en cierre</span>
                           <span style={{fontSize:11,color:'#991b1b'}}>{ag.perdidos} perdidos</span>
                         </div>
                         <div style={{height:4,background:'#f0f4ff',borderRadius:99,marginTop:5,overflow:'hidden'}}>
@@ -1370,9 +1370,9 @@ export default function App() {
                 {/* Leads estancados */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Leads estancados {stancados>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontWeight:600,marginLeft:4}}>+7 días</span>}</p>
-                  {leads.filter(l=>l.stage!=='ganado'&&l.stage!=='perdido'&&daysIn(l)>7).length===0
+                  {leads.filter(l=>!['firma','escritura','perdido'].includes(l.stage)&&daysIn(l)>7).length===0
                     ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads estancados. ¡Todo fluye bien!</p>
-                    : leads.filter(l=>l.stage!=='ganado'&&l.stage!=='perdido'&&daysIn(l)>7)
+                    : leads.filter(l=>!['firma','escritura','perdido'].includes(l.stage)&&daysIn(l)>7)
                         .sort((a,b)=>daysIn(b)-daysIn(a))
                         .slice(0,6)
                         .map(l => {
@@ -1429,9 +1429,9 @@ export default function App() {
 
           const poolThisMonth  = allPool.filter(l => new Date(l.fecha) >= startOfMonth).length
           const poolLastMonth  = allPool.filter(l => new Date(l.fecha) >= startOfLastMonth && new Date(l.fecha) <= endOfLastMonth).length
-          const poolGanados    = poolLeads.filter(l => l.stage === 'ganado').length
+          const poolGanados    = poolLeads.filter(l => ['firma','escritura'].includes(l.stage)).length
           const poolPerdidos   = poolLeads.filter(l => l.stage === 'perdido').length
-          const poolEnProceso  = poolLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido').length
+          const poolEnProceso  = poolLeads.filter(l => !['firma','escritura','perdido'].includes(l.stage)).length
           const convRate       = poolLeads.length > 0 ? Math.round((poolGanados / poolLeads.length) * 100) : 0
           const tendencia      = poolLastMonth > 0 ? Math.round(((poolThisMonth - poolLastMonth) / poolLastMonth)*100) : null
           const stancados      = poolLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido' && daysIn(l) > 7).length
@@ -1447,12 +1447,12 @@ export default function App() {
           const agents = (users||[]).filter(u => u.role === 'agent')
           const byAgent = agents.map(ag => {
             const agLeads = poolLeads.filter(l => l.assigned_to === ag.id)
-            const agGanados = agLeads.filter(l => l.stage === 'ganado').length
+            const agGanados = agLeads.filter(l => ['firma','escritura'].includes(l.stage)).length
             return {
               ...ag,
               total: agLeads.length,
               ganados: agGanados,
-              enProceso: agLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido').length,
+              enProceso: agLeads.filter(l => !['firma','escritura','perdido'].includes(l.stage)).length,
               convRate: agLeads.length > 0 ? Math.round((agGanados/agLeads.length)*100) : 0
             }
           }).filter(ag => ag.total > 0).sort((a,b) => b.total - a.total)
@@ -1515,7 +1515,7 @@ export default function App() {
                     subCol: tendencia>=0?'#166534':'#991b1b'
                   },
                   {label:'En proceso',   value:poolEnProceso,     bg:'#FFFBEB', col:'#92400e'},
-                  {label:'Ganados',      value:poolGanados,       bg:'#DCFCE7', col:'#14532d'},
+                  {label:'En cierre',    value:poolGanados,       bg:'#DCFCE7', col:'#14532d'},
                   {label:'Perdidos',     value:poolPerdidos,      bg:'#FEF2F2', col:'#991b1b'},
                   {label:'Conversión',   value:convRate+'%',      bg: convRate>=30?'#DCFCE7':convRate>=15?'#FFFBEB':'#F9FAFB', col: convRate>=30?'#14532d':convRate>=15?'#92400e':'#374151'},
                   {label:'Estancados +7d',value:stancados,        bg: stancados>0?'#FFF7ED':'#F9FAFB', col: stancados>0?'#9a3412':'#374151'},
@@ -1583,7 +1583,7 @@ export default function App() {
                           <div style={{fontSize:13,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
                           <div style={{display:'flex',gap:8,marginTop:2}}>
                             <span style={{fontSize:11,color:'#6b7280'}}>{ag.total} leads</span>
-                            <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} ganados</span>
+                            <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} en cierre</span>
                             <span style={{fontSize:11,color:'#92400e'}}>{ag.enProceso} en proceso</span>
                           </div>
                           <div style={{height:4,background:'#f0f4ff',borderRadius:99,marginTop:5,overflow:'hidden'}}>
