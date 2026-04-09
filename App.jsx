@@ -159,6 +159,8 @@ export default function App() {
   const [importErrors, setImportErrors] = useState([])
   const [importing, setImporting] = useState(false)
   const [importDone, setImportDone] = useState(null)
+  const [impTag, setImpTag] = useState('lead')
+  const [impAgent, setImpAgent] = useState('')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
@@ -1444,8 +1446,6 @@ export default function App() {
 
         {/* IMPORTAR */}
         {nav==='importar' && isAdmin && (() => {
-          const [impTag, setImpTag] = React.useState('lead')
-          const [impAgent, setImpAgent] = React.useState('')
           return (
             <div style={{maxWidth:700}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16,flexWrap:'wrap',gap:8}}>
