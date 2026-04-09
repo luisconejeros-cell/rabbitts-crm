@@ -491,36 +491,34 @@ export default function App() {
 
   // ── Bulk import ──────────────────────────────────────────────────────────
   function parseCSV(text) {
-    const lines = text.trim().split(/
-?
-/)
-    if (lines.length < 2) return { rows: [], errors: ['El archivo está vacío o no tiene datos'] }
-    const headers = lines[0].split(/[,;\t]/).map(h => h.trim().toLowerCase().replace(/['"]/g,''))
+    const lines = text.trim().split('\n').map(l => l.replace(/\r$/, ''))
+    if (lines.length < 2) return { rows: [], errors: ['El archivo vacío o sin datos'] }
+    const splitLine = l => l.split(',').length > 1 ? l.split(',') : l.split(';').length > 1 ? l.split(';') : l.split('\t')
+    const headers = splitLine(lines[0]).map(h => h.trim().toLowerCase().replace(/['"]/g,''))
     const colMap = {}
     const aliases = {
-      nombre:   ['nombre','name','cliente','nombre completo','full name'],
-      telefono: ['telefono','teléfono','phone','fono','celular','movil','móvil','tel'],
-      email:    ['email','correo','mail','e-mail','e mail'],
-      renta:    ['renta','ingreso','ingresos','presupuesto','sueldo','salario','budget'],
+      nombre:   ['nombre','name','cliente','nombre completo'],
+      telefono: ['telefono','telefono','phone','fono','celular','movil','tel'],
+      email:    ['email','correo','mail'],
+      renta:    ['renta','ingreso','presupuesto','sueldo','salario'],
     }
     for (const [field, opts] of Object.entries(aliases)) {
       const idx = headers.findIndex(h => opts.some(o => h.includes(o)))
       if (idx >= 0) colMap[field] = idx
     }
     if (colMap.nombre === undefined) return { rows: [], errors: ['No se encontró columna "Nombre". Revisa el archivo.'] }
-
     const rows = []; const errors = []
     for (let i = 1; i < lines.length; i++) {
       if (!lines[i].trim()) continue
-      const cols = lines[i].split(/[,;\t]/).map(c => c.trim().replace(/^["']|["']$/g,''))
-      const nombre = cols[colMap.nombre]||''
-      if (!nombre) { errors.push(`Fila ${i+1}: sin nombre — omitida`); continue }
+      const cols = splitLine(lines[i]).map(c => c.trim().replace(/^["']|["']$/g,''))
+      const nombre = cols[colMap.nombre] || ''
+      if (!nombre) { errors.push('Fila '+(i+1)+': sin nombre — omitida'); continue }
       rows.push({
         _row: i+1,
         nombre,
-        telefono: colMap.telefono!==undefined ? cols[colMap.telefono]||'—' : '—',
-        email:    colMap.email!==undefined    ? cols[colMap.email]||'—'    : '—',
-        renta:    colMap.renta!==undefined    ? cols[colMap.renta]||'—'    : '—',
+        telefono: colMap.telefono !== undefined ? (cols[colMap.telefono] || '—') : '—',
+        email:    colMap.email    !== undefined ? (cols[colMap.email]    || '—') : '—',
+        renta:    colMap.renta    !== undefined ? (cols[colMap.renta]    || '—') : '—',
       })
     }
     return { rows, errors }
@@ -530,40 +528,29 @@ export default function App() {
     if (!file) return
     const isXLSX = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
     if (isXLSX) {
-      // Use SheetJS loaded from CDN
-      const script = document.createElement('script')
-      script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
-      script.onload = () => {
+      const doRead = () => {
         const reader = new FileReader()
         reader.onload = e => {
           try {
-            const wb = window.XLSX.read(e.target.result, {type:'array'})
+            const wb = window.XLSX.read(e.target.result, { type: 'array' })
             const ws = wb.Sheets[wb.SheetNames[0]]
             const csv = window.XLSX.utils.sheet_to_csv(ws)
-            const {rows,errors} = parseCSV(csv)
+            const { rows, errors } = parseCSV(csv)
             setImportRows(rows); setImportErrors(errors); setImportDone(null)
-          } catch(err) { setImportErrors(['Error al leer el Excel: '+err.message]) }
+          } catch(err) { setImportErrors(['Error al leer el Excel: ' + err.message]) }
         }
         reader.readAsArrayBuffer(file)
       }
-      if (!window.XLSX) document.head.appendChild(script)
-      else {
-        const reader = new FileReader()
-        reader.onload = e => {
-          try {
-            const wb = window.XLSX.read(e.target.result, {type:'array'})
-            const ws = wb.Sheets[wb.SheetNames[0]]
-            const csv = window.XLSX.utils.sheet_to_csv(ws)
-            const {rows,errors} = parseCSV(csv)
-            setImportRows(rows); setImportErrors(errors); setImportDone(null)
-          } catch(err) { setImportErrors(['Error al leer el Excel: '+err.message]) }
-        }
-        reader.readAsArrayBuffer(file)
-      }
+      if (!window.XLSX) {
+        const script = document.createElement('script')
+        script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+        script.onload = doRead
+        document.head.appendChild(script)
+      } else { doRead() }
     } else {
       const reader = new FileReader()
       reader.onload = e => {
-        const {rows,errors} = parseCSV(e.target.result)
+        const { rows, errors } = parseCSV(e.target.result)
         setImportRows(rows); setImportErrors(errors); setImportDone(null)
       }
       reader.readAsText(file, 'UTF-8')
@@ -575,29 +562,34 @@ export default function App() {
     setImporting(true)
     const now = new Date().toISOString()
     const newLeads = importRows.map(r => ({
-      id: 'l-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
-      fecha: now, stage_moved_at: now, stage: stages[0]?.id||'nuevo',
-      assigned_to: assignTo||null, tag: tag||'lead', origen: 'importacion',
+      id: 'l-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
+      fecha: now, stage_moved_at: now, stage: stages[0]?.id || 'nuevo',
+      assigned_to: assignTo || null, tag: tag || 'lead', origen: 'importacion',
       nombre: r.nombre, telefono: r.telefono, email: r.email, renta: r.renta,
       calificacion: '—', resumen: 'Lead importado masivamente.',
-      creado_por: me.id, comments: [], stage_history: [{stage:stages[0]?.id||'nuevo',date:now}],
+      creado_por: me.id, comments: [], stage_history: [{ stage: stages[0]?.id || 'nuevo', date: now }],
       conversacion: ''
     }))
     await saveLeads([...newLeads, ...leads])
     setImportDone(newLeads.length)
     setImportRows([]); setImportErrors([])
     setImporting(false)
-    msg(newLeads.length+' leads importados exitosamente')
+    msg(newLeads.length + ' leads importados exitosamente')
   }
 
   function downloadTemplate() {
-    const csv = '\uFEFFNombre,Teléfono,Email,Renta\nMaría González,+56 9 8765 4321,maria@email.com,$1.500.000\nJuan Pérez,+56 9 1234 5678,juan@email.com,$2.000.000\n'
-    const blob = new Blob([csv],{type:'text/csv;charset=utf-8'})
+    const rows = [
+      'Nombre,Telefono,Email,Renta',
+      'Maria Gonzalez,+56 9 8765 4321,maria@email.com,$1.500.000',
+      'Juan Perez,+56 9 1234 5678,juan@email.com,$2.000.000',
+    ]
+    const csv = rows.join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href=url; a.download='plantilla_importacion_rabbitts.csv'; a.click(); URL.revokeObjectURL(url)
+    const a = document.createElement('a'); a.href = url; a.download = 'plantilla_rabbitts.csv'; a.click(); URL.revokeObjectURL(url)
   }
 
-  async function deleteLead(id) {
+    async function deleteLead(id) {
     if (dbReady) await supabase.from('crm_leads').delete().eq('id', id)
     await saveLeads(leads.filter(l => l.id!==id))
     setModal(null); setSel(null); msg('Lead eliminado')
