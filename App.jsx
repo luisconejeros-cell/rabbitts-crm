@@ -271,6 +271,26 @@ export default function App() {
     return () => clearInterval(t)
   }, [])
 
+  // ── Realtime for stages (crm_settings) ──────────────────────────────────
+  useEffect(() => {
+    if (!dbReady) return
+    const ch = supabase
+      .channel('crm_settings_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'crm_settings' }, payload => {
+        if (payload.new?.key === 'stages' && payload.new?.value) {
+          const saved = payload.new.value
+          const required = DEFAULT_STAGES.filter(ds => ['firma','escritura','perdido'].includes(ds.id))
+          const merged = [...saved]
+          for (const rs of required) {
+            if (!merged.find(s => s.id === rs.id)) merged.push(rs)
+          }
+          setStages(merged)
+        }
+      })
+      .subscribe()
+    return () => supabase.removeChannel(ch)
+  }, [dbReady])
+
   // ── DB init ───────────────────────────────────────────────────────────────
   async function initDB() {
     try {
@@ -299,10 +319,11 @@ export default function App() {
         const { data: st } = await supabase.from('crm_settings').select('value').eq('key','stages').single()
         if (st?.value) {
           const saved = st.value
-          // Add any DEFAULT_STAGES entries missing from saved (e.g. new stages added in updates)
+          // Only ensure truly required stages exist — don't re-add deleted ones
+          const required = DEFAULT_STAGES.filter(ds => ['firma','escritura','perdido'].includes(ds.id))
           const merged = [...saved]
-          for (const ds of DEFAULT_STAGES) {
-            if (!merged.find(s => s.id === ds.id)) merged.push(ds)
+          for (const rs of required) {
+            if (!merged.find(s => s.id === rs.id)) merged.push(rs)
           }
           setStages(merged)
         }
@@ -321,7 +342,15 @@ export default function App() {
       }
       setLeads(JSON.parse(localStorage.getItem('rcrm_leads') || '[]'))
       const savedStages = localStorage.getItem('rcrm_stages')
-      if (savedStages) setStages(JSON.parse(savedStages))
+      if (savedStages) {
+        const saved = JSON.parse(savedStages)
+        const required = DEFAULT_STAGES.filter(ds => ['firma','escritura','perdido'].includes(ds.id))
+        const merged = [...saved]
+        for (const rs of required) {
+          if (!merged.find(s => s.id === rs.id)) merged.push(rs)
+        }
+        setStages(merged)
+      }
       setDbReady(false)
     }
   }
