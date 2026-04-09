@@ -154,6 +154,9 @@ export default function App() {
   const [editStageLabel, setEditStageLabel] = useState('')
   const [editLead, setEditLead] = useState(null)
   const [editUser, setEditUser] = useState(null)
+  const [dateRange, setDateRange] = useState('all')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
 
   useEffect(() => { initDB() }, [])
 
@@ -853,6 +856,40 @@ export default function App() {
         {/* DASHBOARD */}
         {nav==='dashboard' && isAdmin && (() => {
           const now = new Date()
+
+          // ── Date range filter ──────────────────────────────────────────
+          function getRangeDate(range) {
+            const n = new Date()
+            if (range === 'this_week') { const d=new Date(n); d.setDate(n.getDate()-n.getDay()+1); d.setHours(0,0,0,0); return [d, null] }
+            if (range === 'this_month') return [new Date(n.getFullYear(),n.getMonth(),1), null]
+            if (range === 'last_month') return [new Date(n.getFullYear(),n.getMonth()-1,1), new Date(n.getFullYear(),n.getMonth(),0,23,59,59)]
+            if (range === 'last_3m') { const d=new Date(n); d.setMonth(n.getMonth()-3); return [d, null] }
+            if (range === 'last_6m') { const d=new Date(n); d.setMonth(n.getMonth()-6); return [d, null] }
+            if (range === 'this_year') return [new Date(n.getFullYear(),0,1), null]
+            if (range === 'custom' && customFrom) return [new Date(customFrom), customTo ? new Date(customTo+'T23:59:59') : null]
+            return [null, null]
+          }
+          const [rangeFrom, rangeTo] = getRangeDate(dateRange)
+          const inRange = l => {
+            const d = new Date(l.fecha)
+            if (rangeFrom && d < rangeFrom) return false
+            if (rangeTo && d > rangeTo) return false
+            return true
+          }
+          const filteredLeads = leads.filter(inRange)
+
+          // ── Previous period for comparison ─────────────────────────────
+          function getPrevRange(range) {
+            const n = new Date()
+            if (range === 'this_month') return [new Date(n.getFullYear(),n.getMonth()-1,1), new Date(n.getFullYear(),n.getMonth(),0,23,59,59)]
+            if (range === 'last_month') return [new Date(n.getFullYear(),n.getMonth()-2,1), new Date(n.getFullYear(),n.getMonth()-1,0,23,59,59)]
+            if (range === 'this_week') { const d=new Date(n); d.setDate(n.getDate()-n.getDay()-6); d.setHours(0,0,0,0); const e=new Date(n); e.setDate(n.getDate()-n.getDay()); e.setHours(23,59,59); return [d,e] }
+            return [null,null]
+          }
+          const [prevFrom, prevTo] = getPrevRange(dateRange)
+          const inPrev = l => { const d=new Date(l.fecha); if(prevFrom&&d<prevFrom)return false; if(prevTo&&d>prevTo)return false; return true }
+          const prevLeads = leads.filter(inPrev)
+
           const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay() + 1); startOfWeek.setHours(0,0,0,0)
           const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
           const startOfLastMonth = new Date(now.getFullYear(), now.getMonth()-1, 1)
@@ -861,22 +898,23 @@ export default function App() {
           const leadsThisWeek  = leads.filter(l => new Date(l.fecha) >= startOfWeek).length
           const leadsThisMonth = leads.filter(l => new Date(l.fecha) >= startOfMonth).length
           const leadsLastMonth = leads.filter(l => new Date(l.fecha) >= startOfLastMonth && new Date(l.fecha) <= endOfLastMonth).length
-          const ganados        = leads.filter(l => l.stage === 'ganado').length
-          const perdidos       = leads.filter(l => l.stage === 'perdido').length
-          const sinAsignar     = leads.filter(l => !l.assigned_to).length
-          const convRate       = leads.length > 0 ? Math.round((ganados / leads.length) * 100) : 0
+          const ganados        = filteredLeads.filter(l => l.stage === 'ganado').length
+          const perdidos       = filteredLeads.filter(l => l.stage === 'perdido').length
+          const sinAsignar     = filteredLeads.filter(l => !l.assigned_to).length
+          const convRate       = filteredLeads.length > 0 ? Math.round((ganados / filteredLeads.length) * 100) : 0
+          const tendenciaCount = prevLeads.length > 0 ? Math.round(((filteredLeads.length - prevLeads.length) / prevLeads.length)*100) : null
 
-          // Leads por etapa
+          // Leads por etapa (filtrados)
           const byStage = stages.map(st => ({
             ...st,
-            count: leads.filter(l => l.stage === st.id).length,
-            pct: leads.length > 0 ? Math.round((leads.filter(l=>l.stage===st.id).length / leads.length)*100) : 0
+            count: filteredLeads.filter(l => l.stage === st.id).length,
+            pct: filteredLeads.length > 0 ? Math.round((filteredLeads.filter(l=>l.stage===st.id).length / filteredLeads.length)*100) : 0
           }))
 
-          // Leads por agente
+          // Leads por agente (filtrados)
           const agents = (users||[]).filter(u => u.role === 'agent')
           const byAgent = agents.map(ag => {
-            const agLeads = leads.filter(l => l.assigned_to === ag.id)
+            const agLeads = filteredLeads.filter(l => l.assigned_to === ag.id)
             const agGanados = agLeads.filter(l => l.stage === 'ganado').length
             const agPerdidos = agLeads.filter(l => l.stage === 'perdido').length
             return {
@@ -889,36 +927,69 @@ export default function App() {
             }
           }).sort((a,b) => b.total - a.total)
 
-          // Leads por etiqueta
+          // Leads por etiqueta (filtrados)
           const byTag = ['lead','referido','pool'].map(tag => ({
-            tag, count: leads.filter(l => l.tag === tag).length
+            tag, count: filteredLeads.filter(l => l.tag === tag).length
           }))
 
-          // Leads stancados (más de 7 días en la misma etapa, no ganados ni perdidos)
-          const stancados = leads.filter(l => {
+          // Leads estancados (filtrados)
+          const stancados = filteredLeads.filter(l => {
             if (l.stage === 'ganado' || l.stage === 'perdido') return false
             return daysIn(l) > 7
           }).length
 
-          // Tendencia vs mes anterior
-          const tendencia = leadsLastMonth > 0 ? Math.round(((leadsThisMonth - leadsLastMonth) / leadsLastMonth)*100) : null
+          const RANGE_OPTS = [
+            {v:'all',       l:'Todo el tiempo'},
+            {v:'this_week', l:'Esta semana'},
+            {v:'this_month',l:'Este mes'},
+            {v:'last_month',l:'Mes anterior'},
+            {v:'last_3m',   l:'Últimos 3 meses'},
+            {v:'last_6m',   l:'Últimos 6 meses'},
+            {v:'this_year', l:'Este año'},
+            {v:'custom',    l:'Rango personalizado'},
+          ]
+          const rangeLabel = RANGE_OPTS.find(o=>o.v===dateRange)?.l || 'Todo el tiempo'
+          const totalInRange = filteredLeads.length
 
           return (
             <div>
+              {/* Date range filter bar */}
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap',padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:12}}>
+                <span style={{fontSize:12,fontWeight:700,color:B.primary,flexShrink:0}}>Período:</span>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',flex:1}}>
+                  {RANGE_OPTS.filter(o=>o.v!=='custom').map(o=>(
+                    <button key={o.v} onClick={()=>setDateRange(o.v)} style={{fontSize:12,padding:'5px 12px',borderRadius:8,border:dateRange===o.v?`2px solid ${B.primary}`:'1px solid #dce8ff',background:dateRange===o.v?B.light:'transparent',color:dateRange===o.v?B.primary:'#6b7280',cursor:'pointer',fontWeight:dateRange===o.v?700:400}}>
+                      {o.l}
+                    </button>
+                  ))}
+                  <button onClick={()=>setDateRange('custom')} style={{fontSize:12,padding:'5px 12px',borderRadius:8,border:dateRange==='custom'?`2px solid ${B.primary}`:'1px solid #dce8ff',background:dateRange==='custom'?B.light:'transparent',color:dateRange==='custom'?B.primary:'#6b7280',cursor:'pointer',fontWeight:dateRange==='custom'?700:400}}>
+                    Personalizado
+                  </button>
+                </div>
+                {dateRange==='custom' && (
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                    <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{...sty.inp,width:'auto',fontSize:12,padding:'5px 8px'}}/>
+                    <span style={{fontSize:12,color:'#9ca3af'}}>→</span>
+                    <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{...sty.inp,width:'auto',fontSize:12,padding:'5px 8px'}}/>
+                  </div>
+                )}
+                <div style={{marginLeft:'auto',flexShrink:0}}>
+                  <span style={{fontSize:12,color:B.mid,fontWeight:600}}>{totalInRange} leads</span>
+                  {tendenciaCount!==null && <span style={{fontSize:11,marginLeft:8,color:tendenciaCount>=0?'#166534':'#991b1b',fontWeight:600}}>{tendenciaCount>=0?'+':''}{tendenciaCount}% vs período ant.</span>}
+                </div>
+              </div>
+
               {/* KPI cards row */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:10,marginBottom:20}}>
                 {[
-                  {label:'Total leads', value:leads.length, bg:'#E8EFFE', col:B.primary},
-                  {label:'Esta semana',  value:leadsThisWeek, bg:'#F0FDF4', col:'#166534'},
-                  {label:'Este mes',    value:leadsThisMonth, bg:'#F5F3FF', col:'#5b21b6',
-                    sub: tendencia!==null ? (tendencia>=0?`+${tendencia}%`:`${tendencia}%`) + ' vs mes ant.' : null,
-                    subCol: tendencia>=0 ? '#166534' : '#991b1b'
-                  },
-                  {label:'Ganados',     value:ganados, bg:'#DCFCE7', col:'#14532d'},
-                  {label:'Perdidos',    value:perdidos, bg:'#FEF2F2', col:'#991b1b'},
-                  {label:'Conversión',  value:convRate+'%', bg:'#FFFBEB', col:'#92400e'},
-                  {label:'Sin asignar', value:sinAsignar, bg: sinAsignar>0 ? '#FEF2F2' : '#F9FAFB', col: sinAsignar>0 ? '#991b1b' : '#374151'},
-                  {label:'Estancados +7d', value:stancados, bg: stancados>0 ? '#FFF7ED' : '#F9FAFB', col: stancados>0 ? '#9a3412' : '#374151'},
+                  {label:'Total período', value:filteredLeads.length, bg:'#E8EFFE', col:B.primary},
+                  {label:'Esta semana',   value:leadsThisWeek, bg:'#F0FDF4', col:'#166534'},
+                  {label:'Este mes',      value:leadsThisMonth, bg:'#F5F3FF', col:'#5b21b6'},
+                  {label:'Ganados',       value:ganados, bg:'#DCFCE7', col:'#14532d'},
+                  {label:'Perdidos',      value:perdidos, bg:'#FEF2F2', col:'#991b1b'},
+                  {label:'Conversión',    value:convRate+'%', bg:'#FFFBEB', col:'#92400e'},
+                  {label:'Sin asignar',   value:sinAsignar, bg: sinAsignar>0 ? '#FEF2F2' : '#F9FAFB', col: sinAsignar>0 ? '#991b1b' : '#374151'},
+                  {label:'Estancados +7d',value:stancados, bg: stancados>0 ? '#FFF7ED' : '#F9FAFB', col: stancados>0 ? '#9a3412' : '#374151'},
                 ].map((k,i) => (
                   <div key={i} style={{background:k.bg,borderRadius:10,padding:'12px 14px',border:'1px solid '+k.col+'33'}}>
                     <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:4,opacity:.8}}>{k.label}</div>
@@ -1026,14 +1097,37 @@ export default function App() {
 
         {/* DASHBOARD SOCIO COMERCIAL */}
         {nav==='dashboard' && isPartner && (() => {
-          const poolLeads = leads.filter(l => l.tag === 'pool')
           const now = new Date()
+
+          // ── Date range filter (shared state with admin) ────────────────
+          function getRangeDateP(range) {
+            const n = new Date()
+            if (range === 'this_week') { const d=new Date(n); d.setDate(n.getDate()-n.getDay()+1); d.setHours(0,0,0,0); return [d, null] }
+            if (range === 'this_month') return [new Date(n.getFullYear(),n.getMonth(),1), null]
+            if (range === 'last_month') return [new Date(n.getFullYear(),n.getMonth()-1,1), new Date(n.getFullYear(),n.getMonth(),0,23,59,59)]
+            if (range === 'last_3m') { const d=new Date(n); d.setMonth(n.getMonth()-3); return [d, null] }
+            if (range === 'last_6m') { const d=new Date(n); d.setMonth(n.getMonth()-6); return [d, null] }
+            if (range === 'this_year') return [new Date(n.getFullYear(),0,1), null]
+            if (range === 'custom' && customFrom) return [new Date(customFrom), customTo ? new Date(customTo+'T23:59:59') : null]
+            return [null, null]
+          }
+          const [pRangeFrom, pRangeTo] = getRangeDateP(dateRange)
+          const inRangeP = l => {
+            const d = new Date(l.fecha)
+            if (pRangeFrom && d < pRangeFrom) return false
+            if (pRangeTo && d > pRangeTo) return false
+            return true
+          }
+
+          const allPool = leads.filter(l => l.tag === 'pool')
+          const poolLeads = allPool.filter(inRangeP)
+
           const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
           const startOfLastMonth = new Date(now.getFullYear(), now.getMonth()-1, 1)
           const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0)
 
-          const poolThisMonth  = poolLeads.filter(l => new Date(l.fecha) >= startOfMonth).length
-          const poolLastMonth  = poolLeads.filter(l => new Date(l.fecha) >= startOfLastMonth && new Date(l.fecha) <= endOfLastMonth).length
+          const poolThisMonth  = allPool.filter(l => new Date(l.fecha) >= startOfMonth).length
+          const poolLastMonth  = allPool.filter(l => new Date(l.fecha) >= startOfLastMonth && new Date(l.fecha) <= endOfLastMonth).length
           const poolGanados    = poolLeads.filter(l => l.stage === 'ganado').length
           const poolPerdidos   = poolLeads.filter(l => l.stage === 'perdido').length
           const poolEnProceso  = poolLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido').length
@@ -1072,13 +1166,44 @@ export default function App() {
           return (
             <div>
               {/* Header */}
-              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:14,borderBottom:'2px solid #E8EFFE'}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
                 <div style={{width:40,height:40,borderRadius:10,background:B.light,border:`1px solid ${B.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>📊</div>
                 <div>
                   <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Dashboard Pool</div>
                   <div style={{fontSize:12,color:B.mid}}>Rendimiento de leads etiquetados como pool</div>
                 </div>
               </div>
+
+              {/* Date range filter bar */}
+              {(() => {
+                const ROPTS = [
+                  {v:'all',l:'Todo'},{v:'this_week',l:'Esta semana'},{v:'this_month',l:'Este mes'},
+                  {v:'last_month',l:'Mes anterior'},{v:'last_3m',l:'3 meses'},{v:'last_6m',l:'6 meses'},{v:'this_year',l:'Este año'},{v:'custom',l:'Personalizado'}
+                ]
+                return (
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,flexWrap:'wrap',padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:12}}>
+                    <span style={{fontSize:12,fontWeight:700,color:B.primary,flexShrink:0}}>Período:</span>
+                    <div style={{display:'flex',gap:5,flexWrap:'wrap',flex:1}}>
+                      {ROPTS.filter(o=>o.v!=='custom').map(o=>(
+                        <button key={o.v} onClick={()=>setDateRange(o.v)} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:dateRange===o.v?`2px solid ${B.primary}`:'1px solid #dce8ff',background:dateRange===o.v?B.light:'transparent',color:dateRange===o.v?B.primary:'#6b7280',cursor:'pointer',fontWeight:dateRange===o.v?700:400}}>
+                          {o.l}
+                        </button>
+                      ))}
+                      <button onClick={()=>setDateRange('custom')} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:dateRange==='custom'?`2px solid ${B.primary}`:'1px solid #dce8ff',background:dateRange==='custom'?B.light:'transparent',color:dateRange==='custom'?B.primary:'#6b7280',cursor:'pointer',fontWeight:dateRange==='custom'?700:400}}>
+                        Personalizado
+                      </button>
+                    </div>
+                    {dateRange==='custom' && (
+                      <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                        <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#111827'}}/>
+                        <span style={{fontSize:11,color:'#9ca3af'}}>→</span>
+                        <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#111827'}}/>
+                      </div>
+                    )}
+                    <span style={{marginLeft:'auto',fontSize:12,color:B.mid,fontWeight:600,flexShrink:0}}>{poolLeads.length} leads pool</span>
+                  </div>
+                )
+              })()}
 
               {/* KPIs */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10,marginBottom:20}}>
