@@ -662,7 +662,7 @@ export default function App() {
   const isAgent   = me?.role === 'agent'
 
   const vL = !me ? [] : isAdmin
-    ? leads.filter(l => (fa==='all'||l.assigned_to===fa) && (fs==='all'||l.stage===fs) && (ft==='all'||l.tag===ft))
+    ? leads.filter(l => (fa==='all'||(fa===''?(!l.assigned_to):l.assigned_to===fa)) && (fs==='all'||l.stage===fs) && (ft==='all'||l.tag===ft))
     : isPartner ? leads.filter(l => l.tag==='pool')
     : leads.filter(l => l.assigned_to===me.id)
 
