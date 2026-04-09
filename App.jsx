@@ -25,10 +25,20 @@ const DEFAULT_STAGES = [
   { id:'agenda',     label:'Agenda reunión',       bg:'#F5F3FF', col:'#5b21b6', dot:'#c4b5fd' },
   { id:'credito',    label:'Crédito aprobado',     bg:'#FFFBEB', col:'#92400e', dot:'#fcd34d' },
   { id:'reserva',    label:'Reserva',              bg:'#F0FDF4', col:'#166534', dot:'#86efac' },
-  { id:'firma',      label:'Firma promesa',        bg:'#FFF7ED', col:'#9a3412', dot:'#fdba74' },
+  { id:'firma',      label:'Firma promesa',        bg:'#FFF7ED', col:'#9a3412', dot:'#fdba74',  restricted:true },
+  { id:'escritura',  label:'Firma escritura',      bg:'#FEF9C3', col:'#713f12', dot:'#fbbf24',  restricted:true },
   { id:'ganado',     label:'Ganado',               bg:'#DCFCE7', col:'#14532d', dot:'#4ade80' },
   { id:'perdido',    label:'Perdido',              bg:'#FEF2F2', col:'#991b1b', dot:'#fca5a5' },
 ]
+
+// Stages only Operaciones/Admin can move leads into
+const RESTRICTED_STAGES = ['firma','escritura']
+
+// Empty property template
+const EMPTY_PROP = {
+  id:'', inmobiliaria:'', proyecto:'', moneda:'UF', precio:0,
+  bono_pie:false, bono_pct:10, precio_sin_bono:0
+}
 
 // Color presets for stage editor
 const COLOR_PRESETS = [
@@ -161,6 +171,9 @@ export default function App() {
   const [importDone, setImportDone] = useState(null)
   const [impTag, setImpTag] = useState('lead')
   const [impAgent, setImpAgent] = useState('')
+  const [propModal, setPropModal] = useState(null)  // leadId to add properties to
+  const [editingProps, setEditingProps] = useState([])  // array of properties being edited
+  const [pendingStage, setPendingStage] = useState(null)  // {leadId, stageId} waiting for prop form
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
@@ -383,6 +396,7 @@ export default function App() {
     if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
     setNav(u.role === 'admin' || u.role === 'partner' ? 'dashboard' : 'kanban')
+    // session also restored in __sessionUserId path
     // Persist session for 8 hours
     localStorage.setItem('rcrm_session', JSON.stringify({id:u.id, expires: Date.now() + 8*60*60*1000}))
   }
@@ -465,6 +479,16 @@ export default function App() {
 
   function reqMove(lid, sid) {
     if (sid==='perdido') { setLossTgt(lid); setLossR(LOSS_REASONS[0]); setLossOth(''); setModal('lost'); return }
+    // Restricted stages require property form (admin or operaciones only)
+    if (RESTRICTED_STAGES.includes(sid)) {
+      if (!isAdmin && !isOps) { msg('Solo Operaciones o el Administrador puede mover a esta etapa'); return }
+      const lead = leads.find(l => l.id === lid)
+      const existingProps = lead?.propiedades || []
+      setEditingProps(existingProps.length > 0 ? [...existingProps] : [{...EMPTY_PROP, id:'p-'+Date.now()}])
+      setPendingStage({leadId:lid, stageId:sid})
+      setPropModal(lid)
+      return
+    }
     moveStage(lid, sid, null)
   }
 
@@ -633,7 +657,30 @@ export default function App() {
     const a = document.createElement('a'); a.href = url; a.download = 'plantilla_rabbitts.csv'; a.click(); URL.revokeObjectURL(url)
   }
 
-    async function deleteLead(id) {
+    function calcProp(p) {
+    const precio = parseFloat(p.precio)||0
+    const bono = p.bono_pie ? precio * (parseFloat(p.bono_pct)||0) / 100 : 0
+    return {...p, precio_sin_bono: p.bono_pie ? Math.round((precio - bono)*100)/100 : precio}
+  }
+
+  async function savePropiedades(leadId, props, stageId) {
+    const calculatedProps = props.map(calcProp)
+    const ls = leads.map(l => l.id===leadId ? {
+      ...l,
+      propiedades: calculatedProps,
+      ...(stageId ? {
+        stage: stageId,
+        stage_moved_at: new Date().toISOString(),
+        stage_history: [...(l.stage_history||[]), {stage:stageId, date:new Date().toISOString()}]
+      } : {})
+    } : l)
+    await saveLeads(ls)
+    if (sel?.id===leadId) setSel(ls.find(l=>l.id===leadId))
+    setPropModal(null); setPendingStage(null); setEditingProps([])
+    msg(stageId ? 'Propiedades guardadas y etapa actualizada' : 'Propiedades guardadas')
+  }
+
+  async function deleteLead(id) {
     if (dbReady) await supabase.from('crm_leads').delete().eq('id', id)
     await saveLeads(leads.filter(l => l.id!==id))
     setModal(null); setSel(null); msg('Lead eliminado')
@@ -661,12 +708,18 @@ export default function App() {
   const isPartner = me?.role === 'partner'
   const isAgent   = me?.role === 'agent'
 
+  const OPS_STAGES = ['reserva','firma','escritura','ganado','perdido']
   const vL = !me ? [] : isAdmin
     ? leads.filter(l => (fa==='all'||(fa===''?(!l.assigned_to):l.assigned_to===fa)) && (fs==='all'||l.stage===fs) && (ft==='all'||l.tag===ft))
     : isPartner ? leads.filter(l => l.tag==='pool')
+    : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin ? ['dashboard','kanban','lista','usuarios','etapas','importar','extraer'] : isPartner ? ['dashboard','pool'] : ['kanban','lista','nuevo lead']
+  const isOps = me?.role === 'operaciones'
+  const NAV = isAdmin   ? ['dashboard','kanban','lista','usuarios','ranking','etapas','importar','extraer']
+            : isPartner ? ['dashboard','pool']
+            : isOps     ? ['kanban','lista']
+            : ['kanban','lista','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
@@ -737,7 +790,7 @@ export default function App() {
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <AV name={me.name} size={28}/>
           <span style={{fontSize:13,color:'#6b7280',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{me.name}</span>
-          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':'#1d4ed8',fontWeight:700}}>{me.role}</span>
+          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':isOps?'#FEF9C3':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':isOps?'#713f12':'#1d4ed8',fontWeight:700}}>{me.role}</span>
           {!isAdmin && (
             <div style={{position:'relative'}}>
               <button onClick={()=>{setShowNotifs(v=>!v);setNotifications(n=>n.map(x=>({...x,read:true})))}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid,position:'relative'}}>
@@ -762,6 +815,24 @@ export default function App() {
               )}
             </div>
           )}
+          {/* Ranking badge for agents */}
+          {isAgent && (() => {
+            const agents = (users||[]).filter(u => u.role === 'agent')
+            const rankingStages = ['firma','escritura','ganado']
+            const ranked = agents.map(ag => {
+              const ufTotal = leads.filter(l=>l.assigned_to===ag.id&&rankingStages.includes(l.stage)).reduce((s,l)=>s+(l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((ss,p)=>ss+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0),0)
+              return {id:ag.id, ufTotal}
+            }).sort((a,b)=>b.ufTotal-a.ufTotal)
+            const pos = ranked.findIndex(r=>r.id===me.id)+1
+            const medals = {1:'🥇',2:'🥈',3:'🥉'}
+            if (pos === 0) return null
+            return (
+              <div style={{display:'flex',alignItems:'center',gap:4,background:'#E8EFFE',borderRadius:8,padding:'3px 10px',border:'1px solid #A8C0F0'}}>
+                {medals[pos] && <span style={{fontSize:14}}>{medals[pos]}</span>}
+                <span style={{fontSize:12,fontWeight:700,color:B.primary}}>{pos}/{ranked.length}</span>
+              </div>
+            )
+          })()}
           <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid}}>Mi perfil</button>
           <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'none',background:'transparent',cursor:'pointer',color:'#9ca3af'}}>Salir</button>
         </div>
@@ -807,7 +878,7 @@ export default function App() {
                       <span style={{fontSize:11,color:'#9ca3af',marginLeft:'auto'}}>{cols.length}</span>
                     </div>
                     <div style={{background:st.bg,borderRadius:12,padding:8,minHeight:60,border:'1px solid '+st.dot+'44'}}>
-                      {cols.map(l=><KCard key={l.id} lead={l} users={users} isAdmin={isAdmin} isPartner={isPartner} onOpen={()=>{setSel(l);setModal('lead')}} onMove={reqMove} stages={stages}/>)}
+                      {cols.map(l=><KCard key={l.id} lead={l} users={users} isAdmin={isAdmin} isPartner={isPartner} isOps={isOps} onOpen={()=>{setSel(l);setModal('lead')}} onMove={reqMove} stages={stages}/>)}
                       {cols.length===0&&<div style={{fontSize:11,color:'#9ca3af',textAlign:'center',padding:'14px 0'}}>—</div>}
                     </div>
                   </div>
@@ -869,7 +940,7 @@ export default function App() {
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
               {(users||[]).map(u => {
                 const uL = leads.filter(l=>l.assigned_to===u.id)
-                const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6']}
+                const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12']}
                 const [rb,rc] = RC[u.role]||RC.agent
                 return (
                   <div key={u.id} style={sty.card}>
@@ -1586,6 +1657,84 @@ export default function App() {
           )
         })()}
 
+        {/* RANKING */}
+        {nav==='ranking' && isAdmin && (() => {
+          const agents = (users||[]).filter(u => u.role === 'agent')
+          const rankingStages = ['firma','escritura','ganado']
+          const ranked = agents.map(ag => {
+            const agLeads = leads.filter(l => l.assigned_to === ag.id && rankingStages.includes(l.stage))
+            const totalUF = agLeads.reduce((sum, l) => {
+              const props = l.propiedades || []
+              return sum + props.filter(p=>p.moneda==='UF').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
+            }, 0)
+            const totalUSD = agLeads.reduce((sum, l) => {
+              const props = l.propiedades || []
+              return sum + props.filter(p=>p.moneda==='USD').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
+            }, 0)
+            const propCount = agLeads.reduce((s,l)=>s+(l.propiedades||[]).length,0)
+            return {...ag, totalUF, totalUSD, propCount, leadsCount:agLeads.length}
+          }).sort((a,b) => b.totalUF - a.totalUF)
+
+          const medals = ['🥇','🥈','🥉']
+
+          return (
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
+                <div style={{fontSize:28}}>🏆</div>
+                <div>
+                  <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Ranking de Asesores</div>
+                  <div style={{fontSize:12,color:B.mid}}>Por UF en Firma Promesa, Firma Escritura y Ganados</div>
+                </div>
+              </div>
+
+              {ranked.length === 0 && <p style={{fontSize:13,color:'#9ca3af'}}>Sin asesores registrados aún.</p>}
+
+              <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                {ranked.map((ag, idx) => {
+                  const pos = idx + 1
+                  const medal = medals[idx] || null
+                  const isTop3 = idx < 3
+                  return (
+                    <div key={ag.id} style={{display:'flex',alignItems:'center',gap:14,padding:'14px 18px',background:isTop3?'#fff':'#f9fbff',border:isTop3?`2px solid ${B.border}`:'1px solid #dce8ff',borderRadius:12,boxShadow:isTop3?'0 2px 12px rgba(27,79,200,0.08)':'none'}}>
+                      {/* Position */}
+                      <div style={{minWidth:52,textAlign:'center',flexShrink:0}}>
+                        {medal
+                          ? <div style={{fontSize:32,lineHeight:1}}>{medal}</div>
+                          : <div style={{fontSize:18,fontWeight:800,color:'#9ca3af'}}>#{pos}</div>
+                        }
+                        <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>{pos}/{ranked.length}</div>
+                      </div>
+
+                      {/* Avatar + name */}
+                      <AV name={ag.name} size={44}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:15,fontWeight:700,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
+                        <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{ag.leadsCount} leads · {ag.propCount} propiedades</div>
+                        {/* UF bar */}
+                        {ranked[0]?.totalUF > 0 && (
+                          <div style={{marginTop:6}}>
+                            <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                              <div style={{height:'100%',width:(ag.totalUF/ranked[0].totalUF*100)+'%',background:isTop3?B.primary:'#93c5fd',borderRadius:99,transition:'width .5s ease'}}/>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Stats */}
+                      <div style={{textAlign:'right',flexShrink:0}}>
+                        <div style={{fontSize:20,fontWeight:800,color:isTop3?B.primary:'#374151'}}>
+                          {ag.totalUF > 0 ? 'UF '+ag.totalUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—'}
+                        </div>
+                        {ag.totalUSD > 0 && <div style={{fontSize:12,color:'#166534',fontWeight:600}}>+ USD {ag.totalUSD.toLocaleString('es-CL')}</div>}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
+
         {/* EXTRAER */}
         {nav==='extraer' && isAdmin && (
           <div style={{maxWidth:560}}>
@@ -1673,6 +1822,30 @@ export default function App() {
             )}
           </>}
           {isPartner && <div style={{padding:'10px 12px',background:B.light,borderRadius:8,fontSize:12,color:B.primary,marginBottom:12}}>Vista de solo lectura — socio comercial</div>}
+
+          {/* Properties section — visible to all, editable by admin/ops */}
+          {(sel.propiedades||[]).length > 0 && (
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,fontWeight:700,color:B.primary,marginBottom:8}}>Propiedades registradas ({(sel.propiedades||[]).length})</div>
+              {(sel.propiedades||[]).map((p,i) => (
+                <div key={p.id||i} style={{background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:8,padding:'8px 12px',marginBottom:6,fontSize:12}}>
+                  <div style={{fontWeight:700,color:'#713f12',marginBottom:3}}>{i+1}. {p.inmobiliaria} — {p.proyecto}</div>
+                  <div style={{display:'flex',gap:12,flexWrap:'wrap',color:'#92400e'}}>
+                    <span>Precio: <strong>{p.moneda} {p.precio}</strong></span>
+                    {p.bono_pie && <span>Con bono pie {p.bono_pct}%: <strong>{p.moneda} {p.precio_sin_bono}</strong></span>}
+                  </div>
+                </div>
+              ))}
+              <div style={{fontSize:11,color:'#92400e',fontWeight:600,marginTop:4}}>
+                Total UF: {(sel.propiedades||[]).filter(p=>p.moneda==='UF').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+              </div>
+            </div>
+          )}
+          {(isAdmin||isOps) && (RESTRICTED_STAGES.includes(sel.stage)||(sel.propiedades||[]).length>0) && (
+            <button onClick={()=>{setEditingProps((sel.propiedades||[]).length>0?[...sel.propiedades]:[{...EMPTY_PROP,id:'p-'+Date.now()}]);setPendingStage(null);setPropModal(sel.id)}} style={{...sty.btnO,fontSize:12,marginBottom:12,width:'100%'}}>
+              {(sel.propiedades||[]).length>0 ? 'Editar propiedades ('+sel.propiedades.length+')' : '+ Agregar propiedades'}
+            </button>
+          )}
           <HR/>
           <div style={{fontSize:12,fontWeight:700,color:B.mid,marginBottom:8}}>Comentarios ({(sel.comments||[]).length})</div>
           {(sel.comments||[]).length===0&&<p style={{fontSize:12,color:'#9ca3af',margin:'0 0 10px'}}>Sin comentarios aún</p>}
@@ -1690,6 +1863,80 @@ export default function App() {
             <input value={comment} onChange={e=>setComment(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addComment(sel.id)} placeholder="Escribe un comentario..." style={{...sty.inp,flex:1}}/>
             <button onClick={()=>addComment(sel.id)} disabled={!comment.trim()} style={{...sty.btnP,opacity:!comment.trim()?0.5:1}}>Enviar</button>
           </div>}
+        </Modal>
+      )}
+
+
+      {/* PROPIEDADES MODAL */}
+      {propModal && (
+        <Modal title="Propiedades del cliente" onClose={()=>{setPropModal(null);setPendingStage(null);setEditingProps([])}} wide>
+          <p style={{margin:'0 0 12px',fontSize:12,color:B.mid}}>
+            Registra hasta 15 propiedades. {pendingStage ? 'Al guardar, el lead pasará a '+stages.find(s=>s.id===pendingStage.stageId)?.label+'.' : ''}
+          </p>
+
+          {editingProps.map((p, idx) => {
+            const calculated = p.bono_pie ? Math.round((parseFloat(p.precio)||0) * (1 - (parseFloat(p.bono_pct)||0)/100) * 100)/100 : (parseFloat(p.precio)||0)
+            return (
+              <div key={p.id||idx} style={{background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:10,padding:'12px 14px',marginBottom:10}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                  <span style={{fontSize:13,fontWeight:700,color:'#713f12'}}>Propiedad {idx+1}</span>
+                  {editingProps.length > 1 && <button onClick={()=>setEditingProps(prev=>prev.filter((_,i)=>i!==idx))} style={{fontSize:11,padding:'2px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>Eliminar</button>}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                  <Fld label="Inmobiliaria *">
+                    <input value={p.inmobiliaria} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,inmobiliaria:e.target.value}:x))} placeholder="Nombre inmobiliaria" style={sty.inp}/>
+                  </Fld>
+                  <Fld label="Proyecto *">
+                    <input value={p.proyecto} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,proyecto:e.target.value}:x))} placeholder="Nombre proyecto" style={sty.inp}/>
+                  </Fld>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                  <Fld label="Moneda">
+                    <select value={p.moneda} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,moneda:e.target.value}:x))} style={sty.sel}>
+                      <option value="UF">UF</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </Fld>
+                  <Fld label={'Precio en '+p.moneda+' *'}>
+                    <input type="number" value={p.precio} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,precio:e.target.value}:x))} placeholder="0" style={sty.inp}/>
+                  </Fld>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:p.bono_pie?8:0}}>
+                  <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:13,color:'#713f12',fontWeight:500}}>
+                    <input type="checkbox" checked={p.bono_pie} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,bono_pie:e.target.checked}:x))} style={{width:16,height:16}}/>
+                    Con bono pie
+                  </label>
+                </div>
+                {p.bono_pie && (
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
+                    <Fld label="Porcentaje bono pie (1-20%)">
+                      <input type="number" min="1" max="20" value={p.bono_pct} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,bono_pct:Math.min(20,Math.max(1,parseInt(e.target.value)||1))}:x))} style={sty.inp}/>
+                    </Fld>
+                    <Fld label={'Precio sin bono pie ('+p.moneda+')'}>
+                      <div style={{...sty.inp,background:'#f0f4ff',color:B.primary,fontWeight:700,display:'flex',alignItems:'center'}}>
+                        {calculated.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                      </div>
+                    </Fld>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {editingProps.length < 15 && (
+            <button onClick={()=>setEditingProps(prev=>[...prev,{...EMPTY_PROP,id:'p-'+Date.now()}])} style={{...sty.btnO,width:'100%',marginBottom:12,fontSize:12}}>
+              + Agregar propiedad ({editingProps.length}/15)
+            </button>
+          )}
+
+          <div style={{display:'flex',gap:8}}>
+            <button
+              onClick={()=>savePropiedades(propModal, editingProps, pendingStage?.stageId||null)}
+              disabled={editingProps.some(p=>!p.inmobiliaria||!p.proyecto||!p.precio)}
+              style={{...sty.btnP,flex:1,opacity:editingProps.some(p=>!p.inmobiliaria||!p.proyecto||!p.precio)?0.5:1}}
+            >{pendingStage ? 'Guardar y mover a '+stages.find(s=>s.id===pendingStage?.stageId)?.label : 'Guardar propiedades'}</button>
+            <button onClick={()=>{setPropModal(null);setPendingStage(null);setEditingProps([])}} style={{...sty.btn,flex:1}}>Cancelar</button>
+          </div>
         </Modal>
       )}
 
@@ -1747,6 +1994,7 @@ export default function App() {
           <Fld label="Rol">
             <select value={editUser.role} onChange={e=>setEditUser(p=>({...p,role:e.target.value}))} style={sty.sel}>
               <option value="agent">Agente / Vendedor</option>
+              <option value="operaciones">Operaciones</option>
               <option value="partner">Socio Comercial</option>
               <option value="admin">Administrador</option>
             </select>
@@ -1850,7 +2098,7 @@ function LeadForm({data, onChange, onSubmit}) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KCard({lead, users, isAdmin, isPartner, onOpen, onMove, stages=[]}) {
+function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[]}) {
   const si = stages.findIndex(x=>x.id===lead.stage)
   const ag = (users||[]).find(u=>u.id===lead.assigned_to)
   const cal = CAL[lead.calificacion]
@@ -1873,8 +2121,13 @@ function KCard({lead, users, isAdmin, isPartner, onOpen, onMove, stages=[]}) {
       </div>
       {!isAdmin&&!isPartner&&(
         <div style={{display:'flex',gap:4,marginTop:8}} onClick={e=>e.stopPropagation()}>
-          {si>0&&<button onClick={()=>onMove(lead.id,stages[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
-          {si<stages.length-1&&<button onClick={()=>onMove(lead.id,stages[si+1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',color:B.primary,fontWeight:600}}>Avanzar →</button>}
+          {si>0&&!RESTRICTED_STAGES.includes(stages[si-1]?.id)&&<button onClick={()=>onMove(lead.id,stages[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
+          {si<stages.length-1&&(()=>{
+            const nextStage = stages[si+1]
+            const isRestricted = RESTRICTED_STAGES.includes(nextStage?.id)
+            if (isRestricted && !isOps) return <span style={{fontSize:10,color:'#9ca3af',padding:'3px 6px'}}>🔒 Solo Ops</span>
+            return <button onClick={()=>onMove(lead.id,nextStage.id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',color:B.primary,fontWeight:600}}>Avanzar →</button>
+          })()}
         </div>
       )}
     </div>
