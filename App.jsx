@@ -29,10 +29,13 @@ const DEFAULT_STAGES = [
   { id:'escritura',  label:'Firma escritura',      bg:'#FEF9C3', col:'#713f12', dot:'#fbbf24',  restricted:true },
   { id:'ganado',     label:'Ganado',               bg:'#DCFCE7', col:'#14532d', dot:'#4ade80' },
   { id:'perdido',    label:'Perdido',              bg:'#FEF2F2', col:'#991b1b', dot:'#fca5a5' },
+  { id:'desistio',   label:'Desistió escritura',   bg:'#FDF4FF', col:'#7e22ce', dot:'#d8b4fe', restricted:true },
 ]
 
 // Stages only Operaciones/Admin can move leads into
-const RESTRICTED_STAGES = ['firma','escritura']
+const RESTRICTED_STAGES = ['firma','escritura','desistio']
+// Stages that lock the lead from agent movement entirely
+const OPS_LOCKED_STAGES = ['firma','escritura','ganado','desistio']
 
 // Empty property template
 const EMPTY_PROP = {
@@ -478,6 +481,12 @@ export default function App() {
   }
 
   function reqMove(lid, sid) {
+    // Block agents from moving leads that are already in ops-locked stages
+    const lead = leads.find(l => l.id === lid)
+    if (me?.role === 'agent' && OPS_LOCKED_STAGES.includes(lead?.stage)) {
+      msg('Este lead está en gestión de Operaciones — solo ellos pueden moverlo')
+      return
+    }
     if (sid==='perdido') { setLossTgt(lid); setLossR(LOSS_REASONS[0]); setLossOth(''); setModal('lost'); return }
     // Restricted stages require property form (admin or operaciones only)
     if (RESTRICTED_STAGES.includes(sid)) {
@@ -709,7 +718,7 @@ export default function App() {
   const isAgent   = me?.role === 'agent'
   const isOps     = me?.role === 'operaciones'
 
-  const OPS_STAGES = ['reserva','firma','escritura','ganado','perdido']
+  const OPS_STAGES = ['reserva','firma','escritura','ganado','perdido','desistio']
   const vL = !me ? [] : isAdmin
     ? leads.filter(l => (fa==='all'||(fa===''?(!l.assigned_to):l.assigned_to===fa)) && (fs==='all'||l.stage===fs) && (ft==='all'||l.tag===ft))
     : isPartner ? leads.filter(l => l.tag==='pool')
@@ -868,7 +877,7 @@ export default function App() {
               </div>
             </div>
             <div style={{display:'flex',gap:10,overflowX:'auto',paddingBottom:8,alignItems:'flex-start'}}>
-              {stages.map(st => {
+              {(isOps ? stages.filter(s=>OPS_STAGES.includes(s.id)) : stages).map(st => {
                 const cols = (vL||[]).filter(l=>l.stage===st.id)
                 return (
                   <div key={st.id} style={{minWidth:190,flexShrink:0}}>
@@ -1791,7 +1800,10 @@ export default function App() {
           {!isPartner && <>
             <div style={{marginBottom:6,fontSize:12,color:B.mid,fontWeight:600}}>Mover a etapa</div>
             <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:14}}>
-              {stages.map(st=><button key={st.id} onClick={()=>reqMove(sel.id,st.id)} style={{fontSize:11,padding:'4px 10px',borderRadius:99,border:sel.stage===st.id?'2px solid '+st.dot:'1px solid #dce8ff',background:sel.stage===st.id?st.bg:'transparent',color:sel.stage===st.id?st.col:B.mid,cursor:'pointer',fontWeight:sel.stage===st.id?700:400}}>{st.label}</button>)}
+              {(isOps ? stages.filter(s=>OPS_STAGES.includes(s.id)) : stages).map(st=>{
+              const isLocked = isAgent && OPS_LOCKED_STAGES.includes(st.id)
+              return <button key={st.id} onClick={()=>!isLocked&&reqMove(sel.id,st.id)} style={{fontSize:11,padding:'4px 10px',borderRadius:99,border:sel.stage===st.id?'2px solid '+st.dot:'1px solid #dce8ff',background:sel.stage===st.id?st.bg:'transparent',color:sel.stage===st.id?st.col:isLocked?'#d1d5db':B.mid,cursor:isLocked?'not-allowed':'pointer',fontWeight:sel.stage===st.id?700:400,opacity:isLocked?0.5:1}}>{st.label}{isLocked?' 🔒':''}</button>
+            })}
             </div>
             {isAdmin ? (
               <Fld label="Etiqueta">
@@ -2120,17 +2132,27 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
         </div>
         {isAdmin&&ag&&<div style={{display:'flex',alignItems:'center',gap:4}}><AV name={ag.name} size={16}/><span style={{fontSize:10,color:'#9ca3af'}}>{ag.name.split(' ')[0]}</span></div>}
       </div>
-      {!isAdmin&&!isPartner&&(
-        <div style={{display:'flex',gap:4,marginTop:8}} onClick={e=>e.stopPropagation()}>
-          {si>0&&!RESTRICTED_STAGES.includes(stages[si-1]?.id)&&<button onClick={()=>onMove(lead.id,stages[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
-          {si<stages.length-1&&(()=>{
-            const nextStage = stages[si+1]
-            const isRestricted = RESTRICTED_STAGES.includes(nextStage?.id)
-            if (isRestricted && !isOps) return <span style={{fontSize:10,color:'#9ca3af',padding:'3px 6px'}}>🔒 Solo Ops</span>
-            return <button onClick={()=>onMove(lead.id,nextStage.id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',color:B.primary,fontWeight:600}}>Avanzar →</button>
-          })()}
-        </div>
-      )}
+      {!isAdmin&&!isPartner&&(()=>{
+        const isOpsLocked = OPS_LOCKED_STAGES.includes(lead.stage)
+        if (isOpsLocked && !isOps) {
+          return (
+            <div style={{display:'flex',alignItems:'center',gap:4,marginTop:8}}>
+              <span style={{fontSize:10,color:'#7e22ce',background:'#FDF4FF',padding:'2px 8px',borderRadius:6,border:'1px solid #d8b4fe',fontWeight:600}}>🔒 En gestión de Operaciones</span>
+            </div>
+          )
+        }
+        return (
+          <div style={{display:'flex',gap:4,marginTop:8}} onClick={e=>e.stopPropagation()}>
+            {si>0&&!RESTRICTED_STAGES.includes(stages[si-1]?.id)&&<button onClick={()=>onMove(lead.id,stages[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
+            {si<stages.length-1&&(()=>{
+              const nextStage = stages[si+1]
+              const isRestricted = RESTRICTED_STAGES.includes(nextStage?.id)
+              if (isRestricted && !isOps) return <span style={{fontSize:10,color:'#9ca3af',padding:'3px 6px'}}>🔒 Solo Ops</span>
+              return <button onClick={()=>onMove(lead.id,nextStage.id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',color:B.primary,fontWeight:600}}>Avanzar →</button>
+            })()}
+          </div>
+        )
+      })()}
     </div>
   )
 }
