@@ -155,6 +155,10 @@ export default function App() {
   const [editLead, setEditLead] = useState(null)
   const [editUser, setEditUser] = useState(null)
   const [dateRange, setDateRange] = useState('all')
+  const [importRows, setImportRows] = useState([])
+  const [importErrors, setImportErrors] = useState([])
+  const [importing, setImporting] = useState(false)
+  const [importDone, setImportDone] = useState(null)
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
@@ -483,6 +487,114 @@ export default function App() {
     msg('Usuario actualizado')
   }
 
+  // ── Bulk import ──────────────────────────────────────────────────────────
+  function parseCSV(text) {
+    const lines = text.trim().split(/
+?
+/)
+    if (lines.length < 2) return { rows: [], errors: ['El archivo está vacío o no tiene datos'] }
+    const headers = lines[0].split(/[,;\t]/).map(h => h.trim().toLowerCase().replace(/['"]/g,''))
+    const colMap = {}
+    const aliases = {
+      nombre:   ['nombre','name','cliente','nombre completo','full name'],
+      telefono: ['telefono','teléfono','phone','fono','celular','movil','móvil','tel'],
+      email:    ['email','correo','mail','e-mail','e mail'],
+      renta:    ['renta','ingreso','ingresos','presupuesto','sueldo','salario','budget'],
+    }
+    for (const [field, opts] of Object.entries(aliases)) {
+      const idx = headers.findIndex(h => opts.some(o => h.includes(o)))
+      if (idx >= 0) colMap[field] = idx
+    }
+    if (colMap.nombre === undefined) return { rows: [], errors: ['No se encontró columna "Nombre". Revisa el archivo.'] }
+
+    const rows = []; const errors = []
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue
+      const cols = lines[i].split(/[,;\t]/).map(c => c.trim().replace(/^["']|["']$/g,''))
+      const nombre = cols[colMap.nombre]||''
+      if (!nombre) { errors.push(`Fila ${i+1}: sin nombre — omitida`); continue }
+      rows.push({
+        _row: i+1,
+        nombre,
+        telefono: colMap.telefono!==undefined ? cols[colMap.telefono]||'—' : '—',
+        email:    colMap.email!==undefined    ? cols[colMap.email]||'—'    : '—',
+        renta:    colMap.renta!==undefined    ? cols[colMap.renta]||'—'    : '—',
+      })
+    }
+    return { rows, errors }
+  }
+
+  function handleImportFile(file) {
+    if (!file) return
+    const isXLSX = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
+    if (isXLSX) {
+      // Use SheetJS loaded from CDN
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+      script.onload = () => {
+        const reader = new FileReader()
+        reader.onload = e => {
+          try {
+            const wb = window.XLSX.read(e.target.result, {type:'array'})
+            const ws = wb.Sheets[wb.SheetNames[0]]
+            const csv = window.XLSX.utils.sheet_to_csv(ws)
+            const {rows,errors} = parseCSV(csv)
+            setImportRows(rows); setImportErrors(errors); setImportDone(null)
+          } catch(err) { setImportErrors(['Error al leer el Excel: '+err.message]) }
+        }
+        reader.readAsArrayBuffer(file)
+      }
+      if (!window.XLSX) document.head.appendChild(script)
+      else {
+        const reader = new FileReader()
+        reader.onload = e => {
+          try {
+            const wb = window.XLSX.read(e.target.result, {type:'array'})
+            const ws = wb.Sheets[wb.SheetNames[0]]
+            const csv = window.XLSX.utils.sheet_to_csv(ws)
+            const {rows,errors} = parseCSV(csv)
+            setImportRows(rows); setImportErrors(errors); setImportDone(null)
+          } catch(err) { setImportErrors(['Error al leer el Excel: '+err.message]) }
+        }
+        reader.readAsArrayBuffer(file)
+      }
+    } else {
+      const reader = new FileReader()
+      reader.onload = e => {
+        const {rows,errors} = parseCSV(e.target.result)
+        setImportRows(rows); setImportErrors(errors); setImportDone(null)
+      }
+      reader.readAsText(file, 'UTF-8')
+    }
+  }
+
+  async function confirmImport(tag, assignTo) {
+    if (!importRows.length) return
+    setImporting(true)
+    const now = new Date().toISOString()
+    const newLeads = importRows.map(r => ({
+      id: 'l-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
+      fecha: now, stage_moved_at: now, stage: stages[0]?.id||'nuevo',
+      assigned_to: assignTo||null, tag: tag||'lead', origen: 'importacion',
+      nombre: r.nombre, telefono: r.telefono, email: r.email, renta: r.renta,
+      calificacion: '—', resumen: 'Lead importado masivamente.',
+      creado_por: me.id, comments: [], stage_history: [{stage:stages[0]?.id||'nuevo',date:now}],
+      conversacion: ''
+    }))
+    await saveLeads([...newLeads, ...leads])
+    setImportDone(newLeads.length)
+    setImportRows([]); setImportErrors([])
+    setImporting(false)
+    msg(newLeads.length+' leads importados exitosamente')
+  }
+
+  function downloadTemplate() {
+    const csv = '\uFEFFNombre,Teléfono,Email,Renta\nMaría González,+56 9 8765 4321,maria@email.com,$1.500.000\nJuan Pérez,+56 9 1234 5678,juan@email.com,$2.000.000\n'
+    const blob = new Blob([csv],{type:'text/csv;charset=utf-8'})
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href=url; a.download='plantilla_importacion_rabbitts.csv'; a.click(); URL.revokeObjectURL(url)
+  }
+
   async function deleteLead(id) {
     if (dbReady) await supabase.from('crm_leads').delete().eq('id', id)
     await saveLeads(leads.filter(l => l.id!==id))
@@ -516,7 +628,7 @@ export default function App() {
     : isPartner ? leads.filter(l => l.tag==='pool')
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin ? ['dashboard','kanban','lista','usuarios','etapas','extraer'] : isPartner ? ['dashboard','pool'] : ['kanban','lista','nuevo lead']
+  const NAV = isAdmin ? ['dashboard','kanban','lista','usuarios','etapas','importar','extraer'] : isPartner ? ['dashboard','pool'] : ['kanban','lista','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
@@ -1326,6 +1438,114 @@ export default function App() {
                   }
                 </div>
               </div>
+            </div>
+          )
+        })()}
+
+        {/* IMPORTAR */}
+        {nav==='importar' && isAdmin && (() => {
+          const [impTag, setImpTag] = React.useState('lead')
+          const [impAgent, setImpAgent] = React.useState('')
+          return (
+            <div style={{maxWidth:700}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16,flexWrap:'wrap',gap:8}}>
+                <div>
+                  <p style={{margin:'0 0 2px',fontSize:14,fontWeight:700,color:B.primary}}>Carga masiva de leads</p>
+                  <p style={{margin:0,fontSize:12,color:B.mid}}>Sube un archivo Excel o CSV con tus leads. Solo el administrador puede usar esta función.</p>
+                </div>
+                <button onClick={downloadTemplate} style={{...sty.btnO,fontSize:12}}>Descargar plantilla CSV</button>
+              </div>
+
+              {/* Format info */}
+              <div style={{background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:10,padding:'10px 14px',marginBottom:16,fontSize:12,color:'#92400e'}}>
+                <strong>Columnas aceptadas:</strong> Nombre (obligatorio), Teléfono, Email, Renta.
+                Los encabezados pueden estar en español o inglés. Formatos soportados: <strong>.xlsx, .xls, .csv</strong>
+              </div>
+
+              {/* Drop zone */}
+              <div
+                style={{border:'2px dashed #A8C0F0',borderRadius:12,padding:'32px 20px',textAlign:'center',background:'#f9fbff',marginBottom:16,cursor:'pointer'}}
+                onClick={()=>document.getElementById('imp-file').click()}
+                onDragOver={e=>e.preventDefault()}
+                onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)handleImportFile(f)}}
+              >
+                <div style={{fontSize:32,marginBottom:8}}>📂</div>
+                <div style={{fontSize:14,fontWeight:600,color:B.primary,marginBottom:4}}>Arrastra tu archivo aquí o haz clic para seleccionar</div>
+                <div style={{fontSize:12,color:'#9ca3af'}}>.xlsx · .xls · .csv</div>
+                <input id="imp-file" type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}} onChange={e=>handleImportFile(e.target.files[0])}/>
+              </div>
+
+              {/* Errors */}
+              {importErrors.length>0 && (
+                <div style={{background:'#FEF2F2',border:'1px solid #fca5a5',borderRadius:10,padding:'10px 14px',marginBottom:14}}>
+                  {importErrors.map((e,i)=><div key={i} style={{fontSize:12,color:'#991b1b',marginBottom:2}}>⚠ {e}</div>)}
+                </div>
+              )}
+
+              {/* Preview */}
+              {importRows.length>0 && (
+                <div style={{marginBottom:16}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                    <span style={{fontSize:13,fontWeight:700,color:B.primary}}>{importRows.length} leads listos para importar</span>
+                    <button onClick={()=>{setImportRows([]);setImportErrors([]);setImportDone(null)}} style={{...sty.btn,fontSize:11,padding:'3px 8px'}}>Limpiar</button>
+                  </div>
+
+                  {/* Options */}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                    <Fld label="Etiqueta para todos los leads">
+                      <select value={impTag} onChange={e=>setImpTag(e.target.value)} style={sty.sel}>
+                        <option value="lead">Lead</option>
+                        <option value="pool">Pool</option>
+                        <option value="referido">Referido</option>
+                      </select>
+                    </Fld>
+                    <Fld label="Asignar a agente (opcional)">
+                      <select value={impAgent} onChange={e=>setImpAgent(e.target.value)} style={sty.sel}>
+                        <option value="">Sin asignar</option>
+                        {(users||[]).filter(u=>u.role==='agent').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+                      </select>
+                    </Fld>
+                  </div>
+
+                  {/* Table preview */}
+                  <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,overflow:'auto',maxHeight:280,marginBottom:12}}>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                      <thead>
+                        <tr style={{background:B.light,position:'sticky',top:0}}>
+                          {['#','Nombre','Teléfono','Email','Renta'].map(h=><th key={h} style={{padding:'7px 10px',textAlign:'left',fontWeight:700,color:B.primary,whiteSpace:'nowrap'}}>{h}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importRows.map((r,i)=>(
+                          <tr key={i} style={{borderBottom:'1px solid #f0f4ff'}}>
+                            <td style={{padding:'6px 10px',color:'#9ca3af'}}>{r._row}</td>
+                            <td style={{padding:'6px 10px',fontWeight:600,color:'#111827'}}>{r.nombre}</td>
+                            <td style={{padding:'6px 10px',color:'#6b7280'}}>{r.telefono}</td>
+                            <td style={{padding:'6px 10px',color:'#6b7280'}}>{r.email}</td>
+                            <td style={{padding:'6px 10px',color:'#6b7280'}}>{r.renta}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <button
+                    onClick={()=>confirmImport(impTag,impAgent)}
+                    disabled={importing}
+                    style={{...sty.btnP,width:'100%',padding:'10px 16px',fontSize:14,opacity:importing?0.6:1}}
+                  >{importing?'Importando...':'Importar '+importRows.length+' leads'}</button>
+                </div>
+              )}
+
+              {/* Success */}
+              {importDone!==null && (
+                <div style={{background:'#DCFCE7',border:'1px solid #86efac',borderRadius:10,padding:'16px 20px',textAlign:'center'}}>
+                  <div style={{fontSize:28,marginBottom:6}}>✅</div>
+                  <div style={{fontSize:15,fontWeight:700,color:'#14532d',marginBottom:4}}>{importDone} leads importados exitosamente</div>
+                  <div style={{fontSize:12,color:'#166534',marginBottom:12}}>Ya puedes verlos en el Kanban y asignarlos a tus agentes</div>
+                  <button onClick={()=>setNav('kanban')} style={{...sty.btnP,fontSize:12}}>Ir al Kanban →</button>
+                </div>
+              )}
             </div>
           )
         })()}
