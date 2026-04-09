@@ -294,10 +294,18 @@ export default function App() {
       }
       const { data: ls } = await supabase.from('crm_leads').select('*').order('fecha', {ascending:false})
       setLeads(ls || [])
-      // Load custom stages (safe — table may not exist yet)
+      // Load custom stages — merge with DEFAULT_STAGES to ensure new required stages always exist
       try {
         const { data: st } = await supabase.from('crm_settings').select('value').eq('key','stages').single()
-        if (st?.value) setStages(st.value)
+        if (st?.value) {
+          const saved = st.value
+          // Add any DEFAULT_STAGES entries missing from saved (e.g. new stages added in updates)
+          const merged = [...saved]
+          for (const ds of DEFAULT_STAGES) {
+            if (!merged.find(s => s.id === ds.id)) merged.push(ds)
+          }
+          setStages(merged)
+        }
       } catch(_) {}
       setDbReady(true)
     } catch (e) {
@@ -502,12 +510,20 @@ export default function App() {
   }
 
   async function moveStage(lid, sid, reason) {
-    const ls = leads.map(l => l.id===lid ? {
+    const updated = leads.map(l => l.id===lid ? {
       ...l, stage:sid, stage_moved_at:new Date().toISOString(),
       loss_reason: reason!==null ? reason : l.loss_reason,
       stage_history:[...(l.stage_history||[]), {stage:sid,date:new Date().toISOString()}]
     } : l)
-    await saveLeads(ls); if (sel?.id===lid) setSel(ls.find(l=>l.id===lid))
+    const changedLead = updated.find(l => l.id === lid)
+    setLeads(updated)
+    if (sel?.id===lid) setSel(changedLead)
+    // Direct upsert of just this lead — avoids race conditions
+    if (dbReady && changedLead) {
+      await supabase.from('crm_leads').upsert(changedLead)
+    } else {
+      localStorage.setItem('rcrm_leads', JSON.stringify(updated))
+    }
   }
 
   async function confirmLoss() {
@@ -674,7 +690,7 @@ export default function App() {
 
   async function savePropiedades(leadId, props, stageId) {
     const calculatedProps = props.map(calcProp)
-    const ls = leads.map(l => l.id===leadId ? {
+    const updated = leads.map(l => l.id===leadId ? {
       ...l,
       propiedades: calculatedProps,
       ...(stageId ? {
@@ -683,8 +699,15 @@ export default function App() {
         stage_history: [...(l.stage_history||[]), {stage:stageId, date:new Date().toISOString()}]
       } : {})
     } : l)
-    await saveLeads(ls)
-    if (sel?.id===leadId) setSel(ls.find(l=>l.id===leadId))
+    const changedLead = updated.find(l => l.id === leadId)
+    setLeads(updated)
+    if (sel?.id===leadId) setSel(changedLead)
+    // Direct upsert
+    if (dbReady && changedLead) {
+      await supabase.from('crm_leads').upsert(changedLead)
+    } else {
+      localStorage.setItem('rcrm_leads', JSON.stringify(updated))
+    }
     setPropModal(null); setPendingStage(null); setEditingProps([])
     msg(stageId ? 'Propiedades guardadas y etapa actualizada' : 'Propiedades guardadas')
   }
