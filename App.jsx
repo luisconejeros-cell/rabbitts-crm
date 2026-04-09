@@ -485,7 +485,10 @@ export default function App() {
 
   async function assignLead(lid, aid) {
     const ls = leads.map(l => l.id===lid ? {...l, assigned_to:aid||null} : l)
-    await saveLeads(ls); if (sel?.id===lid) setSel(ls.find(l=>l.id===lid)); msg('Lead asignado')
+    setLeads(ls); if (sel?.id===lid) setSel(ls.find(l=>l.id===lid))
+    if (dbReady) await supabase.from('crm_leads').update({assigned_to:aid||null}).eq('id',lid)
+    else localStorage.setItem('rcrm_leads', JSON.stringify(ls))
+    msg('Lead asignado')
   }
 
   function reqMove(lid, sid) {
@@ -518,9 +521,14 @@ export default function App() {
     const changedLead = updated.find(l => l.id === lid)
     setLeads(updated)
     if (sel?.id===lid) setSel(changedLead)
-    // Direct upsert of just this lead — avoids race conditions
+    // Targeted update of only stage fields — avoids overwriting other data
     if (dbReady && changedLead) {
-      await supabase.from('crm_leads').upsert(changedLead)
+      await supabase.from('crm_leads').update({
+        stage: changedLead.stage,
+        stage_moved_at: changedLead.stage_moved_at,
+        loss_reason: changedLead.loss_reason,
+        stage_history: changedLead.stage_history
+      }).eq('id', lid)
     } else {
       localStorage.setItem('rcrm_leads', JSON.stringify(updated))
     }
@@ -535,7 +543,10 @@ export default function App() {
 
   async function updateTag(lid, tag) {
     const ls = leads.map(l => l.id===lid ? {...l,tag} : l)
-    await saveLeads(ls); if (sel?.id===lid) setSel(ls.find(l=>l.id===lid)); msg('Etiqueta actualizada')
+    setLeads(ls); if (sel?.id===lid) setSel(ls.find(l=>l.id===lid))
+    if (dbReady) await supabase.from('crm_leads').update({tag}).eq('id',lid)
+    else localStorage.setItem('rcrm_leads', JSON.stringify(ls))
+    msg('Etiqueta actualizada')
   }
 
   async function addComment(lid) {
@@ -543,7 +554,10 @@ export default function App() {
     const lead = leads.find(l => l.id === lid)
     const c = {id:'c-'+Date.now(), text:comment.trim(), author_name:me.name, date:new Date().toISOString()}
     const ls = leads.map(l => l.id===lid ? {...l, comments:[...(l.comments||[]),c]} : l)
-    await saveLeads(ls); if (sel?.id===lid) setSel(ls.find(l=>l.id===lid)); setComment('')
+    const updatedLead = ls.find(l=>l.id===lid)
+    setLeads(ls); if (sel?.id===lid) setSel(updatedLead); setComment('')
+    if (dbReady) await supabase.from('crm_leads').update({comments:updatedLead.comments}).eq('id',lid)
+    else localStorage.setItem('rcrm_leads', JSON.stringify(ls))
     // Email notification: only when admin comments and lead has an assigned agent with email
     if (me.role === 'admin' && lead?.assigned_to) {
       const agent = (users||[]).find(u => u.id === lead.assigned_to)
@@ -702,9 +716,14 @@ export default function App() {
     const changedLead = updated.find(l => l.id === leadId)
     setLeads(updated)
     if (sel?.id===leadId) setSel(changedLead)
-    // Direct upsert
+    // Targeted update
     if (dbReady && changedLead) {
-      await supabase.from('crm_leads').upsert(changedLead)
+      await supabase.from('crm_leads').update({
+        propiedades: changedLead.propiedades,
+        stage: changedLead.stage,
+        stage_moved_at: changedLead.stage_moved_at,
+        stage_history: changedLead.stage_history
+      }).eq('id', leadId)
     } else {
       localStorage.setItem('rcrm_leads', JSON.stringify(updated))
     }
@@ -741,7 +760,7 @@ export default function App() {
   const isAgent   = me?.role === 'agent'
   const isOps     = me?.role === 'operaciones'
 
-  const OPS_STAGES = ['reserva','firma','escritura','ganado','perdido','desistio']
+  const OPS_STAGES = ['reserva','firma','escritura','perdido']
   const vL = !me ? [] : isAdmin
     ? leads.filter(l => (fa==='all'||(fa===''?(!l.assigned_to):l.assigned_to===fa)) && (fs==='all'||l.stage===fs) && (ft==='all'||l.tag===ft))
     : isPartner ? leads.filter(l => l.tag==='pool')
