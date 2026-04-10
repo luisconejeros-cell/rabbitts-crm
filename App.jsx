@@ -3822,7 +3822,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
               <div style={{padding:'10px 12px',background:'#DCFCE7',border:'1px solid #86efac',borderRadius:8,fontSize:11}}>
                 <div style={{fontWeight:700,color:'#14532d',marginBottom:4}}>✅ Drive conectado — Carpeta ID: {iaConfig.driveFolderId}</div>
                 <div style={{color:'#166534'}}>Rabito usará los documentos de esta carpeta como base de conocimiento. Actualiza el contenido en Drive y se refleja automáticamente.</div>
-                <div style={{marginTop:6,display:'flex',gap:8'}}>
+                <div style={{marginTop:6,display:'flex',gap:8}}>
                   <a href={iaConfig.driveUrl} target="_blank" rel="noopener noreferrer"
                     style={{fontSize:11,color:B.primary,textDecoration:'underline'}}>Abrir carpeta en Drive</a>
                   <span style={{color:'#9ca3af',marginLeft:8}}>·</span>
