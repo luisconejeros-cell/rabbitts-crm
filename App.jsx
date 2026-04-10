@@ -4394,6 +4394,39 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   const [masivoResult, setMasivoResult] = useState(null)
   const [masivoTarget, setMasivoTarget] = useState('leads')
   const [selectedUsers, setSelectedUsers] = useState([])
+
+  const sendMasivoEquipo = async () => {
+    if (!masivo.msg.trim() || selectedUsers.length===0) return
+    const teamUsers = (users||[]).filter(u=>u.role!=='partner')
+    const withPhone = selectedUsers.map(id=>teamUsers.find(u=>u.id===id)).filter(u=>u?.phone)
+    const noPhone   = selectedUsers.map(id=>teamUsers.find(u=>u.id===id)).filter(u=>!u?.phone)
+    if (withPhone.length===0) {
+      alert('Ningún usuario seleccionado tiene número de WhatsApp. Agrégalo en Usuarios → editar.')
+      return
+    }
+    const TWILIO_CONFIGURED = false
+    if (TWILIO_CONFIGURED) {
+      setMasivoSending(true)
+      let sent=0, failed=0
+      for (const u of withPhone) {
+        try {
+          await fetch('/api/whatsapp', {method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({to:u.phone, mensaje:masivo.msg.replace('{nombre}',u.name||'')})})
+          sent++
+        } catch(_) { failed++ }
+      }
+      setMasivoResult({sent, failed:failed+noPhone.length})
+      setMasivoSending(false)
+    } else {
+      withPhone.forEach((u,i) => {
+        const msg = encodeURIComponent(masivo.msg.replace('{nombre}',u.name||''))
+        const phone = u.phone.replace(/[^0-9]/g,'')
+        setTimeout(()=>window.open('https://wa.me/'+phone+'?text='+msg,'_blank'), i*800)
+      })
+      setMasivoResult({sent:withPhone.length, failed:noPhone.length, waLinks:true})
+    }
+    setSelectedUsers([])
+  }
   const messagesEndRef = useRef(null)
   const agents = (users||[]).filter(u=>u.role==='agent')
 
