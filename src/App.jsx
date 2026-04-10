@@ -4509,7 +4509,6 @@ function RabitoChat({iaConfig}) {
 // ─── Conversaciones View ─────────────────────────────────────────────────────
 function ConversacionesView({conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, users, leads, setLeads, supabase, dbReady, me}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const [tab, setTab] = useState('bandeja')       // bandeja | masivo
   const [newMsg, setNewMsg] = useState('')
   const [sending, setSending] = useState(false)
