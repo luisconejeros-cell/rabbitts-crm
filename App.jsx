@@ -2048,8 +2048,15 @@ export default function App() {
                   </div>
                 </div>
               ))}
-              <div style={{fontSize:11,color:'#92400e',fontWeight:600,marginTop:4}}>
-                Total UF: {(sel.propiedades||[]).filter(p=>p.moneda==='UF').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+              <div style={{display:'flex',gap:16,marginTop:4,flexWrap:'wrap'}}>
+                {(()=>{
+                  const totalUF = (sel.propiedades||[]).filter(p=>p.moneda==='UF').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
+                  const totalUSD = (sel.propiedades||[]).filter(p=>p.moneda==='USD').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
+                  return <>
+                    {totalUF>0 && <span style={{fontSize:11,color:'#92400e',fontWeight:700}}>Total UF: {totalUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>}
+                    {totalUSD>0 && <span style={{fontSize:11,color:'#166534',fontWeight:700}}>Total USD: {totalUSD.toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0})}</span>}
+                  </>
+                })()}
               </div>
             </div>
           )}
