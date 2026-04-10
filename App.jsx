@@ -3212,9 +3212,12 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
   const totalClp = myProps.reduce((s,p)=>s+(p.clp||0),0)
 
   const isCobrado = p => (p.oc_estado==='pagado_broker') || p.comm.cobrado
-  const cobradoUF = myProps.filter(p=>p.moneda==='UF'&&isCobrado(p)).reduce((s,p)=>s+p.miComision,0)
-  const pendienteUF = totalMiComisionUF - cobradoUF
-  const enProcesoUF = myProps.filter(p=>p.moneda==='UF'&&!isCobrado(p)&&p.miComision>0).reduce((s,p)=>s+p.miComision,0)
+  const cobradoUF    = myProps.filter(p=>p.moneda==='UF' &&  isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
+  const pendienteUF  = myProps.filter(p=>p.moneda==='UF' && !isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
+  const cobradoUSD   = myProps.filter(p=>p.moneda==='USD'&&  isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
+  const pendienteUSD = myProps.filter(p=>p.moneda==='USD'&& !isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
+  const cobradoCLP   = myProps.filter(p=>isCobrado(p)  && p.clp).reduce((s,p)=>s+(p.clp||0),0)
+  const pendienteCLP = myProps.filter(p=>!isCobrado(p) && p.clp).reduce((s,p)=>s+(p.clp||0),0)
 
   // Ranking vs all agents
   const allAgents = (users||[]).filter(u=>u.role==='agent')
@@ -3261,13 +3264,16 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
           </div>
         </div>
         {/* Hero KPIs */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
           {[
-            {l:'UF total vendida',       v:'UF '+fmt2(totalUFVendida),     sub:closedLeads.length+' cierres'},
-            {l:'Mi comisión total',      v:'UF '+fmt2(totalMiComisionUF),  sub:totalClp>0?'$'+totalClp.toLocaleString('es-CL')+' CLP':null},
-            {l:'✅ Ya cobrado',          v:'UF '+fmt2(cobradoUF),           sub:null},
-            {l:'⏳ Pendiente de cobro',  v:'UF '+fmt2(pendienteUF),         sub:myProps.filter(p=>!p.comm.cobrado&&p.miComision>0).length+' props'},
-            ...(totalMiComisionUSD>0?[{l:'Comisión USD',v:'USD '+fmt2(totalMiComisionUSD),sub:null}]:[]),
+            {l:'UF total vendida',      v:'UF '+fmt2(totalUFVendida),    sub:closedLeads.length+' cierres'},
+            {l:'Mi comisión total',     v:'UF '+fmt2(totalMiComisionUF), sub:totalClp>0?'$'+totalClp.toLocaleString('es-CL')+' CLP':null},
+            {l:'✅ Ya cobrado (UF)',    v:'UF '+fmt2(cobradoUF),          sub:cobradoCLP>0?'$'+cobradoCLP.toLocaleString('es-CL')+' CLP':null},
+            {l:'⏳ Pendiente (UF)',     v:'UF '+fmt2(pendienteUF),        sub:pendienteCLP>0?'$'+pendienteCLP.toLocaleString('es-CL')+' CLP':null},
+            ...(totalMiComisionUSD>0?[
+              {l:'✅ Cobrado (USD)',    v:'USD '+fmt2(cobradoUSD),         sub:null},
+              {l:'⏳ Pendiente (USD)',  v:'USD '+fmt2(pendienteUSD),       sub:null},
+            ]:[]),
           ].map((k,i) => (
             <div key={i} style={{background:'rgba(255,255,255,0.13)',borderRadius:10,padding:'10px 12px',backdropFilter:'blur(4px)'}}>
               <div style={{fontSize:10,opacity:.75,marginBottom:3,fontWeight:600}}>{k.l}</div>
@@ -3288,9 +3294,11 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
           <div style={{height:12,background:'#f0f4ff',borderRadius:99,overflow:'hidden',marginBottom:8}}>
             <div style={{height:'100%',width:(cobradoUF/totalMiComisionUF*100)+'%',background:'linear-gradient(90deg,#22c55e,#16a34a)',borderRadius:99,transition:'width .5s ease'}}/>
           </div>
-          <div style={{display:'flex',gap:16,fontSize:11}}>
-            <span style={{color:'#166534'}}>✅ Cobrado: UF {fmt2(cobradoUF)}</span>
-            <span style={{color:'#9a3412'}}>⏳ Pendiente: UF {fmt2(pendienteUF)}</span>
+          <div style={{display:'flex',gap:16,fontSize:11,flexWrap:'wrap'}}>
+            <span style={{color:'#166534'}}>✅ Cobrado: UF {fmt2(cobradoUF)}{cobradoCLP>0?' ($'+cobradoCLP.toLocaleString('es-CL')+')':''}</span>
+            <span style={{color:'#9a3412'}}>⏳ Pendiente: UF {fmt2(pendienteUF)}{pendienteCLP>0?' ($'+pendienteCLP.toLocaleString('es-CL')+')':''}</span>
+            {cobradoUSD>0&&<span style={{color:'#166534'}}>✅ USD {fmt2(cobradoUSD)}</span>}
+            {pendienteUSD>0&&<span style={{color:'#9a3412'}}>⏳ USD {fmt2(pendienteUSD)}</span>}
           </div>
         </div>
       )}
