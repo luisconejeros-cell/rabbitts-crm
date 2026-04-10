@@ -39,7 +39,7 @@ const OPS_LOCKED_STAGES = ['firma','escritura','ganado','desistio']
 
 // Empty property template
 const EMPTY_PROP = {
-  id:'', inmobiliaria:'', proyecto:'', moneda:'UF', precio:0,
+  id:'', inmobiliaria:'', proyecto:'', depto:'', moneda:'UF', precio:0,
   bono_pie:false, bono_pct:10, precio_sin_bono:0
 }
 
@@ -172,6 +172,7 @@ export default function App() {
   const [importErrors, setImportErrors] = useState([])
   const [importing, setImporting] = useState(false)
   const [importDone, setImportDone] = useState(null)
+  const [sessions, setSessions] = useState([])
   const [impTag, setImpTag] = useState('lead')
   const [impAgent, setImpAgent] = useState('')
   const [propModal, setPropModal] = useState(null)  // leadId to add properties to
@@ -303,6 +304,11 @@ export default function App() {
         us = [admin, ...us]
       }
       setUsers(us)
+      // Load sessions for activity stats
+      try {
+        const { data: sess } = await supabase.from('crm_sessions').select('*').order('logged_at',{ascending:false})
+        setSessions(sess || [])
+      } catch(_) {}
       // Auto-login from saved session
       if (window.__sessionUserId) {
         const saved = us.find(u => u.id === window.__sessionUserId)
@@ -431,14 +437,23 @@ export default function App() {
   function msg(m) { setToast(m); setTimeout(() => setToast(''), 2500) }
 
   // ── Auth ──────────────────────────────────────────────────────────────────
-  function login() {
+  async function login() {
     const u = (users||[]).find(x => x.username === lu.trim().toLowerCase())
     if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
     setNav(u.role === 'admin' || u.role === 'partner' ? 'dashboard' : 'kanban')
-    // session also restored in __sessionUserId path
     // Persist session for 8 hours
     localStorage.setItem('rcrm_session', JSON.stringify({id:u.id, expires: Date.now() + 8*60*60*1000}))
+    // Record login for activity tracking
+    if (dbReady) {
+      try {
+        await supabase.from('crm_sessions').insert({
+          user_id: u.id,
+          logged_at: new Date().toISOString(),
+          day_of_week: new Date().getDay()
+        })
+      } catch(_) {}
+    }
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────
@@ -1092,6 +1107,75 @@ export default function App() {
                   </div>
                 )
               })}
+            </div>
+
+            {/* Activity stats */}
+            <div style={{marginTop:24}}>
+              <p style={{margin:'0 0 12px',fontSize:14,fontWeight:700,color:B.primary}}>Actividad de usuarios</p>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
+                {(users||[]).map(u => {
+                  const uSess = sessions.filter(s => s.user_id === u.id)
+                  const lastLogin = uSess[0]?.logged_at ? new Date(uSess[0].logged_at) : null
+                  const now = new Date()
+                  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0)
+                  const startOfMonth = new Date(now.getFullYear(),now.getMonth(),1)
+                  const daysThisWeek = [...new Set(uSess.filter(s=>new Date(s.logged_at)>=startOfWeek).map(s=>new Date(s.logged_at).toDateString()))].length
+                  const sessMonth = uSess.filter(s=>new Date(s.logged_at)>=startOfMonth).length
+                  const minsAgo = lastLogin ? Math.floor((now-lastLogin)/60000) : null
+                  const isOnline = minsAgo !== null && minsAgo < 30
+                  const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12']}
+                  const [rb,rc] = RC[u.role]||RC.agent
+                  return (
+                    <div key={u.id} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+                        <div style={{position:'relative'}}>
+                          <AV name={u.name} size={34}/>
+                          <div style={{position:'absolute',bottom:0,right:0,width:10,height:10,borderRadius:'50%',background:isOnline?'#22c55e':'#d1d5db',border:'2px solid #fff'}}/>
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:700,fontSize:13,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.name}</div>
+                          <span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:rb,color:rc,fontWeight:700}}>{u.role}</span>
+                        </div>
+                        <div style={{flexShrink:0}}>
+                          {isOnline
+                            ? <span style={{fontSize:11,color:'#166534',background:'#DCFCE7',padding:'2px 8px',borderRadius:99,fontWeight:600}}>● En línea</span>
+                            : <span style={{fontSize:11,color:'#9ca3af'}}>● Offline</span>
+                          }
+                        </div>
+                      </div>
+                      <div style={{borderTop:'1px solid #f0f4ff',paddingTop:10,display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px',gridColumn:'1/-1'}}>
+                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Última conexión</div>
+                          <div style={{fontSize:12,fontWeight:600,color:'#374151'}}>
+                            {lastLogin
+                              ? minsAgo < 60 ? minsAgo+'m atrás'
+                                : minsAgo < 1440 ? Math.floor(minsAgo/60)+'h atrás'
+                                : lastLogin.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'})+' '+lastLogin.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})
+                              : 'Nunca ha ingresado'
+                            }
+                          </div>
+                        </div>
+                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px'}}>
+                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Esta semana</div>
+                          <div style={{fontSize:13,fontWeight:700,color:B.primary}}>{daysThisWeek} {daysThisWeek===1?'día':'días'}</div>
+                        </div>
+                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px'}}>
+                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Este mes</div>
+                          <div style={{fontSize:13,fontWeight:700,color:B.primary}}>{sessMonth} sesiones</div>
+                        </div>
+                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px'}}>
+                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Total histórico</div>
+                          <div style={{fontSize:13,fontWeight:700,color:'#374151'}}>{uSess.length} sesiones</div>
+                        </div>
+                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px'}}>
+                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Días activo/mes</div>
+                          <div style={{fontSize:13,fontWeight:700,color:'#374151'}}>{[...new Set(uSess.filter(s=>new Date(s.logged_at)>=startOfMonth).map(s=>new Date(s.logged_at).toDateString()))].length}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </div>
         )}
@@ -1954,7 +2038,10 @@ export default function App() {
               <div style={{fontSize:12,fontWeight:700,color:B.primary,marginBottom:8}}>Propiedades registradas ({(sel.propiedades||[]).length})</div>
               {(sel.propiedades||[]).map((p,i) => (
                 <div key={p.id||i} style={{background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:8,padding:'8px 12px',marginBottom:6,fontSize:12}}>
-                  <div style={{fontWeight:700,color:'#713f12',marginBottom:3}}>{i+1}. {p.inmobiliaria} — {p.proyecto}</div>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                    <div style={{fontWeight:700,color:'#713f12',marginBottom:3}}>{i+1}. {p.inmobiliaria} — {p.proyecto}{p.depto?' · Depto '+p.depto:''}</div>
+                    {(isAdmin||isOps) && <button onClick={e=>{e.stopPropagation();const newProps=(sel.propiedades||[]).filter((_,pi)=>pi!==i);savePropiedades(sel.id,newProps,null)}} style={{fontSize:10,padding:'2px 7px',borderRadius:5,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer',flexShrink:0,marginLeft:8}}>Eliminar</button>}
+                  </div>
                   <div style={{display:'flex',gap:12,flexWrap:'wrap',color:'#92400e'}}>
                     <span>Precio: <strong>{p.moneda} {p.precio}</strong></span>
                     {p.bono_pie && <span>Con bono pie {p.bono_pct}%: <strong>{p.moneda} {p.precio_sin_bono}</strong></span>}
@@ -2013,6 +2100,11 @@ export default function App() {
                   </Fld>
                   <Fld label="Proyecto *">
                     <input value={p.proyecto} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,proyecto:e.target.value}:x))} placeholder="Nombre proyecto" style={sty.inp}/>
+                  </Fld>
+                </div>
+                <div style={{marginBottom:8}}>
+                  <Fld label="N° Depto / Unidad">
+                    <input value={p.depto||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,depto:e.target.value}:x))} placeholder="Ej: 502, Casa 3, Lote 12" style={sty.inp}/>
                   </Fld>
                 </div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
