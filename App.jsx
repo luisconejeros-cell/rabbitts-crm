@@ -40,7 +40,8 @@ const OPS_LOCKED_STAGES = ['firma','escritura','ganado','desistio']
 // Empty property template
 const EMPTY_PROP = {
   id:'', inmobiliaria:'', proyecto:'', depto:'', moneda:'UF', precio:0,
-  bono_pie:false, bono_pct:10, precio_sin_bono:0
+  bono_pie:false, bono_pct:10, precio_sin_bono:0,
+  tipo_entrega:'Inmediata', fecha_escritura:''
 }
 
 // Color presets for stage editor
@@ -173,7 +174,7 @@ export default function App() {
   const [importing, setImporting] = useState(false)
   const [importDone, setImportDone] = useState(null)
   const [sessions, setSessions] = useState([])
-  const [commissions, setCommissions] = useState({}) // {propKey: {pctComision, pctBroker}}
+  const [commissions, setCommissions] = useState({}) // {propKey: {pctComision, pctBroker, cobrado}}
   const [ufHistory, setUfHistory] = useState({})   // {YYYY-MM-DD: ufValue}
   const [impTag, setImpTag] = useState('lead')
   const [impAgent, setImpAgent] = useState('')
@@ -2244,9 +2245,20 @@ export default function App() {
                     <input value={p.proyecto} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,proyecto:e.target.value}:x))} placeholder="Nombre proyecto" style={sty.inp}/>
                   </Fld>
                 </div>
-                <div style={{marginBottom:8}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
                   <Fld label="N° Depto / Unidad">
                     <input value={p.depto||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,depto:e.target.value}:x))} placeholder="Ej: 502, Casa 3, Lote 12" style={sty.inp}/>
+                  </Fld>
+                  <Fld label="Tipo de entrega">
+                    <select value={p.tipo_entrega||'Inmediata'} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,tipo_entrega:e.target.value}:x))} style={sty.sel}>
+                      <option value="Inmediata">Entrega Inmediata</option>
+                      <option value="Futura">Entrega Futura</option>
+                    </select>
+                  </Fld>
+                </div>
+                <div style={{marginBottom:8}}>
+                  <Fld label="Fecha escritura (opcional)">
+                    <input type="date" value={p.fecha_escritura||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,fecha_escritura:e.target.value}:x))} style={sty.inp}/>
                   </Fld>
                 </div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
@@ -2462,168 +2474,238 @@ function LeadForm({data, onChange, onSubmit}) {
 // ─── Comisiones View ─────────────────────────────────────────────────────────
 function ComisionesView({leads, users, stages, indicators, commissions, setCommissions, ufHistory}) {
   const closingLeads = (leads||[]).filter(l => ['firma','escritura'].includes(l.stage))
-  const agents = (users||[]).filter(u => u.role === 'agent').filter(ag => closingLeads.some(l=>l.assigned_to===ag.id))
+  const [filterAgent, setFilterAgent] = React.useState('all')
+  const [filterInmob, setFilterInmob] = React.useState('all')
+  const [filterStatus, setFilterStatus] = React.useState('all')
 
-  const ufHoy = indicators.uf
-    ? parseFloat(indicators.uf.split('.').join('').replace(',','.'))
-    : null
-
-  const getComm = key => commissions[key] || {pctComision:'', pctBroker:''}
+  const ufHoy = indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null
+  const getComm = key => commissions[key] || {pctComision:'', pctBroker:'', cobrado:false, notasInmob:''}
   const setComm = (key, field, val) =>
-    setCommissions(prev => ({...prev, [key]: {...(prev[key]||{pctComision:'',pctBroker:''}), [field]: val}}))
-
+    setCommissions(prev => ({...prev, [key]: {...(prev[key]||{pctComision:'',pctBroker:'',cobrado:false,notasInmob:''}), [field]: val}}))
   const getUF = lead => {
     if (!lead.stage_moved_at) return ufHoy
-    const key = new Date(lead.stage_moved_at).toISOString().slice(0,10)
-    return ufHistory[key] || ufHoy
+    const k = new Date(lead.stage_moved_at).toISOString().slice(0,10)
+    return ufHistory[k] || ufHoy
   }
-
   const calc = (precio, pctC, pctB, moneda, ufVal) => {
     const p = parseFloat(precio)||0
     const comisionTotal = p * (parseFloat(pctC)||0) / 100
-    const montoAsesor   = comisionTotal * (parseFloat(pctB)||0) / 100
+    const montoAsesor = comisionTotal * (parseFloat(pctB)||0) / 100
     const pesos = moneda==='UF' && ufVal ? Math.round(montoAsesor * ufVal) : null
     return { comisionTotal, montoAsesor, pesos }
   }
+  const calcFechaPago = p => {
+    const fp = p._fechaPromesa ? new Date(p._fechaPromesa) : null
+    const fe = p.fecha_escritura ? new Date(p.fecha_escritura) : null
+    if (!fp) return null
+    const base = (p.tipo_entrega==='Futura') ? new Date(fp) : (fe ? new Date(fe) : new Date(fp))
+    base.setDate(base.getDate()+45)
+    return base
+  }
 
-  if (agents.length === 0) return (
+  const allProps = closingLeads.flatMap(l =>
+    (l.propiedades||[]).map(p => ({
+      ...p,
+      _key: l.id+'-'+(p.id||Math.random().toString(36).slice(2)),
+      _agId: l.assigned_to, _leadNombre: l.nombre, _leadTag: l.tag,
+      _stage: l.stage, _ufCierre: getUF(l),
+      _fechaCierre: l.stage_moved_at, _fechaPromesa: l.stage_moved_at,
+    }))
+  )
+  const allInmobs = [...new Set(allProps.map(p=>p.inmobiliaria).filter(Boolean))].sort()
+  const allAgents = (users||[]).filter(u=>u.role==='agent').filter(ag=>allProps.some(p=>p._agId===ag.id))
+
+  const filtered = allProps.filter(p => {
+    if (filterAgent!=='all' && p._agId!==filterAgent) return false
+    if (filterInmob!=='all' && p.inmobiliaria!==filterInmob) return false
+    const c = getComm(p._key)
+    if (filterStatus==='cobrado' && !c.cobrado) return false
+    if (filterStatus==='pendiente' && c.cobrado) return false
+    return true
+  })
+
+  const totUF  = filtered.filter(p=>p.moneda==='UF').reduce((s,p)=>s+calc(p.bono_pie?p.precio_sin_bono:p.precio,getComm(p._key).pctComision,getComm(p._key).pctBroker,'UF',p._ufCierre).montoAsesor,0)
+  const totPesos = filtered.filter(p=>p.moneda==='UF').reduce((s,p)=>s+(calc(p.bono_pie?p.precio_sin_bono:p.precio,getComm(p._key).pctComision,getComm(p._key).pctBroker,'UF',p._ufCierre).pesos||0),0)
+  const cobCount = filtered.filter(p=>getComm(p._key).cobrado).length
+  const pendCount = filtered.length - cobCount
+
+  if (allProps.length===0) return (
     <div style={{padding:'40px',textAlign:'center',color:'#9ca3af',fontSize:13}}>
-      <div style={{fontSize:32,marginBottom:8}}>💰</div>
-      Sin leads en Firma Promesa o Firma Escritura aún.
+      <div style={{fontSize:32,marginBottom:8}}>💰</div>Sin leads en Firma Promesa o Firma Escritura aún.
     </div>
   )
 
+  // Group by agent
+  const byAgent = {}
+  filtered.forEach(p => { if(!byAgent[p._agId])byAgent[p._agId]=[]; byAgent[p._agId].push(p) })
+
   return (
     <div>
-      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
         <div style={{fontSize:28}}>💰</div>
-        <div>
+        <div style={{flex:1}}>
           <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Control de Comisiones</div>
-          <div style={{fontSize:12,color:B.mid}}>
-            Firma Promesa y Firma Escritura · UF hoy: {indicators.uf ? '$'+indicators.uf : 'cargando...'}
+          <div style={{fontSize:12,color:B.mid}}>Firma Promesa · Firma Escritura · UF hoy: {indicators.uf?'$'+indicators.uf:'—'}</div>
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <div style={{background:'#DCFCE7',borderRadius:8,padding:'6px 12px',border:'1px solid #86efac',textAlign:'center'}}>
+            <div style={{fontSize:10,color:'#166534'}}>✅ Cobradas</div>
+            <div style={{fontSize:16,fontWeight:800,color:'#14532d'}}>{cobCount}</div>
           </div>
+          <div style={{background:'#FFF7ED',borderRadius:8,padding:'6px 12px',border:'1px solid #fdba74',textAlign:'center'}}>
+            <div style={{fontSize:10,color:'#9a3412'}}>⏳ Pendientes</div>
+            <div style={{fontSize:16,fontWeight:800,color:'#9a3412'}}>{pendCount}</div>
+          </div>
+          {totUF>0&&<div style={{background:B.light,borderRadius:8,padding:'6px 12px',border:'1px solid '+B.border,textAlign:'right'}}>
+            <div style={{fontSize:10,color:B.mid}}>Total brokers</div>
+            <div style={{fontSize:14,fontWeight:800,color:B.primary}}>UF {totUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+            {totPesos>0&&<div style={{fontSize:11,color:'#6b7280'}}>${totPesos.toLocaleString('es-CL')} CLP</div>}
+          </div>}
         </div>
       </div>
 
-      {agents.map(ag => {
-        const agLeads = closingLeads.filter(l => l.assigned_to === ag.id)
-        const allProps = agLeads.flatMap(l =>
-          (l.propiedades||[]).map(p => ({
-            ...p,
-            _key: l.id+'-'+(p.id||Math.random()),
-            _leadNombre: l.nombre,
-            _stage: l.stage,
-            _ufCierre: getUF(l),
-            _fechaCierre: l.stage_moved_at
-          }))
-        )
-        if (allProps.length === 0) return null
+      {/* Filters */}
+      <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',padding:'10px 12px',background:'#fff',border:'1px solid #dce8ff',borderRadius:10}}>
+        <span style={{fontSize:12,fontWeight:600,color:B.primary,alignSelf:'center'}}>Filtrar:</span>
+        <select value={filterAgent} onChange={e=>setFilterAgent(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+          <option value="all">Todos los brokers</option>
+          {allAgents.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
+        <select value={filterInmob} onChange={e=>setFilterInmob(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+          <option value="all">Todas las inmobiliarias</option>
+          {allInmobs.map(im=><option key={im} value={im}>{im}</option>)}
+        </select>
+        <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+          <option value="all">Todos los estados</option>
+          <option value="pendiente">⏳ Pendiente</option>
+          <option value="cobrado">✅ Cobrado</option>
+        </select>
+        <span style={{fontSize:11,color:'#9ca3af',alignSelf:'center'}}>{filtered.length} propiedades</span>
+      </div>
 
-        // Totals for agent header
-        const totUF  = allProps.filter(p=>p.moneda==='UF').reduce((s,p) => {
-          const {montoAsesor} = calc(p.bono_pie?p.precio_sin_bono:p.precio, getComm(p._key).pctComision, getComm(p._key).pctBroker, 'UF', p._ufCierre)
-          return s + montoAsesor
-        }, 0)
-        const totPesos = allProps.filter(p=>p.moneda==='UF').reduce((s,p) => {
-          const {pesos} = calc(p.bono_pie?p.precio_sin_bono:p.precio, getComm(p._key).pctComision, getComm(p._key).pctBroker, 'UF', p._ufCierre)
-          return s + (pesos||0)
-        }, 0)
-        const totUSD = allProps.filter(p=>p.moneda==='USD').reduce((s,p) => {
-          const {montoAsesor} = calc(p.bono_pie?p.precio_sin_bono:p.precio, getComm(p._key).pctComision, getComm(p._key).pctBroker, 'USD', null)
-          return s + montoAsesor
-        }, 0)
+      {/* Broker cards */}
+      {Object.entries(byAgent).map(([agId, props]) => {
+        const ag = (users||[]).find(u=>u.id===agId)
+        if (!ag) return null
+        const agTotUF = props.filter(p=>p.moneda==='UF').reduce((s,p)=>s+calc(p.bono_pie?p.precio_sin_bono:p.precio,getComm(p._key).pctComision,getComm(p._key).pctBroker,'UF',p._ufCierre).montoAsesor,0)
+        const agTotPesos = props.filter(p=>p.moneda==='UF').reduce((s,p)=>s+(calc(p.bono_pie?p.precio_sin_bono:p.precio,getComm(p._key).pctComision,getComm(p._key).pctBroker,'UF',p._ufCierre).pesos||0),0)
+        const agTotUSD = props.filter(p=>p.moneda==='USD').reduce((s,p)=>s+calc(p.bono_pie?p.precio_sin_bono:p.precio,getComm(p._key).pctComision,getComm(p._key).pctBroker,'USD',null).montoAsesor,0)
+        const cobProp = props.filter(p=>getComm(p._key).cobrado).length
+        const pendProp = props.length - cobProp
 
         return (
-          <div key={ag.id} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:14,marginBottom:16,overflow:'hidden'}}>
-            {/* Agent header */}
-            <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:B.light,borderBottom:'1px solid #dce8ff'}}>
-              <AV name={ag.name} size={36}/>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,color:B.primary}}>{ag.name}</div>
-                <div style={{fontSize:12,color:B.mid}}>{agLeads.length} leads · {allProps.length} propiedades</div>
+          <div key={agId} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:14,marginBottom:16,overflow:'hidden'}}>
+            {/* Broker header */}
+            <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 16px',background:B.light,borderBottom:'1px solid #dce8ff',flexWrap:'wrap'}}>
+              <AV name={ag.name} size={40}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:15,color:B.primary}}>{ag.name}</div>
+                <div style={{fontSize:12,color:B.mid,display:'flex',gap:10,flexWrap:'wrap',marginTop:2}}>
+                  <span>{[...new Set(props.map(p=>p._leadNombre))].length} clientes</span>
+                  <span>{props.length} propiedades</span>
+                  {cobProp>0&&<span style={{color:'#166534'}}>✅ {cobProp} cobradas</span>}
+                  {pendProp>0&&<span style={{color:'#9a3412'}}>⏳ {pendProp} pendientes</span>}
+                </div>
               </div>
-              <div style={{textAlign:'right'}}>
-                {totUF>0 && <div style={{fontSize:13,fontWeight:700,color:'#14532d'}}>
-                  Total UF: {totUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
-                  {totPesos>0 && <span style={{fontSize:11,color:'#6b7280',fontWeight:400}}> · ${totPesos.toLocaleString('es-CL')} CLP</span>}
+              <div style={{textAlign:'right',flexShrink:0}}>
+                {agTotUF>0&&<div style={{fontSize:13,fontWeight:700,color:'#14532d'}}>
+                  Total broker: UF {agTotUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                  {agTotPesos>0&&<div style={{fontSize:11,color:'#6b7280',fontWeight:400}}>${agTotPesos.toLocaleString('es-CL')} CLP</div>}
                 </div>}
-                {totUSD>0 && <div style={{fontSize:13,fontWeight:700,color:'#166534'}}>Total USD: {totUSD.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
+                {agTotUSD>0&&<div style={{fontSize:13,fontWeight:700,color:'#166534'}}>USD {agTotUSD.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
               </div>
             </div>
 
-            {/* Properties */}
-            <div style={{padding:'10px 16px'}}>
-              {allProps.map((p, pi) => {
-                const comm = getComm(p._key)
-                const precioBase = parseFloat(p.bono_pie ? p.precio_sin_bono : p.precio)||0
-                const {comisionTotal, montoAsesor, pesos} = calc(precioBase, comm.pctComision, comm.pctBroker, p.moneda, p._ufCierre)
-                const stageLabel = (stages||[]).find(s=>s.id===p._stage)?.label || p._stage
+            {/* Table */}
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{background:'#f9fbff',borderBottom:'2px solid #dce8ff'}}>
+                    {['Inmobiliaria · Proyecto · Depto','Cliente','Etapa','Entrega','UF Venta','% Comis / % Broker','Comis. Total','Pago Broker','CLP','UF cierre','Fecha pago est.','Estado cobro'].map(h=>(
+                      <th key={h} style={{padding:'7px 9px',textAlign:'left',fontSize:10,fontWeight:700,color:B.primary,whiteSpace:'nowrap'}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {props.map((p,pi) => {
+                    const comm = getComm(p._key)
+                    const base = parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0
+                    const {comisionTotal, montoAsesor, pesos} = calc(base, comm.pctComision, comm.pctBroker, p.moneda, p._ufCierre)
+                    const stLab = (stages||[]).find(s=>s.id===p._stage)?.label||p._stage
+                    const fechaPago = calcFechaPago(p)
+                    const isVencido = fechaPago && fechaPago<=new Date() && !comm.cobrado
+                    const rowBg = comm.cobrado ? '#f0fdf4' : isVencido ? '#fff7ed' : '#fff'
+                    const tagC = {pool:['#F5F3FF','#5b21b6'],lead:[B.light,B.primary],referido:['#FFFBEB','#92400e']}
+                    const [tBg,tCol] = tagC[p._leadTag]||tagC.lead
 
-                return (
-                  <div key={p._key} style={{borderBottom:pi<allProps.length-1?'1px solid #f0f4ff':'none',paddingBottom:14,marginBottom:14}}>
-                    {/* Info */}
-                    <div style={{marginBottom:10}}>
-                      <div style={{fontWeight:600,fontSize:13,color:'#111827'}}>
-                        {p.inmobiliaria} — {p.proyecto}{p.depto?' · Depto '+p.depto:''}
-                      </div>
-                      <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>
-                        Cliente: <strong>{p._leadNombre}</strong>
-                        <span style={{marginLeft:6,fontSize:11,padding:'1px 7px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontWeight:600}}>{stageLabel}</span>
-                      </div>
-                      <div style={{fontSize:13,fontWeight:700,color:'#374151',marginTop:3}}>
-                        {p.moneda} {precioBase.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
-                        {p.bono_pie && <span style={{fontSize:11,color:'#9ca3af',fontWeight:400}}> (precio sin bono pie {p.bono_pct}%)</span>}
-                      </div>
-                      {p.moneda==='UF' && p._ufCierre && <div style={{fontSize:11,color:'#9ca3af'}}>
-                        UF {p._fechaCierre ? 'al cierre '+new Date(p._fechaCierre).toLocaleDateString('es-CL',{day:'2-digit',month:'short',year:'numeric'}) : 'hoy'}: {p._ufCierre.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
-                      </div>}
-                    </div>
-
-                    {/* Inputs + result */}
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,alignItems:'flex-end'}}>
-                      <Fld label="% Comisión inmobiliaria">
-                        <div style={{display:'flex',alignItems:'center',gap:4}}>
-                          <input
-                            type="number" min="0" max="100" step="0.1"
-                            value={comm.pctComision}
-                            onChange={e => setComm(p._key, 'pctComision', e.target.value)}
-                            placeholder="Ej: 4"
-                            style={{...sty.inp, flex:1}}
-                          />
-                          <span style={{fontSize:12,color:'#9ca3af'}}>%</span>
-                        </div>
-                      </Fld>
-                      <Fld label="% Para el broker">
-                        <div style={{display:'flex',alignItems:'center',gap:4}}>
-                          <input
-                            type="number" min="0" max="100" step="0.1"
-                            value={comm.pctBroker}
-                            onChange={e => setComm(p._key, 'pctBroker', e.target.value)}
-                            placeholder="Ej: 50"
-                            style={{...sty.inp, flex:1}}
-                          />
-                          <span style={{fontSize:12,color:'#9ca3af'}}>%</span>
-                        </div>
-                      </Fld>
-                      <div style={{background:montoAsesor>0?'#F0FDF4':'#f9fbff',borderRadius:10,padding:'10px 12px',border:'1px solid '+(montoAsesor>0?'#86efac':'#e5e7eb'),minHeight:60,display:'flex',flexDirection:'column',justifyContent:'center'}}>
-                        {comm.pctComision && comm.pctBroker ? (
-                          <>
-                            <div style={{fontSize:10,color:'#6b7280',marginBottom:3}}>
-                              Comisión: {p.moneda} {comisionTotal.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
-                            </div>
-                            <div style={{fontSize:15,fontWeight:800,color:'#14532d'}}>
-                              Broker: {p.moneda} {montoAsesor.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
-                            </div>
-                            {pesos && <div style={{fontSize:12,fontWeight:700,color:'#166534'}}>${pesos.toLocaleString('es-CL')} CLP</div>}
-                          </>
-                        ) : (
-                          <div style={{fontSize:11,color:'#9ca3af'}}>Ingresa % para calcular</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+                    return (
+                      <tr key={p._key} style={{borderBottom:'1px solid #f0f4ff',background:rowBg}}>
+                        <td style={{padding:'8px 9px',minWidth:150}}>
+                          <div style={{fontWeight:600,color:'#111827'}}>{p.inmobiliaria}</div>
+                          <div style={{color:'#6b7280',fontSize:11}}>{p.proyecto}{p.depto?' · '+p.depto:''}</div>
+                        </td>
+                        <td style={{padding:'8px 9px',minWidth:120}}>
+                          <div style={{fontWeight:600,color:'#111827',whiteSpace:'nowrap'}}>{p._leadNombre}</div>
+                          <span style={{fontSize:10,padding:'1px 5px',borderRadius:99,background:tBg,color:tCol,fontWeight:600}}>{p._leadTag}</span>
+                        </td>
+                        <td style={{padding:'8px 9px',whiteSpace:'nowrap'}}>
+                          <span style={{fontSize:10,padding:'2px 6px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontWeight:600}}>{stLab}</span>
+                        </td>
+                        <td style={{padding:'8px 9px',color:'#6b7280',fontSize:11,whiteSpace:'nowrap'}}>{p.tipo_entrega||'Inmediata'}</td>
+                        <td style={{padding:'8px 9px',fontWeight:600,color:'#374151',whiteSpace:'nowrap'}}>
+                          {p.moneda} {base.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                          {p.bono_pie&&<div style={{fontSize:10,color:'#9ca3af'}}>Bono {p.bono_pct}%</div>}
+                        </td>
+                        <td style={{padding:'8px 9px',minWidth:130}}>
+                          <div style={{display:'flex',gap:4,alignItems:'center'}}>
+                            <input type="number" min="0" max="100" step="0.1" value={comm.pctComision}
+                              onChange={e=>setComm(p._key,'pctComision',e.target.value)}
+                              placeholder="% c" title="% Comisión inmobiliaria"
+                              style={{width:48,fontSize:11,padding:'3px 5px',border:'1px solid #dce8ff',borderRadius:5,background:'#f9fbff'}}/>
+                            <span style={{fontSize:10,color:'#9ca3af'}}>/</span>
+                            <input type="number" min="0" max="100" step="0.1" value={comm.pctBroker}
+                              onChange={e=>setComm(p._key,'pctBroker',e.target.value)}
+                              placeholder="% b" title="% Para el broker"
+                              style={{width:48,fontSize:11,padding:'3px 5px',border:'1px solid #dce8ff',borderRadius:5,background:'#f9fbff'}}/>
+                          </div>
+                        </td>
+                        <td style={{padding:'8px 9px',color:comisionTotal>0?'#374151':'#9ca3af',whiteSpace:'nowrap'}}>
+                          {comisionTotal>0?p.moneda+' '+comisionTotal.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}
+                        </td>
+                        <td style={{padding:'8px 9px',fontWeight:700,color:montoAsesor>0?'#14532d':'#9ca3af',whiteSpace:'nowrap'}}>
+                          {montoAsesor>0?p.moneda+' '+montoAsesor.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}
+                        </td>
+                        <td style={{padding:'8px 9px',fontWeight:600,color:'#166534',whiteSpace:'nowrap'}}>
+                          {pesos?'$'+pesos.toLocaleString('es-CL'):'—'}
+                        </td>
+                        <td style={{padding:'8px 9px',color:'#9ca3af',fontSize:11,whiteSpace:'nowrap'}}>
+                          {p._ufCierre?p._ufCierre.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}
+                        </td>
+                        <td style={{padding:'8px 9px',whiteSpace:'nowrap'}}>
+                          {fechaPago
+                            ? <span style={{fontSize:11,fontWeight:600,color:isVencido?'#dc2626':'#374151'}}>
+                                {isVencido?'⚠ ':''}{fechaPago.toLocaleDateString('es-CL',{day:'2-digit',month:'short',year:'numeric'})}
+                              </span>
+                            : <span style={{color:'#9ca3af'}}>—</span>
+                          }
+                        </td>
+                        <td style={{padding:'8px 9px',minWidth:130}}>
+                          <button onClick={()=>setComm(p._key,'cobrado',!comm.cobrado)}
+                            style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:700,width:'100%',
+                              background:comm.cobrado?'#DCFCE7':'#FFF7ED',color:comm.cobrado?'#14532d':'#9a3412'}}>
+                            {comm.cobrado?'✅ Cobrado':'⏳ Pendiente'}
+                          </button>
+                          <input value={comm.notasInmob||''}
+                            onChange={e=>setComm(p._key,'notasInmob',e.target.value)}
+                            placeholder="Notas..."
+                            style={{marginTop:4,width:'100%',fontSize:10,padding:'3px 5px',border:'1px solid #dce8ff',borderRadius:4,background:'#f9fbff',color:'#374151',boxSizing:'border-box'}}/>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         )
