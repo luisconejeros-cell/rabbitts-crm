@@ -3212,6 +3212,9 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
 // ─── Agent Comisiones View ───────────────────────────────────────────────────
 function AgentComisionesView({leads, me, users, stages, indicators, commissions, ufHistory}) {
   const now = new Date()
+  const [fStatus, setFStatus]   = useState('all')   // all | pendiente | cobrado
+  const [fInmob,  setFInmob]    = useState('all')
+  const [fPeriod, setFPeriod]   = useState('all')   // all | this_year | last_year | q1..q4 | this_month
 
   const ufHoy = indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null
   const dolarHoy = indicators.dolar ? parseFloat(indicators.dolar.split('.').join('').replace(',','.')) : null
@@ -3240,14 +3243,43 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
       let clp = null
       if (p.moneda==='UF' && ufRef) clp = Math.round(miComision * ufRef)
       else if (p.moneda==='USD' && dolarHoy) clp = Math.round(miComision * dolarHoy)
-      const ocEst = p.oc_estado || 'pendiente_oc'
       return {
         ...p, key, comm, base, ufRef, comisTotal, miComision, clp,
         leadNombre: l.nombre, stage: l.stage,
-        fechaPromesa: l.stage_moved_at
+        fechaPromesa: l.stage_moved_at,
+        fechaDate: l.stage_moved_at ? new Date(l.stage_moved_at) : null
       }
     })
   )
+
+  // Filter helpers
+  const allInmobsAgent = [...new Set(myProps.map(p=>p.inmobiliaria).filter(Boolean))].sort()
+
+  const inPeriod = p => {
+    if (fPeriod==='all') return true
+    const d = p.fechaDate
+    if (!d) return fPeriod==='all'
+    const y = now.getFullYear(), m = now.getMonth()
+    if (fPeriod==='this_year')  return d.getFullYear()===y
+    if (fPeriod==='last_year')  return d.getFullYear()===y-1
+    if (fPeriod==='this_month') return d.getFullYear()===y && d.getMonth()===m
+    if (fPeriod==='q1') return d.getFullYear()===y && d.getMonth()<=2
+    if (fPeriod==='q2') return d.getFullYear()===y && d.getMonth()>=3 && d.getMonth()<=5
+    if (fPeriod==='q3') return d.getFullYear()===y && d.getMonth()>=6 && d.getMonth()<=8
+    if (fPeriod==='q4') return d.getFullYear()===y && d.getMonth()>=9
+    return true
+  }
+
+  const filteredProps = myProps.filter(p => {
+    if (fInmob!=='all' && p.inmobiliaria!==fInmob) return false
+    if (!inPeriod(p)) return false
+    const cob = isCobrado(p)
+    if (fStatus==='cobrado'  && !cob) return false
+    if (fStatus==='pendiente' && cob) return false
+    return true
+  })
+
+  const activeFilters = (fStatus!=='all'?1:0)+(fInmob!=='all'?1:0)+(fPeriod!=='all'?1:0)
 
   // KPIs
   const totalUFVendida = closedLeads.reduce((s,l) =>
@@ -3352,6 +3384,39 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
         </div>
       )}
 
+      {/* Filter bar */}
+      {myProps.length > 0 && (
+        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'10px 14px',marginBottom:14,display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          <span style={{fontSize:12,fontWeight:700,color:B.primary}}>🔍 Filtrar:</span>
+          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+            <option value="all">Todos los estados</option>
+            <option value="pendiente">⏳ Pendiente de cobro</option>
+            <option value="cobrado">✅ Cobrado</option>
+          </select>
+          <select value={fInmob} onChange={e=>setFInmob(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+            <option value="all">Todas las inmobiliarias</option>
+            {allInmobsAgent.map(im=><option key={im} value={im}>{im}</option>)}
+          </select>
+          <select value={fPeriod} onChange={e=>setFPeriod(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+            <option value="all">Todo el tiempo</option>
+            <option value="this_month">Este mes</option>
+            <option value="q1">Q1 (Ene-Mar)</option>
+            <option value="q2">Q2 (Abr-Jun)</option>
+            <option value="q3">Q3 (Jul-Sep)</option>
+            <option value="q4">Q4 (Oct-Dic)</option>
+            <option value="this_year">Este año</option>
+            <option value="last_year">Año anterior</option>
+          </select>
+          {activeFilters>0 && (
+            <button onClick={()=>{setFStatus('all');setFInmob('all');setFPeriod('all')}}
+              style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontWeight:600}}>
+              ✕ Limpiar ({activeFilters})
+            </button>
+          )}
+          <span style={{fontSize:11,color:'#9ca3af',marginLeft:'auto'}}>{filteredProps.length} de {myProps.length} propiedades</span>
+        </div>
+      )}
+
       {myProps.length === 0 ? (
         <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'40px',textAlign:'center'}}>
           <div style={{fontSize:40,marginBottom:12}}>🚀</div>
@@ -3360,10 +3425,13 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
         </div>
       ) : (
         <div>
-          <div style={{fontSize:14,fontWeight:700,color:B.primary,marginBottom:12}}>
-            💼 Mis negocios en curso — {myProps.length} {myProps.length===1?'propiedad':'propiedades'}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+            <span style={{fontSize:14,fontWeight:700,color:B.primary}}>
+              💼 {filteredProps.length===myProps.length?'Mis negocios en curso':'Resultados filtrados'} — {filteredProps.length} {filteredProps.length===1?'propiedad':'propiedades'}
+            </span>
           </div>
-          {myProps.map((p,i) => {
+          {filteredProps.length===0 && <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:13,background:'#fff',borderRadius:10,border:'1px solid #dce8ff'}}>Sin propiedades con estos filtros</div>}
+          {filteredProps.map((p,i) => {
             const ocInfo = OC_LABEL[p.oc_estado||'pendiente_oc']||OC_LABEL.pendiente_oc
             const stLab = (stages||[]).find(s=>s&&s.id===p.stage)?.label||(p.stage||'—')
             const needsBrokerInvoice = p.oc_estado==='broker_factura'
