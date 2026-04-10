@@ -197,7 +197,13 @@ export default function App() {
     tono: 'motivador',
     horarioDesde: '09:00',
     horarioHasta: '20:00',
-    siempreActivo: true, // 24/7
+    siempreActivo: true,       // 24/7
+    pausarAlIntervenir: true,   // pause IA when human intervenes
+    tiempoEspera: 7,            // seconds to wait before responding
+    notifApp: true,             // in-app notification when escalates
+    notifEmail: true,           // email notification when escalates
+    notifEntradaHumano: true,   // notify when enters human stage
+    notifMensajeHumano: true,   // notify when new message in human stage
     activo: false,
     calendlyLink: 'https://calendly.com/agenda-rabbittscapital/60min',
     driveUrl: '',
@@ -2888,6 +2894,9 @@ export default function App() {
               <option value="admin">Administrador</option>
             </select>
           </Fld>
+          <Fld label="Teléfono WhatsApp (con código país)">
+            <input value={newUser.phone||''} onChange={e=>setNewUser(u=>({...u,phone:e.target.value}))} placeholder="+56912345678" style={sty.inp}/>
+          </Fld>
           <button onClick={createUser} style={{...sty.btnP,width:'100%',padding:'10px 16px'}}>Crear usuario</button>
         </Modal>
       )}
@@ -3849,6 +3858,100 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
               style={{...sty.inp,minHeight:120,resize:'vertical',fontSize:12,fontFamily:'monospace'}}/>
           </div>
 
+          {/* Ajustes de comportamiento */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>⚙️ Ajustes de comportamiento</p>
+            <div style={{display:'flex',flexDirection:'column',gap:0}}>
+
+              {/* Pausar al intervenir */}
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',padding:'14px 0',borderBottom:'1px solid #f0f4ff'}}>
+                <div style={{flex:1,paddingRight:16}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>Pausar respuestas de Rabito al intervenir</div>
+                  <div style={{fontSize:11,color:'#6b7280',marginTop:3}}>Cuando un humano intervenga en la conversación, el contacto pasará a etapa humana y Rabito se detendrá. Si está desactivada, Rabito seguirá respondiendo aunque un humano intervenga.</div>
+                </div>
+                <button onClick={()=>upd(['pausarAlIntervenir'],!iaConfig.pausarAlIntervenir)}
+                  style={{flexShrink:0,width:44,height:24,borderRadius:99,border:'none',cursor:'pointer',
+                    background:iaConfig.pausarAlIntervenir?B.primary:'#e5e7eb',position:'relative',transition:'background .2s'}}>
+                  <div style={{position:'absolute',top:2,left:iaConfig.pausarAlIntervenir?22:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+                </button>
+              </div>
+
+              {/* Rabito respondiendo global */}
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',padding:'14px 0',borderBottom:'1px solid #f0f4ff'}}>
+                <div style={{flex:1,paddingRight:16}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>Rabito respondiendo</div>
+                  <div style={{fontSize:11,color:'#6b7280',marginTop:3}}>Si está activada, Rabito responderá a todos los mensajes en tus canales conectados. Si está desactivada, Rabito no responderá ningún mensaje.</div>
+                </div>
+                <button onClick={()=>upd(['activo'],!iaConfig.activo)}
+                  style={{flexShrink:0,width:44,height:24,borderRadius:99,border:'none',cursor:'pointer',
+                    background:iaConfig.activo?B.primary:'#e5e7eb',position:'relative',transition:'background .2s'}}>
+                  <div style={{position:'absolute',top:2,left:iaConfig.activo?22:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+                </button>
+              </div>
+
+              {/* Tiempo de espera */}
+              <div style={{padding:'14px 0',borderBottom:'1px solid #f0f4ff'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>Tiempo de espera de mensajes</div>
+                    <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>El tiempo que Rabito esperará antes de responder, por si el cliente envía varios mensajes seguidos.</div>
+                  </div>
+                  <span style={{fontSize:13,fontWeight:700,color:B.primary,flexShrink:0,marginLeft:16}}>{iaConfig.tiempoEspera||7} segundos</span>
+                </div>
+                <input type="range" min="1" max="30" value={iaConfig.tiempoEspera||7}
+                  onChange={e=>upd(['tiempoEspera'],parseInt(e.target.value))}
+                  style={{width:'100%',accentColor:B.primary}}/>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#9ca3af',marginTop:2}}>
+                  <span>1 seg</span><span>30 seg</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Notificaciones */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🔔 Canales de notificación</p>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Elige dónde recibir notificaciones cuando un lead pasa a etapa humana</p>
+            {[
+              {k:'notifApp',   l:'Aplicación',          sub:'En el CRM (campana)'},
+              {k:'notifEmail', l:'Correo electrónico',  sub:'Notificaciones por email'},
+            ].map(({k,l,sub})=>(
+              <div key={k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0',borderBottom:'1px solid #f0f4ff'}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:'#111827'}}>{l}</div>
+                  <div style={{fontSize:11,color:'#6b7280'}}>{sub}</div>
+                </div>
+                <button onClick={()=>upd([k],!iaConfig[k])}
+                  style={{flexShrink:0,width:44,height:24,borderRadius:99,border:'none',cursor:'pointer',
+                    background:iaConfig[k]?B.primary:'#e5e7eb',position:'relative',transition:'background .2s'}}>
+                  <div style={{position:'absolute',top:2,left:iaConfig[k]?22:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Tipos de notificación */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🔔 Tipos de notificación</p>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Selecciona cuándo recibir notificaciones de etapa humana</p>
+            {[
+              {k:'notifEntradaHumano', l:'Entrada a etapa humana', sub:'Cuando un contacto entra a etapa humana'},
+              {k:'notifMensajeHumano', l:'Mensajes nuevos',        sub:'Cuando recibes un mensaje en etapa humana'},
+            ].map(({k,l,sub})=>(
+              <div key={k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0',borderBottom:'1px solid #f0f4ff'}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:'#111827'}}>{l}</div>
+                  <div style={{fontSize:11,color:'#6b7280'}}>{sub}</div>
+                </div>
+                <button onClick={()=>upd([k],!iaConfig[k])}
+                  style={{flexShrink:0,width:44,height:24,borderRadius:99,border:'none',cursor:'pointer',
+                    background:iaConfig[k]?B.primary:'#e5e7eb',position:'relative',transition:'background .2s'}}>
+                  <div style={{position:'absolute',top:2,left:iaConfig[k]?22:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+                </button>
+              </div>
+            ))}
+          </div>
+
           {/* Google Drive */}
           <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
@@ -4562,12 +4665,69 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
       )}
 
       {/* TAB: MASIVO */}
-      {tab==='masivo' && (
+      {tab==='masivo' && (() => {
+        const [masivoTarget, setMasivoTarget] = useState('leads') // leads | equipo
+        const [selectedUsers, setSelectedUsers] = useState([])
+        const teamUsers = (users||[]).filter(u=>u.role!=='partner')
+        const roleLabel = r => ({admin:'Admin',agent:'Asesor',operaciones:'Operaciones',finanzas:'Finanzas'}[r]||r)
+
+        const TWILIO_CONFIGURED = false // flip to true when Twilio/Meta is connected
+        const sendMasivoEquipo = async () => {
+          if (!masivo.msg.trim()||selectedUsers.length===0) return
+          const withPhone = selectedUsers.map(id=>teamUsers.find(u=>u.id===id)).filter(u=>u?.phone)
+          const noPhone   = selectedUsers.map(id=>teamUsers.find(u=>u.id===id)).filter(u=>!u?.phone)
+          if (withPhone.length===0) {
+            alert('Ningún usuario seleccionado tiene número de WhatsApp registrado. Agrégalo en Usuarios → editar.')
+            return
+          }
+          if (TWILIO_CONFIGURED) {
+            // When API is connected: send via Twilio/Meta
+            setMasivoSending(true)
+            let sent=0, failed=0
+            for (const u of withPhone) {
+              try {
+                await fetch('/api/whatsapp', {method:'POST',headers:{'Content-Type':'application/json'},
+                  body:JSON.stringify({to:u.phone, mensaje:masivo.msg.replace('{nombre}',u.name||'')})})
+                sent++
+              } catch(_) { failed++ }
+            }
+            setMasivoResult({sent, failed:failed+(noPhone.length)})
+            setMasivoSending(false)
+          } else {
+            // Fallback: open wa.me links one by one
+            withPhone.forEach((u,i) => {
+              const msg = encodeURIComponent(masivo.msg.replace('{nombre}',u.name||''))
+              const phone = u.phone.replace(/[^0-9]/g,'')
+              setTimeout(()=>window.open('https://wa.me/'+phone+'?text='+msg,'_blank'), i*800)
+            })
+            setMasivoResult({sent:withPhone.length, failed:noPhone.length, waLinks:true})
+          }
+          setSelectedUsers([])
+        }
+
+        return (
         <div>
+          {/* Target toggle */}
+          <div style={{display:'flex',gap:8,marginBottom:16,padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:10}}>
+            <span style={{fontSize:12,fontWeight:600,color:B.primary,alignSelf:'center'}}>Enviar a:</span>
+            <button onClick={()=>setMasivoTarget('leads')}
+              style={{fontSize:12,padding:'6px 16px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,
+                background:masivoTarget==='leads'?B.primary:'#f0f4ff',color:masivoTarget==='leads'?'#fff':B.mid}}>
+              📱 Leads / Contactos WhatsApp
+            </button>
+            <button onClick={()=>setMasivoTarget('equipo')}
+              style={{fontSize:12,padding:'6px 16px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,
+                background:masivoTarget==='equipo'?B.primary:'#f0f4ff',color:masivoTarget==='equipo'?'#fff':B.mid}}>
+              👥 Equipo interno ({teamUsers.length})
+            </button>
+          </div>
+
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
             {/* Message composer */}
             <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
-              <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>📣 Componer mensaje masivo</p>
+              <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>
+                {masivoTarget==='leads'?'📣 Mensaje masivo a leads':'📧 Mensaje al equipo'}
+              </p>
               <Fld label="Plantilla base (opcional)">
                 <select value={masivo.plantilla} onChange={e=>{
                   const tpl = iaConfig.plantillas?.[e.target.value]||''
@@ -4590,14 +4750,23 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                 💡 Variables: {'{nombre}'} se reemplaza con el nombre del contacto
               </div>
               {masivoResult && (
-                <div style={{marginTop:10,padding:'8px 12px',background:'#DCFCE7',border:'1px solid #86efac',borderRadius:8,fontSize:12,color:'#14532d',fontWeight:600}}>
-                  ✅ Enviado a {masivoResult.sent} conversaciones{masivoResult.failed>0?` · ${masivoResult.failed} fallaron`:''}
+                <div style={{marginTop:10,padding:'8px 12px',background:'#DCFCE7',border:'1px solid #86efac',borderRadius:8,fontSize:12,color:'#14532d'}}>
+                  {masivoResult.waLinks
+                    ? <div><strong>✅ Se abrieron {masivoResult.sent} chats de WhatsApp</strong><br/><span style={{fontSize:11,fontWeight:400}}>Confirma el envío en cada ventana de WhatsApp Web que se abrió.{masivoResult.failed>0?' · '+masivoResult.failed+' sin número registrado':''}</span></div>
+                    : <strong>✅ Enviado a {masivoResult.sent}{masivoResult.failed>0?' · '+masivoResult.failed+' fallaron':''}</strong>
+                  }
                 </div>
               )}
-              <button onClick={sendMasivo} disabled={masivoSending||!masivo.msg.trim()||selectedConvs.length===0}
-                style={{...sty.btnP,marginTop:12,width:'100%',opacity:masivoSending||!masivo.msg.trim()||selectedConvs.length===0?0.5:1}}>
-                {masivoSending?'Enviando...': `Enviar a ${selectedConvs.length} seleccionados`}
-              </button>
+              {masivoTarget==='leads'
+                ? <button onClick={sendMasivo} disabled={masivoSending||!masivo.msg.trim()||selectedConvs.length===0}
+                    style={{...sty.btnP,marginTop:12,width:'100%',opacity:masivoSending||!masivo.msg.trim()||selectedConvs.length===0?0.5:1}}>
+                    {masivoSending?'Enviando...': `Enviar a ${selectedConvs.length} seleccionados`}
+                  </button>
+                : <button onClick={sendMasivoEquipo} disabled={masivoSending||!masivo.msg.trim()||selectedUsers.length===0}
+                    style={{...sty.btnP,marginTop:12,width:'100%',opacity:masivoSending||!masivo.msg.trim()||selectedUsers.length===0?0.5:1}}>
+                    {masivoSending?'Enviando...': `Enviar a ${selectedUsers.length} del equipo`}
+                  </button>
+              }
             </div>
 
             {/* Contact selector */}
@@ -4647,6 +4816,10 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
           </div>
         </div>
       )}
+
+        </div>
+        )
+      })()}
 
       {/* TAB: NUEVA */}
       {tab==='nuevo' && (
