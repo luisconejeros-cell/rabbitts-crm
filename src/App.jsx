@@ -140,9 +140,11 @@ const sty = {
   card:{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'12px 16px'},
 }
 
-const Modal = ({title, onClose, children, wide=false}) => (
-  <div style={{position:'fixed',inset:0,background:'rgba(27,79,200,0.18)',display:'flex',alignItems:'flex-start',justifyContent:'center',paddingTop:60,zIndex:1000}}>
-    <div style={{background:'#fff',borderRadius:14,padding:isMobile?'12px':'20px 24px',width:'100%',maxWidth:wide?600:440,margin:'0 16px',maxHeight:'80vh',overflowY:'auto',boxShadow:'0 8px 40px rgba(27,79,200,0.18)',border:'1px solid #dce8ff'}}>
+const Modal = ({title, onClose, children, wide=false}) => {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+  return (
+  <div style={{position:'fixed',inset:0,background:'rgba(27,79,200,0.18)',display:'flex',alignItems:isMobile?'flex-end':'flex-start',justifyContent:'center',paddingTop:isMobile?0:60,zIndex:1000}}>
+    <div style={{background:'#fff',borderRadius:isMobile?'20px 20px 0 0':14,padding:isMobile?'16px':'20px 24px',width:'100%',maxWidth:isMobile?'100%':wide?600:440,margin:isMobile?0:'0 16px',maxHeight:isMobile?'92vh':'80vh',overflowY:'auto',boxShadow:'0 8px 40px rgba(27,79,200,0.18)',border:'1px solid #dce8ff'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
         <span style={{fontWeight:700,fontSize:16,color:B.primary}}>● {title}</span>
         <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#9ca3af',lineHeight:1}}>×</button>
@@ -150,7 +152,8 @@ const Modal = ({title, onClose, children, wide=false}) => (
       {children}
     </div>
   </div>
-)
+  )
+}
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 const EU = {name:'',rut:'',phone:'',email:'',username:'',pin:'',role:'agent'}
