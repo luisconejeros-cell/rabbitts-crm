@@ -100,8 +100,9 @@ const daysIn = l => {
 }
 
 // ─── Mini components ─────────────────────────────────────────────────────────
-const AV = ({name, size=32}) => {
+const AV = ({name, size=32, src=null}) => {
   const [bg, col] = pal(name)
+  if (src) return <img src={src} alt={name||''} style={{width:size,height:size,borderRadius:'50%',objectFit:'cover',flexShrink:0}} onError={e=>e.target.style.display='none'}/>
   return <div style={{width:size,height:size,borderRadius:'50%',background:bg,color:col,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:size*.38,flexShrink:0}}>{ini(name)}</div>
 }
 
@@ -159,6 +160,8 @@ export default function App() {
   const [users,  setUsers]  = useState(null)
   const [leads,  setLeads]  = useState(null)
   const [me,     setMe]     = useState(null)
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [nav,    setNav]    = useState('kanban')
   const [modal,  setModal]  = useState(null)
   const [sel,    setSel]    = useState(null)
@@ -320,6 +323,13 @@ export default function App() {
     window._iaConfigTimer = setTimeout(() => saveIaConfig(iaConfig), 1000)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iaConfig, dbReady])
+
+  // ── Responsive resize handler ───────────────────────────────────────────────
+  useEffect(() => {
+    const handle = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handle)
+    return () => window.removeEventListener('resize', handle)
+  }, [])
 
   // ── Preload historical UF for closing leads ─────────────────────────────
   useEffect(() => {
@@ -1077,37 +1087,60 @@ export default function App() {
   // ── APP ────────────────────────────────────────────────────────────────────
   return (
     <div style={{fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',minHeight:'100vh',background:'#f0f4ff'}}>
+      <style>{`
+        * { box-sizing: border-box; }
+        body { margin: 0; -webkit-text-size-adjust: 100%; }
+        input, textarea, select, button { font-family: inherit; -webkit-appearance: none; }
+        @media (max-width: 767px) {
+          .rcrm-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+          .rcrm-grid-2 { grid-template-columns: 1fr !important; }
+          .rcrm-grid-3 { grid-template-columns: 1fr !important; }
+          .rcrm-hide-mobile { display: none !important; }
+          .rcrm-full-mobile { width: 100% !important; min-width: 0 !important; }
+          .rcrm-card { padding: 10px !important; border-radius: 10px !important; }
+          h2, .rcrm-title { font-size: 15px !important; }
+        }
+        @media (min-width: 768px) {
+          .rcrm-hide-desktop { display: none !important; }
+        }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #f0f4ff; }
+        ::-webkit-scrollbar-thumb { background: #c5d5f5; border-radius: 99px; }
+      `}</style>
       <Toast msg={toast}/>
 
       {/* Topbar */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',borderBottom:'3px solid '+B.primary,background:'#fff',flexWrap:'wrap',gap:8,position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 12px rgba(27,79,200,0.08)'}}>
-        <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:isMobile?'10px 12px':'10px 16px',borderBottom:'3px solid '+B.primary,background:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 12px rgba(27,79,200,0.08)',gap:8}}>
+        <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <RabbitsLogo size={34}/>
-            <div>
+            <RabbitsLogo size={isMobile?28:34}/>
+            {!isMobile && <div>
               <div style={{fontWeight:800,fontSize:13,color:B.primary,lineHeight:1}}>Rabbitts Capital</div>
               <div style={{fontSize:9,color:B.mid,fontWeight:600,letterSpacing:'0.5px',textTransform:'uppercase'}}>CRM</div>
-            </div>
+            </div>}
           </div>
-          <div style={{display:'flex',gap:2,flexWrap:'wrap'}}>
+          {/* Desktop nav */}
+          {!isMobile && <div style={{display:'flex',gap:2,flexWrap:'wrap'}}>
             {NAV.map(n => (
               <button key={n} onClick={()=>setNav(n)} style={{fontSize:13,padding:'5px 12px',borderRadius:8,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#6b7280',fontWeight:nav===n?700:400}}>
                 {n.charAt(0).toUpperCase()+n.slice(1)}
               </button>
             ))}
-          </div>
+          </div>}
+          {/* Mobile: current page title */}
+          {isMobile && <span style={{fontSize:14,fontWeight:700,color:B.primary}}>{nav.charAt(0).toUpperCase()+nav.slice(1)}</span>}
         </div>
-        {/* Financial indicators + date */}
-        <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
+        {/* Financial indicators - hide on mobile */}
+        {!isMobile && <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
           {indicators.uf && (
             <div style={{display:'flex',alignItems:'center',gap:5,background:'#E8EFFE',borderRadius:8,padding:'4px 10px',border:'1px solid #A8C0F0'}}>
-              <span style={{fontSize:10,fontWeight:700,color:B.primary,letterSpacing:'0.3px'}}>UF</span>
+              <span style={{fontSize:10,fontWeight:700,color:B.primary}}>UF</span>
               <span style={{fontSize:12,fontWeight:700,color:B.primary}}>${indicators.uf}</span>
             </div>
           )}
           {indicators.dolar && (
             <div style={{display:'flex',alignItems:'center',gap:5,background:'#F0FDF4',borderRadius:8,padding:'4px 10px',border:'1px solid #86efac'}}>
-              <span style={{fontSize:10,fontWeight:700,color:'#166534',letterSpacing:'0.3px'}}>USD</span>
+              <span style={{fontSize:10,fontWeight:700,color:'#166534'}}>USD</span>
               <span style={{fontSize:12,fontWeight:700,color:'#166534'}}>${indicators.dolar}</span>
             </div>
           )}
@@ -1116,10 +1149,10 @@ export default function App() {
               {new Date().toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}).replace(/^\w/,c=>c.toUpperCase())}
             </span>
           </div>
-        </div>
+        </div>}
 
         <div style={{display:'flex',alignItems:'center',gap:8}}>
-          <AV name={me.name} size={28}/>
+          <AV name={me.name} size={28} src={me.avatar_url||null}/>
           <span style={{fontSize:13,color:'#6b7280',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{me.name}</span>
           <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':isOps?'#FEF9C3':isFinanzas?'#F0FDF4':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':isOps?'#713f12':isFinanzas?'#166534':'#1d4ed8',fontWeight:700}}>{me.role}</span>
           {!isAdmin && (
@@ -1164,12 +1197,63 @@ export default function App() {
               </div>
             )
           })()}
-          <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid}}>Mi perfil</button>
-          <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'none',background:'transparent',cursor:'pointer',color:'#9ca3af'}}>Salir</button>
+          {!isMobile && <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid}}>Mi perfil</button>}
+          {!isMobile && <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'none',background:'transparent',cursor:'pointer',color:'#9ca3af'}}>Salir</button>}
+          {isMobile && <button onClick={()=>setMobileMenuOpen(v=>!v)} style={{fontSize:20,padding:'4px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.primary}}>☰</button>}
         </div>
       </div>
 
-      <div style={{padding:16}}>
+      {/* Mobile slide menu */}
+      {isMobile && mobileMenuOpen && (
+        <div style={{position:'fixed',inset:0,zIndex:200}} onClick={()=>setMobileMenuOpen(false)}>
+          <div style={{position:'absolute',top:0,left:0,width:'75%',maxWidth:280,height:'100%',background:'#fff',boxShadow:'4px 0 24px rgba(0,0,0,0.15)',padding:'16px',display:'flex',flexDirection:'column',gap:4}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
+              <AV name={me.name} size={36} src={me.avatar_url||null}/>
+              <div>
+                <div style={{fontWeight:700,fontSize:14,color:'#111827'}}>{me.name}</div>
+                <div style={{fontSize:11,color:'#9ca3af'}}>{me.role}</div>
+              </div>
+            </div>
+            {NAV.map(n => {
+              const icons = {dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬','mis comisiones':'💵','nuevo lead':'➕',etapas:'⚙️',importar:'📥',extraer:'🧠',dashboard_finanzas:'📊',comisiones:'💰',pool:'🌐'}
+              return (
+                <button key={n} onClick={()=>{setNav(n);setMobileMenuOpen(false)}}
+                  style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:10,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#374151',fontWeight:nav===n?700:400,fontSize:14,textAlign:'left',width:'100%'}}>
+                  <span style={{fontSize:18}}>{icons[n]||'•'}</span>
+                  {n.charAt(0).toUpperCase()+n.slice(1).replace('_',' ')}
+                </button>
+              )
+            })}
+            <div style={{marginTop:'auto',paddingTop:12,borderTop:'1px solid #f0f4ff',display:'flex',flexDirection:'column',gap:6}}>
+              <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile');setMobileMenuOpen(false)}} style={{padding:'10px 14px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid,fontSize:13,textAlign:'left'}}>👤 Mi perfil</button>
+              <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{padding:'10px 14px',borderRadius:8,border:'none',background:'#FEF2F2',cursor:'pointer',color:'#991b1b',fontSize:13,textAlign:'left',fontWeight:600}}>🚪 Cerrar sesión</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile bottom navigation for agents */}
+      {isMobile && isAgent && (
+        <div style={{position:'fixed',bottom:0,left:0,right:0,background:'#fff',borderTop:'2px solid #dce8ff',display:'flex',zIndex:100,boxShadow:'0 -2px 12px rgba(27,79,200,0.08)'}}>
+          {[
+            {n:'kanban',     icon:'📋', label:'Leads'},
+            {n:'lista',      icon:'📝', label:'Lista'},
+            {n:'mis comisiones', icon:'💵', label:'Comisiones'},
+            {n:'nuevo lead', icon:'➕', label:'Nuevo'},
+          ].map(({n,icon,label})=>(
+            <button key={n} onClick={()=>setNav(n)}
+              style={{flex:1,padding:'8px 4px',border:'none',background:'transparent',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:2,
+                color:nav===n?B.primary:'#9ca3af'}}>
+              <span style={{fontSize:20}}>{icon}</span>
+              <span style={{fontSize:10,fontWeight:nav===n?700:400}}>{label}</span>
+              {nav===n&&<div style={{width:20,height:2,background:B.primary,borderRadius:99}}/>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{padding:isMobile?'12px 10px':'16px',paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
 
         {/* KANBAN */}
         {(nav==='kanban'||nav==='pool') && !isFinanzas && (
@@ -1221,7 +1305,7 @@ export default function App() {
 
         {/* LISTA */}
         {nav==='lista' && (
-          <div>
+          <div style={{overflowX:isMobile?'auto':'visible'}}>
             <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
               {isAdmin && <button onClick={exportCSV} style={sty.btnO}>Exportar CSV</button>}
             </div>
@@ -2911,9 +2995,35 @@ export default function App() {
       {/* Perfil */}
       {modal==='profile' && (
         <Modal title="Mi perfil" onClose={()=>setModal(null)}>
+          {/* Avatar upload */}
+          <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:16,padding:'12px',background:'#f9fbff',borderRadius:10,border:'1px solid #dce8ff'}}>
+            <div style={{position:'relative',flexShrink:0}}>
+              {editP.avatar_url
+                ? <img src={editP.avatar_url} alt="avatar" style={{width:64,height:64,borderRadius:'50%',objectFit:'cover',border:'2px solid '+B.border}}/>
+                : <AV name={me.name} size={64}/>
+              }
+              <label htmlFor="avatar-upload" style={{position:'absolute',bottom:-2,right:-2,width:22,height:22,borderRadius:'50%',background:B.primary,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:12,boxShadow:'0 1px 4px rgba(0,0,0,0.2)'}}>
+                ✎
+              </label>
+              <input id="avatar-upload" type="file" accept="image/*" style={{display:'none'}}
+                onChange={async e => {
+                  const file = e.target.files[0]
+                  if (!file) return
+                  if (file.size > 2*1024*1024) { setProfErr('La imagen debe ser menor a 2MB'); return }
+                  const reader = new FileReader()
+                  reader.onload = ev => setEditP(p=>({...p, avatar_url: ev.target.result}))
+                  reader.readAsDataURL(file)
+                }}/>
+            </div>
+            <div>
+              <div style={{fontWeight:700,fontSize:14,color:'#111827'}}>{me.name}</div>
+              <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{me.role}</div>
+              <div style={{fontSize:11,color:B.mid,marginTop:4}}>Toca el lápiz para cambiar tu foto</div>
+            </div>
+          </div>
           <div style={{fontSize:12,fontWeight:700,color:B.mid,marginBottom:10}}>Datos personales</div>
           <Fld label="Nombre completo"><input value={editP.name} onChange={e=>setEditP(p=>({...p,name:e.target.value}))} placeholder="Tu nombre" style={sty.inp}/></Fld>
-          <Fld label="Teléfono"><input value={editP.phone} onChange={e=>setEditP(p=>({...p,phone:e.target.value}))} placeholder="+56 9 ..." style={sty.inp}/></Fld>
+          <Fld label="Teléfono WhatsApp"><input value={editP.phone} onChange={e=>setEditP(p=>({...p,phone:e.target.value}))} placeholder="+56 9 ..." style={sty.inp}/></Fld>
           <Fld label="Email"><input value={editP.email} onChange={e=>setEditP(p=>({...p,email:e.target.value}))} placeholder="tu@email.com" style={sty.inp}/></Fld>
           {profErr&&<p style={{margin:'0 0 8px',fontSize:12,color:'#991b1b'}}>{profErr}</p>}
           <button onClick={saveProfile} style={{...sty.btnP,width:'100%',marginBottom:4}}>Guardar datos</button>
