@@ -4817,10 +4817,6 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
         </div>
       )}
 
-        </div>
-        )
-      })()}
-
       {/* TAB: NUEVA */}
       {tab==='nuevo' && (
         <div style={{maxWidth:400}}>
