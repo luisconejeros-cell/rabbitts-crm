@@ -366,7 +366,7 @@ export default function App() {
       setUsers(us)
       if (window.__sessionUserId) {
         const saved = us.find(u => u.id === window.__sessionUserId)
-        if (saved) { setMe(saved); setNav(saved.role==='admin'||saved.role==='partner'?'dashboard':saved.role==='finanzas'?'comisiones':'kanban') }
+        if (saved) { setMe(saved); setNav(saved.role==='admin'||saved.role==='partner'?'dashboard':saved.role==='finanzas'?'dashboard_finanzas':'kanban') }
         window.__sessionUserId = null
       }
       setLeads(JSON.parse(localStorage.getItem('rcrm_leads') || '[]'))
@@ -478,7 +478,7 @@ export default function App() {
     const u = (users||[]).find(x => x.username === lu.trim().toLowerCase())
     if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
-    setNav(u.role==='admin'||u.role==='partner'?'dashboard':u.role==='finanzas'?'comisiones':'kanban')
+    setNav(u.role==='admin'||u.role==='partner'?'dashboard':u.role==='finanzas'?'dashboard_finanzas':'kanban')
     // Persist session for 8 hours
     localStorage.setItem('rcrm_session', JSON.stringify({id:u.id, expires: Date.now() + 8*60*60*1000}))
     // Record login for activity tracking
@@ -919,7 +919,7 @@ export default function App() {
   const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','etapas','importar','extraer']
             : isPartner  ? ['dashboard','pool']
             : isOps      ? ['kanban','lista']
-            : isFinanzas ? ['comisiones']
+            : isFinanzas ? ['dashboard_finanzas','comisiones']
             : ['kanban','lista','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
@@ -2088,6 +2088,242 @@ export default function App() {
         })()}
 
         {/* COMISIONES — Finanzas */}
+        {/* DASHBOARD FINANZAS */}
+        {nav==='dashboard_finanzas' && (isAdmin||isFinanzas) && (() => {
+          const closingLeads = leads.filter(l => ['firma','escritura'].includes(l.stage))
+          const now = new Date()
+
+          // Helper: get all props with comm data
+          const allProps = closingLeads.flatMap((l,li) =>
+            (l.propiedades||[]).map((p,pi) => {
+              const key = l.id+'-'+(p.id||'idx'+pi)
+              const comm = commissions[key] || {pctComision:'',pctBroker:'',cobrado:false,notasInmob:''}
+              const base = parseFloat(p.bono_pie ? p.precio_sin_bono : p.precio)||0
+              const ufVal = (() => {
+                if (!l.stage_moved_at) return null
+                const k = new Date(l.stage_moved_at).toISOString().slice(0,10)
+                return ufHistory[k] || null
+              })()
+              const dolarVal = indicators.dolar ? parseFloat(indicators.dolar.split('.').join('').replace(',','.')) : null
+              const ufHoyVal = indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null
+              const ufRef = ufVal || ufHoyVal
+              const pctC = parseFloat(comm.pctComision)||0
+              const pctB = parseFloat(comm.pctBroker)||0
+              const comisTotal = base * pctC / 100
+              const pagoAsesor = comisTotal * pctB / 100
+              const margen = comisTotal - pagoAsesor
+              let clp = null
+              if (p.moneda==='UF' && ufRef) clp = Math.round(pagoAsesor * ufRef)
+              else if (p.moneda==='USD' && dolarVal) clp = Math.round(pagoAsesor * dolarVal)
+              // Payment date
+              const fp = l.stage_moved_at ? new Date(l.stage_moved_at) : null
+              const fe = p.fecha_escritura ? new Date(p.fecha_escritura) : null
+              let fechaPago = null
+              if (fp) {
+                const base2 = (p.tipo_entrega==='Futura') ? new Date(fp) : (fe ? new Date(fe) : new Date(fp))
+                base2.setDate(base2.getDate()+45)
+                fechaPago = base2
+              }
+              const isVencido = fechaPago && fechaPago <= now && !comm.cobrado
+              const isProximo = fechaPago && !comm.cobrado && fechaPago > now && (fechaPago - now) < 30*24*60*60*1000
+              const ag = (users||[]).find(u=>u.id===l.assigned_to)
+              return {
+                ...p, key, comm, base, ufRef, clp, comisTotal, pagoAsesor, margen,
+                fechaPago, isVencido, isProximo,
+                leadNombre: l.nombre, stage: l.stage, agName: ag?.name||'—',
+                inmob: p.inmobiliaria||'—'
+              }
+            })
+          )
+
+          // KPIs
+          const totalComisUF   = allProps.filter(p=>p.moneda==='UF'&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const totalBrokerUF  = allProps.filter(p=>p.moneda==='UF'&&p.pagoAsesor>0).reduce((s,p)=>s+p.pagoAsesor,0)
+          const margenTotalUF  = allProps.filter(p=>p.moneda==='UF'&&p.margen>0).reduce((s,p)=>s+p.margen,0)
+          const cobradoUF      = allProps.filter(p=>p.moneda==='UF'&&p.comm.cobrado&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const pendienteUF    = totalComisUF - cobradoUF
+          const vencidoUF      = allProps.filter(p=>p.moneda==='UF'&&p.isVencido&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const proximoUF      = allProps.filter(p=>p.moneda==='UF'&&p.isProximo&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const totalComisUSD  = allProps.filter(p=>p.moneda==='USD'&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const cobradoUSD     = allProps.filter(p=>p.moneda==='USD'&&p.comm.cobrado&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+
+          // Monthly flow (next 12 months)
+          const monthlyFlow = {}
+          allProps.filter(p=>p.fechaPago&&!p.comm.cobrado&&p.comisTotal>0).forEach(p => {
+            const mk = p.fechaPago.getFullYear()+'-'+String(p.fechaPago.getMonth()+1).padStart(2,'0')
+            if (!monthlyFlow[mk]) monthlyFlow[mk] = {uf:0,usd:0,count:0,vencido:false}
+            if (p.moneda==='UF') monthlyFlow[mk].uf += p.comisTotal
+            else if (p.moneda==='USD') monthlyFlow[mk].usd += p.comisTotal
+            monthlyFlow[mk].count++
+            if (p.isVencido) monthlyFlow[mk].vencido = true
+          })
+          const sortedMonths = Object.entries(monthlyFlow).sort((a,b)=>a[0].localeCompare(b[0])).slice(0,8)
+          const maxUF = Math.max(...sortedMonths.map(([,v])=>v.uf), 1)
+
+          // By inmobiliaria
+          const byInmob = {}
+          allProps.filter(p=>p.comisTotal>0).forEach(p => {
+            if (!byInmob[p.inmob]) byInmob[p.inmob] = {total:0,cobrado:0,pendiente:0,vencido:0,count:0}
+            byInmob[p.inmob].total += p.moneda==='UF'?p.comisTotal:0
+            byInmob[p.inmob].count++
+            if (p.comm.cobrado) byInmob[p.inmob].cobrado += p.moneda==='UF'?p.comisTotal:0
+            else byInmob[p.inmob].pendiente += p.moneda==='UF'?p.comisTotal:0
+            if (p.isVencido) byInmob[p.inmob].vencido += p.moneda==='UF'?p.comisTotal:0
+          })
+
+          // By broker (what we owe them)
+          const byBroker = {}
+          allProps.filter(p=>p.pagoAsesor>0).forEach(p => {
+            if (!byBroker[p.agName]) byBroker[p.agName] = {total:0,cobrado:0,pendiente:0}
+            if (p.moneda==='UF') {
+              byBroker[p.agName].total += p.pagoAsesor
+              if (p.comm.cobrado) byBroker[p.agName].cobrado += p.pagoAsesor
+              else byBroker[p.agName].pendiente += p.pagoAsesor
+            }
+          })
+
+          const fmt2 = n => n.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})
+          const fmt0 = n => n.toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0})
+          const monthNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+
+          return (
+            <div>
+              {/* Header */}
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
+                <div style={{fontSize:28}}>📊</div>
+                <div>
+                  <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Dashboard Finanzas</div>
+                  <div style={{fontSize:12,color:B.mid}}>Control de comisiones, cobros y flujo de pagos</div>
+                </div>
+              </div>
+
+              {/* KPI Row */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:10,marginBottom:20}}>
+                {[
+                  {l:'Comisiones total (UF)',  v:'UF '+fmt2(totalComisUF),  bg:B.light,     col:B.primary},
+                  {l:'✅ Cobrado',             v:'UF '+fmt2(cobradoUF),     bg:'#DCFCE7',   col:'#14532d'},
+                  {l:'⏳ Pendiente',           v:'UF '+fmt2(pendienteUF),   bg:'#FFFBEB',   col:'#92400e'},
+                  {l:'⚠️ Vencido',             v:'UF '+fmt2(vencidoUF),     bg: vencidoUF>0?'#FEF2F2':'#F9FAFB', col:vencidoUF>0?'#991b1b':'#374151'},
+                  {l:'⏰ Próx. 30 días',       v:'UF '+fmt2(proximoUF),     bg:'#F5F3FF',   col:'#5b21b6'},
+                  {l:'Margen Rabbitts (UF)',   v:'UF '+fmt2(margenTotalUF), bg:'#E8EFFE',   col:B.primary},
+                  {l:'Total pago brokers (UF)',v:'UF '+fmt2(totalBrokerUF), bg:'#F0FDF4',   col:'#166534'},
+                  ...(totalComisUSD>0?[{l:'Comisiones (USD)',v:'USD '+fmt2(totalComisUSD),bg:'#F0FDF4',col:'#166534'}]:[]),
+                ].map((k,i) => (
+                  <div key={i} style={{background:k.bg,borderRadius:10,padding:'10px 14px',border:'1px solid '+k.col+'33'}}>
+                    <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:4,opacity:.8}}>{k.l}</div>
+                    <div style={{fontSize:15,fontWeight:800,color:k.col,lineHeight:1.2}}>{k.v}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+
+                {/* Monthly flow */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Flujo de cobros pendientes por mes</p>
+                  {sortedMonths.length === 0
+                    ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin cobros pendientes</p>
+                    : sortedMonths.map(([mk, v]) => {
+                        const [year, month] = mk.split('-')
+                        const label = monthNames[parseInt(month)-1]+' '+year
+                        const pct = Math.round((v.uf/maxUF)*100)
+                        const isPast = new Date(mk+'-01') < now
+                        return (
+                          <div key={mk} style={{marginBottom:10}}>
+                            <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                              <span style={{fontSize:12,fontWeight:600,color:isPast?'#991b1b':'#374151'}}>{isPast?'⚠ ':''}{label}</span>
+                              <div style={{textAlign:'right'}}>
+                                <span style={{fontSize:12,fontWeight:700,color:B.primary}}>UF {fmt2(v.uf)}</span>
+                                {v.usd>0&&<span style={{fontSize:11,color:'#166634',marginLeft:6}}>+ USD {fmt0(v.usd)}</span>}
+                                <span style={{fontSize:10,color:'#9ca3af',marginLeft:6}}>{v.count} ops</span>
+                              </div>
+                            </div>
+                            <div style={{height:8,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                              <div style={{height:'100%',width:pct+'%',background:isPast?'#ef4444':B.primary,borderRadius:99}}/>
+                            </div>
+                          </div>
+                        )
+                      })
+                  }
+                </div>
+
+                {/* By inmobiliaria */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Estado cobros por inmobiliaria</p>
+                  {Object.entries(byInmob).sort((a,b)=>b[1].pendiente-a[1].pendiente).map(([inmob, d]) => (
+                    <div key={inmob} style={{marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}}>
+                        <span style={{fontWeight:700,fontSize:13,color:'#111827'}}>{inmob}</span>
+                        {d.vencido>0&&<span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:600}}>⚠ UF {fmt2(d.vencido)} vencido</span>}
+                      </div>
+                      <div style={{display:'flex',gap:12,fontSize:11}}>
+                        <span style={{color:'#6b7280'}}>Total: UF {fmt2(d.total)}</span>
+                        <span style={{color:'#166534',fontWeight:600}}>✅ UF {fmt2(d.cobrado)}</span>
+                        <span style={{color:'#92400e',fontWeight:600}}>⏳ UF {fmt2(d.pendiente)}</span>
+                      </div>
+                      {d.total > 0 && (
+                        <div style={{height:5,background:'#f0f4ff',borderRadius:99,marginTop:5,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:(d.cobrado/d.total*100)+'%',background:'#22c55e',borderRadius:99}}/>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+
+                {/* By broker - what we owe */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Pago pendiente a brokers</p>
+                  {Object.entries(byBroker).sort((a,b)=>b[1].pendiente-a[1].pendiente).map(([agName, d]) => (
+                    <div key={agName} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,paddingBottom:10,borderBottom:'1px solid #f0f4ff'}}>
+                      <AV name={agName} size={32}/>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{agName}</div>
+                        <div style={{fontSize:11,color:'#6b7280'}}>Total: UF {fmt2(d.total)} · Cobrado: UF {fmt2(d.cobrado)}</div>
+                      </div>
+                      <div style={{textAlign:'right'}}>
+                        <div style={{fontSize:14,fontWeight:700,color:d.pendiente>0?'#9a3412':'#166534'}}>
+                          {d.pendiente>0?'⏳ UF '+fmt2(d.pendiente):'✅ Al día'}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Vencidos alert */}
+                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                  <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>
+                    Cobros vencidos {allProps.filter(p=>p.isVencido).length>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:600,marginLeft:4}}>⚠ {allProps.filter(p=>p.isVencido).length} pagos</span>}
+                  </p>
+                  {allProps.filter(p=>p.isVencido).length===0
+                    ? <p style={{fontSize:12,color:'#9ca3af'}}>✅ Sin cobros vencidos. Todo al día.</p>
+                    : allProps.filter(p=>p.isVencido).sort((a,b)=>a.fechaPago-b.fechaPago).map((p,i) => (
+                        <div key={p.key} style={{background:'#FEF2F2',border:'1px solid #fca5a5',borderRadius:8,padding:'8px 12px',marginBottom:6}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                            <div>
+                              <div style={{fontSize:12,fontWeight:700,color:'#991b1b'}}>{p.inmob} — {p.base>0?p.moneda+' '+fmt2(p.comisTotal):''}</div>
+                              <div style={{fontSize:11,color:'#9ca3af'}}>{p.leadNombre} · {p.agName}</div>
+                            </div>
+                            <div style={{textAlign:'right',flexShrink:0}}>
+                              <div style={{fontSize:11,color:'#991b1b',fontWeight:600}}>
+                                Venció: {p.fechaPago.toLocaleDateString('es-CL',{day:'2-digit',month:'short',year:'numeric'})}
+                              </div>
+                              <div style={{fontSize:10,color:'#9ca3af'}}>
+                                {Math.floor((now-p.fechaPago)/(86400000))} días de retraso
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                  }
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
         {nav==='comisiones' && (isAdmin||isFinanzas) && (
           <ComisionesView
             leads={leads}
@@ -2520,11 +2756,17 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
     const k = new Date(lead.stage_moved_at).toISOString().slice(0,10)
     return ufHistory[k] || ufHoy
   }
+  const dolarHoy = indicators.dolar
+    ? parseFloat(indicators.dolar.split('.').join('').replace(',','.'))
+    : null
+
   const calc = (precio, pctC, pctB, moneda, ufVal) => {
     const p = parseFloat(precio)||0
     const comisionTotal = p * (parseFloat(pctC)||0) / 100
     const montoAsesor = comisionTotal * (parseFloat(pctB)||0) / 100
-    const pesos = moneda==='UF' && ufVal ? Math.round(montoAsesor * ufVal) : null
+    let pesos = null
+    if (moneda==='UF' && ufVal) pesos = Math.round(montoAsesor * ufVal)
+    else if (moneda==='USD' && dolarHoy) pesos = Math.round(montoAsesor * dolarHoy)
     return { comisionTotal, montoAsesor, pesos }
   }
   const calcFechaPago = p => {
