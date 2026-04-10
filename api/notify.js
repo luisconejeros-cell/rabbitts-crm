@@ -27,6 +27,7 @@ export default async function handler(req, res) {
     const ROLE_LABELS = {
       agent: 'Asesor / Vendedor',
       operaciones: 'Operaciones',
+      finanzas: 'Finanzas',
       partner: 'Socio Comercial',
       admin: 'Administrador'
     }
