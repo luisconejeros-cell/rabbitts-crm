@@ -34,6 +34,29 @@ export default async function handler(req, res) {
 
     let subject, body_html
 
+    if (type === 'masivo_equipo') {
+      subject = `Rabbitts Capital — Mensaje de Luis Conejeros`
+      html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+        <h2 style="color:#1B4FC8">Hola ${body.nombre||''},</h2>
+        <div style="background:#f9fbff;border:1px solid #dce8ff;border-radius:8px;padding:16px;margin:16px 0;font-size:14px;line-height:1.6">
+          ${body.mensaje}
+        </div>
+        <p style="color:#9ca3af;font-size:12px">Este mensaje fue enviado desde el CRM de Rabbitts Capital</p>
+      </div>`
+      to = body.to
+    }
+    if (type === 'escalation') {
+      subject = `Rabito escaló a humano — ${body.lead?.nombre||'Lead'}`
+      html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+        <h2 style="color:#1B4FC8">Lead escalado a humano</h2>
+        <p><strong>Nombre:</strong> ${body.lead?.nombre||'—'}</p>
+        <p><strong>Teléfono:</strong> ${body.lead?.telefono||'—'}</p>
+        <p><strong>Renta declarada:</strong> ${body.lead?.renta||'No indicada'}</p>
+        <p><strong>Notas:</strong> ${body.lead?.notes||'—'}</p>
+        <p style="color:#9ca3af;font-size:12px">Revisa la conversación en el CRM</p>
+      </div>`
+      to = body.to
+    }
     if (type === 'welcome') {
       const { username, pin, role } = body
       const roleLabel = ROLE_LABELS[role] || role
