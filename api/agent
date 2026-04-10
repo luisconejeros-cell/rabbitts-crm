@@ -1,54 +1,59 @@
 // api/agent.js — Rabito AI Agent for Rabbitts Capital
-// Receives: { message, conversationHistory, iaConfig, leadData }
-// Returns: { reply, action, leadUpdate }
-
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).end()
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  if (req.method === 'OPTIONS') return res.status(200).end()
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' })
+
+  const ANTHROPIC_KEY = process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_KEY
+  if (!ANTHROPIC_KEY) {
+    return res.status(500).json({
+      error: 'API key no configurada. Ve a Vercel → Settings → Environment Variables → agrega VITE_ANTHROPIC_KEY'
+    })
+  }
 
   const { message, conversationHistory = [], iaConfig = {}, leadData = {} } = req.body
-
   if (!message) return res.status(400).json({ error: 'No message provided' })
 
-  // Build system prompt from iaConfig
+  // Drive context if connected
+  let driveContext = ''
+  if (iaConfig.driveConectado && iaConfig.driveUrl) {
+    driveContext = `\nBASE DE CONOCIMIENTO EN DRIVE: ${iaConfig.driveUrl}\nTienes documentos con info de proyectos, precios y condiciones de Rabbitts Capital. Cuando el cliente pregunte por proyectos especificos, indica que tienes informacion detallada disponible.`
+  }
+
   const personalidad = iaConfig.personalidad || 'Eres Rabito, asistente de ventas de Rabbitts Capital.'
   const guion = iaConfig.guion || ''
-  const entrenamiento = (iaConfig.entrenamiento || [])
-    .map(p => `P: ${p.pregunta}\nR: ${p.respuesta}`)
-    .join('\n\n')
   const calendly = iaConfig.calendlyLink || 'https://calendly.com/agenda-rabbittscapital/60min'
   const rentaMin = iaConfig.rentaMinima || 1500000
   const rentaMinPareja = iaConfig.rentaMinimaPareja || 2000000
+  const entrenamiento = (iaConfig.entrenamiento || [])
+    .map(p => `P: ${p.pregunta}\nR: ${p.respuesta}`).join('\n\n')
 
   const systemPrompt = `${personalidad}
 
 ${guion}
 
-LINK CALENDLY PARA AGENDAR: ${calendly}
+LINK CALENDLY: ${calendly}
 RENTA MINIMA INDIVIDUAL: $${rentaMin.toLocaleString('es-CL')}
 RENTA MINIMA CON PAREJA: $${rentaMinPareja.toLocaleString('es-CL')}
+${driveContext}
 
 CONOCIMIENTO BASE:
 ${entrenamiento}
 
-CONTEXTO DEL LEAD ACTUAL:
-${leadData.nombre ? `Nombre: ${leadData.nombre}` : 'Lead nuevo'}
-${leadData.renta ? `Renta declarada: ${leadData.renta}` : ''}
-${leadData.propiedades ? `Propiedades a nombre: ${leadData.propiedades}` : ''}
-${leadData.modelo ? `Modelo preferido: ${leadData.modelo}` : ''}
+CONTEXTO LEAD:
+${leadData.nombre ? 'Nombre: ' + leadData.nombre : 'Lead nuevo'}
+${leadData.renta ? 'Renta: ' + leadData.renta : ''}
+${leadData.propiedades ? 'Propiedades: ' + leadData.propiedades : ''}
+${leadData.modelo ? 'Modelo: ' + leadData.modelo : ''}
 
-INSTRUCCIONES ADICIONALES:
-- Al final de tu respuesta, si detectas informacion clave del cliente (renta, propiedades, nombre, modelo preferido), incluye una linea especial con formato: [DATOS: nombre=X, renta=X, propiedades=X, modelo=X] con solo los datos que mencionó en esta conversacion.
-- Si el lead califica y agenda, incluye: [ACCION: calificado]
-- Si el lead dice no interesa, incluye: [ACCION: no_interesado]
-- Si necesitas escalar a humano, incluye: [ACCION: escalar]
-- Si no hay ninguna accion especial, no incluyas la linea [ACCION].`
+Al final del mensaje incluye si aplica:
+[DATOS: nombre=X, renta=X, propiedades=X, modelo=X]
+[ACCION: calificado] o [ACCION: no_interesado] o [ACCION: escalar]`
 
-  // Build messages array
   const messages = [
-    ...conversationHistory.map(m => ({
-      role: m.role,
-      content: m.content
-    })),
+    ...conversationHistory.map(m => ({ role: m.role, content: m.content })),
     { role: 'user', content: message }
   ]
 
@@ -57,7 +62,7 @@ INSTRUCCIONES ADICIONALES:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.VITE_ANTHROPIC_KEY,
+        'x-api-key': ANTHROPIC_KEY,
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
@@ -67,36 +72,25 @@ INSTRUCCIONES ADICIONALES:
         messages
       })
     })
-
     const data = await response.json()
     if (data.error) throw new Error(data.error.message)
 
     let reply = data.content?.[0]?.text || ''
-
-    // Extract action and data annotations
     let action = null
     let leadUpdate = {}
 
-    const actionMatch = reply.match(/\[ACCION:\s*([^\]]+)\]/)
-    if (actionMatch) {
-      action = actionMatch[1].trim()
-      reply = reply.replace(actionMatch[0], '').trim()
-    }
-
-    const datosMatch = reply.match(/\[DATOS:\s*([^\]]+)\]/)
-    if (datosMatch) {
-      const datosStr = datosMatch[1]
-      datosStr.split(',').forEach(pair => {
+    const am = reply.match(/\[ACCION:\s*([^\]]+)\]/)
+    if (am) { action = am[1].trim(); reply = reply.replace(am[0], '').trim() }
+    const dm = reply.match(/\[DATOS:\s*([^\]]+)\]/)
+    if (dm) {
+      dm[1].split(',').forEach(pair => {
         const [k, v] = pair.split('=').map(s => s.trim())
-        if (k && v && v !== 'X' && v !== '') leadUpdate[k] = v
+        if (k && v && v !== 'X') leadUpdate[k] = v
       })
-      reply = reply.replace(datosMatch[0], '').trim()
+      reply = reply.replace(dm[0], '').trim()
     }
-
     return res.status(200).json({ reply, action, leadUpdate })
-
   } catch (error) {
-    console.error('Agent error:', error)
     return res.status(500).json({ error: error.message })
   }
 }
