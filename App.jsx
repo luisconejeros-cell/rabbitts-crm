@@ -2064,143 +2064,17 @@ export default function App() {
         })()}
 
         {/* COMISIONES — Finanzas */}
-        {nav==='comisiones' && (isAdmin||isFinanzas) && (() => {
-          const closingLeads = leads.filter(l => ['firma','escritura'].includes(l.stage))
-          const agents = (users||[]).filter(u => u.role === 'agent')
-          const ufHoy = indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null
-
-          const getComm = key => commissions[key] || {pctComision:'', pctBroker:''}
-          const setComm = (key, field, val) => setCommissions(prev => ({...prev, [key]: {...(prev[key]||{pctComision:'',pctBroker:''}), [field]: val}}))
-
-          const calcComision = (precio, pctC, pctB, moneda, ufCierre) => {
-            const p = parseFloat(precio)||0
-            const c = parseFloat(pctC)||0
-            const b = parseFloat(pctB)||0
-            const comisionTotal = p * c / 100
-            const montoAsesor   = comisionTotal * b / 100
-            const ufRef = ufCierre || ufHoy
-            const pesos = moneda==='UF' && ufRef ? Math.round(montoAsesor * ufRef) : null
-            return { comisionTotal, montoAsesor, pesos, ufRef }
-          }
-
-          // Get UF from closing date — reads from pre-fetched cache only (no setState during render)
-          const getLeadUF = lead => {
-            if (!lead.stage_moved_at) return null
-            const key = new Date(lead.stage_moved_at).toISOString().slice(0,10)
-            return ufHistory[key] || null
-          }
-
-          return (
-            <div>
-              {/* Header */}
-              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
-                <div style={{fontSize:28}}>💰</div>
-                <div>
-                  <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Control de Comisiones</div>
-                  <div style={{fontSize:12,color:B.mid}}>Leads en Firma Promesa y Firma Escritura · UF del día: {indicators.uf ? '$'+indicators.uf : '—'}</div>
-                </div>
-              </div>
-
-              {agents.filter(ag => closingLeads.some(l=>l.assigned_to===ag.id)).length === 0 && (
-                <div style={{padding:'32px',textAlign:'center',color:'#9ca3af',fontSize:13}}>
-                  Sin leads en Firma Promesa o Firma Escritura aún.
-                </div>
-              )}
-
-              {agents.map(ag => {
-                const agLeads = closingLeads.filter(l => l.assigned_to === ag.id)
-                if (agLeads.length === 0) return null
-                const allProps = agLeads.flatMap(l => { const ufC=getLeadUF(l); return (l.propiedades||[]).map(p => ({...p, leadId:l.id, leadNombre:l.nombre, stage:l.stage, ufCierre:ufC, fechaCierre:l.stage_moved_at})) })
-                if (allProps.length === 0) return null
-
-                return (
-                  <div key={ag.id} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:14,marginBottom:16,overflow:'hidden'}}>
-                    {/* Agent header */}
-                    <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:B.light,borderBottom:'1px solid #dce8ff'}}>
-                      <AV name={ag.name} size={36}/>
-                      <div style={{flex:1}}>
-                        <div style={{fontWeight:700,fontSize:14,color:B.primary}}>{ag.name}</div>
-                        <div style={{fontSize:12,color:B.mid}}>{agLeads.length} leads · {allProps.length} propiedades</div>
-                      </div>
-                      <div style={{textAlign:'right'}}>
-                        {(()=>{
-                          const totUF = allProps.filter(p=>p.moneda==='UF').reduce((s,p)=>{
-                            const key=p.leadId+'-'+p.id; const {montoAsesor}=calcComision(p.bono_pie?p.precio_sin_bono:p.precio,getComm(key).pctComision,getComm(key).pctBroker,'UF',p.ufCierre)
-                            return s+montoAsesor
-                          },0)
-                          const totUSD = allProps.filter(p=>p.moneda==='USD').reduce((s,p)=>{
-                            const key=p.leadId+'-'+p.id; const {montoAsesor}=calcComision(p.bono_pie?p.precio_sin_bono:p.precio,getComm(key).pctComision,getComm(key).pctBroker,'USD',p.ufCierre)
-                            return s+montoAsesor
-                          },0)
-                          return <>
-                            {totUF>0&&<div style={{fontSize:13,fontWeight:700,color:'#14532d'}}>Total a pagar: UF {totUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}{ufValue?<span style={{fontSize:11,color:'#6b7280'}}> · ${Math.round(totUF*ufValue).toLocaleString('es-CL')}</span>:''}</div>}
-                            {totUSD>0&&<div style={{fontSize:13,fontWeight:700,color:'#166534'}}>Total a pagar: USD {totUSD.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
-                          </>
-                        })()}
-                      </div>
-                    </div>
-
-                    {/* Properties */}
-                    <div style={{padding:'10px 16px'}}>
-                      {allProps.map((p, pi) => {
-                        const key = p.leadId+'-'+p.id
-                        const comm = getComm(key)
-                        const precioBase = parseFloat(p.bono_pie ? p.precio_sin_bono : p.precio)||0
-                        const {comisionTotal, montoAsesor, pesos, ufRef} = calcComision(precioBase, comm.pctComision, comm.pctBroker, p.moneda, p.ufCierre)
-
-                        return (
-                          <div key={key} style={{borderBottom:pi<allProps.length-1?'1px solid #f0f4ff':'none',paddingBottom:12,marginBottom:12}}>
-                            {/* Property info */}
-                            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8,flexWrap:'wrap',gap:6}}>
-                              <div>
-                                <div style={{fontWeight:600,fontSize:13,color:'#111827'}}>{p.inmobiliaria} — {p.proyecto}{p.depto?' · Depto '+p.depto:''}</div>
-                                <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>
-                                  Cliente: <strong>{p.leadNombre}</strong> · 
-                                  <span style={{marginLeft:4,fontSize:11,padding:'1px 6px',borderRadius:99,background:p.stage==='firma'?'#FFF7ED':'#FEF9C3',color:p.stage==='firma'?'#9a3412':'#713f12',fontWeight:600}}>{stages.find(s=>s.id===p.stage)?.label||p.stage}</span>
-                                </div>
-                                <div style={{fontSize:13,fontWeight:700,color:'#374151',marginTop:3}}>
-                                  {p.moneda} {precioBase.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
-                                  {p.bono_pie && <span style={{fontSize:11,color:'#9ca3af',fontWeight:400}}> (con bono pie {p.bono_pct}%)</span>}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Commission inputs */}
-                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,alignItems:'flex-end'}}>
-                              <Fld label="% Comisión inmobiliaria">
-                                <div style={{display:'flex',alignItems:'center',gap:4}}>
-                                  <input type="number" min="0" max="100" step="0.1" value={comm.pctComision} onChange={e=>setComm(key,'pctComision',e.target.value)} placeholder="Ej: 4" style={{...sty.inp,flex:1}}/>
-                                  <span style={{fontSize:12,color:'#9ca3af'}}>%</span>
-                                </div>
-                              </Fld>
-                              <Fld label="% Para el broker">
-                                <div style={{display:'flex',alignItems:'center',gap:4}}>
-                                  <input type="number" min="0" max="100" step="0.1" value={comm.pctBroker} onChange={e=>setComm(key,'pctBroker',e.target.value)} placeholder="Ej: 50" style={{...sty.inp,flex:1}}/>
-                                  <span style={{fontSize:12,color:'#9ca3af'}}>%</span>
-                                </div>
-                              </Fld>
-                              {/* Result */}
-                              <div style={{background: montoAsesor>0?'#F0FDF4':'#f9fbff',borderRadius:10,padding:'8px 12px',border:'1px solid '+(montoAsesor>0?'#86efac':'#e5e7eb')}}>
-                                {comm.pctComision&&comm.pctBroker ? <>
-                                  <div style={{fontSize:10,color:'#6b7280',marginBottom:2}}>Comisión total: {p.moneda} {comisionTotal.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
-                                  <div style={{fontSize:14,fontWeight:800,color:'#14532d'}}>A pagar: {p.moneda} {montoAsesor.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
-                                  {pesos && <div style={{fontSize:11,color:'#166534',fontWeight:600}}>${pesos.toLocaleString('es-CL')} CLP</div>}
-                                  {p.moneda==='UF' && ufRef && <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>
-                                    UF {p.ufCierre?'al cierre ('+new Date(p.fechaCierre).toLocaleDateString('es-CL',{day:'2-digit',month:'short',year:'numeric'})+')':'hoy'}: {ufRef.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
-                                  </div>}
-                                </> : <div style={{fontSize:11,color:'#9ca3af'}}>Ingresa los % para calcular</div>}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )
-        })()}
+        {nav==='comisiones' && (isAdmin||isFinanzas) && (
+          <ComisionesView
+            leads={leads}
+            users={users}
+            stages={stages}
+            indicators={indicators}
+            commissions={commissions}
+            setCommissions={setCommissions}
+            ufHistory={ufHistory}
+          />
+        )}
 
         {/* EXTRAER */}
         {nav==='extraer' && isAdmin && (
@@ -2581,6 +2455,179 @@ function LeadForm({data, onChange, onSubmit}) {
         </select>
       </Fld>
       <button onClick={onSubmit} disabled={!data.nombre||!data.telefono} style={{width:'100%',padding:'10px 16px',borderRadius:8,cursor:!data.nombre||!data.telefono?'not-allowed':'pointer',border:`1px solid #1B4FC8`,background:'#1B4FC8',color:'#fff',fontSize:13,fontWeight:500,opacity:!data.nombre||!data.telefono?0.5:1}}>Guardar lead</button>
+    </div>
+  )
+}
+
+// ─── Comisiones View ─────────────────────────────────────────────────────────
+function ComisionesView({leads, users, stages, indicators, commissions, setCommissions, ufHistory}) {
+  const closingLeads = (leads||[]).filter(l => ['firma','escritura'].includes(l.stage))
+  const agents = (users||[]).filter(u => u.role === 'agent').filter(ag => closingLeads.some(l=>l.assigned_to===ag.id))
+
+  const ufHoy = indicators.uf
+    ? parseFloat(indicators.uf.split('.').join('').replace(',','.'))
+    : null
+
+  const getComm = key => commissions[key] || {pctComision:'', pctBroker:''}
+  const setComm = (key, field, val) =>
+    setCommissions(prev => ({...prev, [key]: {...(prev[key]||{pctComision:'',pctBroker:''}), [field]: val}}))
+
+  const getUF = lead => {
+    if (!lead.stage_moved_at) return ufHoy
+    const key = new Date(lead.stage_moved_at).toISOString().slice(0,10)
+    return ufHistory[key] || ufHoy
+  }
+
+  const calc = (precio, pctC, pctB, moneda, ufVal) => {
+    const p = parseFloat(precio)||0
+    const comisionTotal = p * (parseFloat(pctC)||0) / 100
+    const montoAsesor   = comisionTotal * (parseFloat(pctB)||0) / 100
+    const pesos = moneda==='UF' && ufVal ? Math.round(montoAsesor * ufVal) : null
+    return { comisionTotal, montoAsesor, pesos }
+  }
+
+  if (agents.length === 0) return (
+    <div style={{padding:'40px',textAlign:'center',color:'#9ca3af',fontSize:13}}>
+      <div style={{fontSize:32,marginBottom:8}}>💰</div>
+      Sin leads en Firma Promesa o Firma Escritura aún.
+    </div>
+  )
+
+  return (
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
+        <div style={{fontSize:28}}>💰</div>
+        <div>
+          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Control de Comisiones</div>
+          <div style={{fontSize:12,color:B.mid}}>
+            Firma Promesa y Firma Escritura · UF hoy: {indicators.uf ? '$'+indicators.uf : 'cargando...'}
+          </div>
+        </div>
+      </div>
+
+      {agents.map(ag => {
+        const agLeads = closingLeads.filter(l => l.assigned_to === ag.id)
+        const allProps = agLeads.flatMap(l =>
+          (l.propiedades||[]).map(p => ({
+            ...p,
+            _key: l.id+'-'+(p.id||Math.random()),
+            _leadNombre: l.nombre,
+            _stage: l.stage,
+            _ufCierre: getUF(l),
+            _fechaCierre: l.stage_moved_at
+          }))
+        )
+        if (allProps.length === 0) return null
+
+        // Totals for agent header
+        const totUF  = allProps.filter(p=>p.moneda==='UF').reduce((s,p) => {
+          const {montoAsesor} = calc(p.bono_pie?p.precio_sin_bono:p.precio, getComm(p._key).pctComision, getComm(p._key).pctBroker, 'UF', p._ufCierre)
+          return s + montoAsesor
+        }, 0)
+        const totPesos = allProps.filter(p=>p.moneda==='UF').reduce((s,p) => {
+          const {pesos} = calc(p.bono_pie?p.precio_sin_bono:p.precio, getComm(p._key).pctComision, getComm(p._key).pctBroker, 'UF', p._ufCierre)
+          return s + (pesos||0)
+        }, 0)
+        const totUSD = allProps.filter(p=>p.moneda==='USD').reduce((s,p) => {
+          const {montoAsesor} = calc(p.bono_pie?p.precio_sin_bono:p.precio, getComm(p._key).pctComision, getComm(p._key).pctBroker, 'USD', null)
+          return s + montoAsesor
+        }, 0)
+
+        return (
+          <div key={ag.id} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:14,marginBottom:16,overflow:'hidden'}}>
+            {/* Agent header */}
+            <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:B.light,borderBottom:'1px solid #dce8ff'}}>
+              <AV name={ag.name} size={36}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14,color:B.primary}}>{ag.name}</div>
+                <div style={{fontSize:12,color:B.mid}}>{agLeads.length} leads · {allProps.length} propiedades</div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                {totUF>0 && <div style={{fontSize:13,fontWeight:700,color:'#14532d'}}>
+                  Total UF: {totUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                  {totPesos>0 && <span style={{fontSize:11,color:'#6b7280',fontWeight:400}}> · ${totPesos.toLocaleString('es-CL')} CLP</span>}
+                </div>}
+                {totUSD>0 && <div style={{fontSize:13,fontWeight:700,color:'#166534'}}>Total USD: {totUSD.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
+              </div>
+            </div>
+
+            {/* Properties */}
+            <div style={{padding:'10px 16px'}}>
+              {allProps.map((p, pi) => {
+                const comm = getComm(p._key)
+                const precioBase = parseFloat(p.bono_pie ? p.precio_sin_bono : p.precio)||0
+                const {comisionTotal, montoAsesor, pesos} = calc(precioBase, comm.pctComision, comm.pctBroker, p.moneda, p._ufCierre)
+                const stageLabel = (stages||[]).find(s=>s.id===p._stage)?.label || p._stage
+
+                return (
+                  <div key={p._key} style={{borderBottom:pi<allProps.length-1?'1px solid #f0f4ff':'none',paddingBottom:14,marginBottom:14}}>
+                    {/* Info */}
+                    <div style={{marginBottom:10}}>
+                      <div style={{fontWeight:600,fontSize:13,color:'#111827'}}>
+                        {p.inmobiliaria} — {p.proyecto}{p.depto?' · Depto '+p.depto:''}
+                      </div>
+                      <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>
+                        Cliente: <strong>{p._leadNombre}</strong>
+                        <span style={{marginLeft:6,fontSize:11,padding:'1px 7px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontWeight:600}}>{stageLabel}</span>
+                      </div>
+                      <div style={{fontSize:13,fontWeight:700,color:'#374151',marginTop:3}}>
+                        {p.moneda} {precioBase.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                        {p.bono_pie && <span style={{fontSize:11,color:'#9ca3af',fontWeight:400}}> (precio sin bono pie {p.bono_pct}%)</span>}
+                      </div>
+                      {p.moneda==='UF' && p._ufCierre && <div style={{fontSize:11,color:'#9ca3af'}}>
+                        UF {p._fechaCierre ? 'al cierre '+new Date(p._fechaCierre).toLocaleDateString('es-CL',{day:'2-digit',month:'short',year:'numeric'}) : 'hoy'}: {p._ufCierre.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                      </div>}
+                    </div>
+
+                    {/* Inputs + result */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,alignItems:'flex-end'}}>
+                      <Fld label="% Comisión inmobiliaria">
+                        <div style={{display:'flex',alignItems:'center',gap:4}}>
+                          <input
+                            type="number" min="0" max="100" step="0.1"
+                            value={comm.pctComision}
+                            onChange={e => setComm(p._key, 'pctComision', e.target.value)}
+                            placeholder="Ej: 4"
+                            style={{...sty.inp, flex:1}}
+                          />
+                          <span style={{fontSize:12,color:'#9ca3af'}}>%</span>
+                        </div>
+                      </Fld>
+                      <Fld label="% Para el broker">
+                        <div style={{display:'flex',alignItems:'center',gap:4}}>
+                          <input
+                            type="number" min="0" max="100" step="0.1"
+                            value={comm.pctBroker}
+                            onChange={e => setComm(p._key, 'pctBroker', e.target.value)}
+                            placeholder="Ej: 50"
+                            style={{...sty.inp, flex:1}}
+                          />
+                          <span style={{fontSize:12,color:'#9ca3af'}}>%</span>
+                        </div>
+                      </Fld>
+                      <div style={{background:montoAsesor>0?'#F0FDF4':'#f9fbff',borderRadius:10,padding:'10px 12px',border:'1px solid '+(montoAsesor>0?'#86efac':'#e5e7eb'),minHeight:60,display:'flex',flexDirection:'column',justifyContent:'center'}}>
+                        {comm.pctComision && comm.pctBroker ? (
+                          <>
+                            <div style={{fontSize:10,color:'#6b7280',marginBottom:3}}>
+                              Comisión: {p.moneda} {comisionTotal.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                            </div>
+                            <div style={{fontSize:15,fontWeight:800,color:'#14532d'}}>
+                              Broker: {p.moneda} {montoAsesor.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                            </div>
+                            {pesos && <div style={{fontSize:12,fontWeight:700,color:'#166534'}}>${pesos.toLocaleString('es-CL')} CLP</div>}
+                          </>
+                        ) : (
+                          <div style={{fontSize:11,color:'#9ca3af'}}>Ingresa % para calcular</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
