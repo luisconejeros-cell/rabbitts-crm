@@ -2261,6 +2261,10 @@ export default function App() {
                   {l:'Margen Rabbitts (UF)',    v:'UF '+fmt2(margenTotalUF),  sub:null, bg:'#E8EFFE', col:B.primary},
                   {l:'Pago brokers (UF)',       v:'UF '+fmt2(totalBrokerUF),  sub:null, bg:'#F0FDF4', col:'#166534'},
                   ...(totalComisUSD>0?[
+                    {l:'Margen Rabbitts (USD)',    v:'USD '+fmt2(allProps.filter(p=>p.moneda==='USD'&&p.margen>0).reduce((s,p)=>s+p.margen,0)), sub:null, bg:'#E8EFFE', col:B.primary},
+                    {l:'Pago brokers (USD)',       v:'USD '+fmt2(allProps.filter(p=>p.moneda==='USD'&&p.pagoAsesor>0).reduce((s,p)=>s+p.pagoAsesor,0)), sub:null, bg:'#F0FDF4', col:'#166534'},
+                  ]:[]),
+                  ...(totalComisUSD>0?[
                     {l:'Comisiones (USD)',         v:'USD '+fmt2(totalComisUSD),  sub:(cobradoUSDclp+pendienteUSDclp)>0?'$'+(cobradoUSDclp+pendienteUSDclp).toLocaleString('es-CL')+' CLP':null, bg:'#F0FDF4', col:'#166534'},
                     {l:'✅ Broker pagado (USD)',    v:'USD '+fmt2(cobradoUSD),     sub:cobradoUSDclp>0?'$'+cobradoUSDclp.toLocaleString('es-CL')+' CLP':null,   bg:'#DCFCE7', col:'#14532d'},
                     {l:'⏳ Pendiente cobro (USD)', v:'USD '+fmt2(pendienteUSD),   sub:pendienteUSDclp>0?'$'+pendienteUSDclp.toLocaleString('es-CL')+' CLP':null, bg:'#FFFBEB', col:'#92400e'},
