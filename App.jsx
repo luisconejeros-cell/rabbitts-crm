@@ -513,10 +513,34 @@ export default function App() {
   }
 
   async function assignLead(lid, aid) {
+    const lead = leads.find(l => l.id === lid)
     const ls = leads.map(l => l.id===lid ? {...l, assigned_to:aid||null} : l)
     setLeads(ls); if (sel?.id===lid) setSel(ls.find(l=>l.id===lid))
     if (dbReady) await supabase.from('crm_leads').update({assigned_to:aid||null}).eq('id',lid)
     else localStorage.setItem('rcrm_leads', JSON.stringify(ls))
+    // Email notification to assigned agent
+    if (aid && lead) {
+      const agent = (users||[]).find(u => u.id === aid)
+      if (agent?.email) {
+        try {
+          await fetch('/api/notify', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              type: 'assignment',
+              to: agent.email,
+              agentName: agent.name,
+              adminName: me.name,
+              leadName: lead.nombre,
+              leadPhone: lead.telefono,
+              leadEmail: lead.email,
+              leadRenta: lead.renta,
+              leadId: lid
+            })
+          })
+        } catch(e) { console.warn('Assignment email failed:', e) }
+      }
+    }
     msg('Lead asignado')
   }
 
