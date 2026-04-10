@@ -255,6 +255,17 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbReady, me?.id])
 
+  // ── Preload historical UF for closing leads ─────────────────────────────
+  useEffect(() => {
+    if (nav !== 'comisiones') return
+    const closingLeads = (leads||[]).filter(l => ['firma','escritura'].includes(l.stage))
+    const dates = [...new Set(closingLeads.map(l => l.stage_moved_at).filter(Boolean).map(d => new Date(d).toISOString().slice(0,10)))]
+    for (const date of dates) {
+      if (!ufHistory[date]) fetchUFForDate(date)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nav, leads])
+
   // ── Chilean financial indicators ─────────────────────────────────────────
   useEffect(() => {
     async function fetchIndicators() {
@@ -2072,13 +2083,11 @@ export default function App() {
             return { comisionTotal, montoAsesor, pesos, ufRef }
           }
 
-          // Get UF from closing date — fetches from mindicador.cl if not cached
+          // Get UF from closing date — reads from pre-fetched cache only (no setState during render)
           const getLeadUF = lead => {
             if (!lead.stage_moved_at) return null
             const key = new Date(lead.stage_moved_at).toISOString().slice(0,10)
-            if (ufHistory[key]) return ufHistory[key]
-            fetchUFForDate(lead.stage_moved_at) // triggers async fetch + re-render
-            return null
+            return ufHistory[key] || null
           }
 
           return (
