@@ -947,7 +947,7 @@ export default function App() {
     : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','etapas','importar','extraer']
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','etapas','importar','extraer']
             : isPartner  ? ['dashboard','pool']
             : isOps      ? ['kanban','lista']
             : isFinanzas ? ['dashboard_finanzas','comisiones']
@@ -2120,7 +2120,7 @@ export default function App() {
 
         {/* COMISIONES — Finanzas */}
         {/* DASHBOARD FINANZAS */}
-        {nav==='dashboard_finanzas' && (isAdmin||isFinanzas) && (() => {
+        {(nav==='dashboard_finanzas'||nav==='finanzas') && (isAdmin||isFinanzas) && (() => {
           const closingLeads = leads.filter(l => ['firma','escritura'].includes(l.stage))
           const now = new Date()
 
@@ -2355,7 +2355,7 @@ export default function App() {
           )
         })()}
 
-        {nav==='comisiones' && (isAdmin||isFinanzas) && (
+        {(nav==='comisiones'||nav==='finanzas') && (isAdmin||isFinanzas) && (
           <ComisionesView
             leads={leads}
             users={users}
@@ -2861,7 +2861,7 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
 
   const totUF = filtered.filter(p=>p.moneda==='UF').reduce((s,p)=>s+calc(p.bono_pie?p.precio_sin_bono:p.precio,getComm(p._key).pctComision,getComm(p._key).pctBroker,'UF',p._ufCierre).montoAsesor,0)
   const totPesos = filtered.filter(p=>p.moneda==='UF').reduce((s,p)=>s+(calc(p.bono_pie?p.precio_sin_bono:p.precio,getComm(p._key).pctComision,getComm(p._key).pctBroker,'UF',p._ufCierre).pesos||0),0)
-  const cobCount = filtered.filter(p=>getComm(p._key).cobrado).length
+  const cobCount = filtered.filter(p=>getComm(p._key).cobrado||(p.oc_estado==='pagado_broker')).length
   const pendCount = filtered.length - cobCount
 
   if (allProps.length===0) return (
@@ -3211,9 +3211,10 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
   const totalMiComisionUSD = myProps.filter(p=>p.moneda==='USD').reduce((s,p)=>s+p.miComision,0)
   const totalClp = myProps.reduce((s,p)=>s+(p.clp||0),0)
 
-  const cobradoUF = myProps.filter(p=>p.moneda==='UF'&&p.comm.cobrado).reduce((s,p)=>s+p.miComision,0)
+  const isCobrado = p => (p.oc_estado==='pagado_broker') || p.comm.cobrado
+  const cobradoUF = myProps.filter(p=>p.moneda==='UF'&&isCobrado(p)).reduce((s,p)=>s+p.miComision,0)
   const pendienteUF = totalMiComisionUF - cobradoUF
-  const enProcesoUF = myProps.filter(p=>p.moneda==='UF'&&!p.comm.cobrado&&p.miComision>0).reduce((s,p)=>s+p.miComision,0)
+  const enProcesoUF = myProps.filter(p=>p.moneda==='UF'&&!isCobrado(p)&&p.miComision>0).reduce((s,p)=>s+p.miComision,0)
 
   // Ranking vs all agents
   const allAgents = (users||[]).filter(u=>u.role==='agent')
