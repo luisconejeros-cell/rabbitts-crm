@@ -2181,16 +2181,12 @@ export default function App() {
           const pendienteUSD  = allProps.filter(p=>p.moneda==='USD'&& !isCob(p) && p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
           const dolarHoy      = indicators.dolar ? parseFloat(indicators.dolar.split('.').join('').replace(',','.')) : null
           const ufHoyD        = indicators.uf    ? parseFloat(indicators.uf.split('.').join('').replace(',','.'))    : null
-          const cobradoCLP    = allProps.filter(p=>isCob(p)  && p.comisTotal>0).reduce((s,p)=>{
-            if (p.moneda==='UF') return s+Math.round(p.comisTotal*(p.ufRef||ufHoyD||0))
-            if (p.moneda==='USD') return s+Math.round(p.comisTotal*(dolarHoy||0))
-            return s
-          },0)
-          const pendienteCLP  = allProps.filter(p=>!isCob(p) && p.comisTotal>0).reduce((s,p)=>{
-            if (p.moneda==='UF') return s+Math.round(p.comisTotal*(p.ufRef||ufHoyD||0))
-            if (p.moneda==='USD') return s+Math.round(p.comisTotal*(dolarHoy||0))
-            return s
-          },0)
+          // CLP separated by currency — never mix UF and USD in same box
+          const cobradoCLP      = allProps.filter(p=>p.moneda==='UF' &&  isCob(p) && p.comisTotal>0).reduce((s,p)=>s+Math.round(p.comisTotal*(p.ufRef||ufHoyD||0)),0)
+          const pendienteCLP    = allProps.filter(p=>p.moneda==='UF' && !isCob(p) && p.comisTotal>0).reduce((s,p)=>s+Math.round(p.comisTotal*(p.ufRef||ufHoyD||0)),0)
+          const totalUFclp      = cobradoCLP + pendienteCLP
+          const cobradoUSDclp   = allProps.filter(p=>p.moneda==='USD'&&  isCob(p) && p.comisTotal>0).reduce((s,p)=>s+Math.round(p.comisTotal*(dolarHoy||0)),0)
+          const pendienteUSDclp = allProps.filter(p=>p.moneda==='USD'&& !isCob(p) && p.comisTotal>0).reduce((s,p)=>s+Math.round(p.comisTotal*(dolarHoy||0)),0)
 
           // Monthly flow (next 12 months)
           const monthlyFlow = {}
@@ -2257,17 +2253,17 @@ export default function App() {
               {/* KPI Row */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(155px,1fr))',gap:10,marginBottom:20}}>
                 {[
-                  {l:'Comisiones total (UF)',   v:'UF '+fmt2(totalComisUF),   sub:cobradoCLP>0||pendienteCLP>0?'$'+Math.round(cobradoCLP+pendienteCLP).toLocaleString('es-CL')+' CLP':null, bg:B.light,   col:B.primary},
-                  {l:'✅ Broker pagado (UF)',    v:'UF '+fmt2(cobradoUF),      sub:cobradoCLP>0?'$'+cobradoCLP.toLocaleString('es-CL')+' CLP':null, bg:'#DCFCE7', col:'#14532d'},
+                  {l:'Comisiones total (UF)',   v:'UF '+fmt2(totalComisUF),   sub:totalUFclp>0?'$'+totalUFclp.toLocaleString('es-CL')+' CLP':null,     bg:B.light,   col:B.primary},
+                  {l:'✅ Broker pagado (UF)',    v:'UF '+fmt2(cobradoUF),      sub:cobradoCLP>0?'$'+cobradoCLP.toLocaleString('es-CL')+' CLP':null,   bg:'#DCFCE7', col:'#14532d'},
                   {l:'⏳ Pendiente cobro (UF)', v:'UF '+fmt2(pendienteUF),    sub:pendienteCLP>0?'$'+pendienteCLP.toLocaleString('es-CL')+' CLP':null, bg:'#FFFBEB', col:'#92400e'},
                   {l:'⚠️ Vencido',              v:'UF '+fmt2(vencidoUF),      sub:null, bg:vencidoUF>0?'#FEF2F2':'#F9FAFB', col:vencidoUF>0?'#991b1b':'#9ca3af'},
                   {l:'⏰ Próx. 30 días',        v:'UF '+fmt2(proximoUF),      sub:null, bg:'#F5F3FF', col:'#5b21b6'},
                   {l:'Margen Rabbitts (UF)',    v:'UF '+fmt2(margenTotalUF),  sub:null, bg:'#E8EFFE', col:B.primary},
                   {l:'Pago brokers (UF)',       v:'UF '+fmt2(totalBrokerUF),  sub:null, bg:'#F0FDF4', col:'#166534'},
                   ...(totalComisUSD>0?[
-                    {l:'Comisiones (USD)',         v:'USD '+fmt2(totalComisUSD),  sub:null, bg:'#F0FDF4', col:'#166534'},
-                    {l:'✅ Broker pagado (USD)',    v:'USD '+fmt2(cobradoUSD),     sub:null, bg:'#DCFCE7', col:'#14532d'},
-                    {l:'⏳ Pendiente cobro (USD)', v:'USD '+fmt2(pendienteUSD),   sub:null, bg:'#FFFBEB', col:'#92400e'},
+                    {l:'Comisiones (USD)',         v:'USD '+fmt2(totalComisUSD),  sub:(cobradoUSDclp+pendienteUSDclp)>0?'$'+(cobradoUSDclp+pendienteUSDclp).toLocaleString('es-CL')+' CLP':null, bg:'#F0FDF4', col:'#166534'},
+                    {l:'✅ Broker pagado (USD)',    v:'USD '+fmt2(cobradoUSD),     sub:cobradoUSDclp>0?'$'+cobradoUSDclp.toLocaleString('es-CL')+' CLP':null,   bg:'#DCFCE7', col:'#14532d'},
+                    {l:'⏳ Pendiente cobro (USD)', v:'USD '+fmt2(pendienteUSD),   sub:pendienteUSDclp>0?'$'+pendienteUSDclp.toLocaleString('es-CL')+' CLP':null, bg:'#FFFBEB', col:'#92400e'},
                   ]:[]),
                 ].map((k,i) => (
                   <div key={i} style={{background:k.bg,borderRadius:10,padding:'10px 14px',border:'1px solid '+k.col+'33'}}>
