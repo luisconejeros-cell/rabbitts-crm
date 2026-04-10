@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 // ─── Supabase config ─────────────────────────────────────────────────────────
@@ -2474,9 +2474,9 @@ function LeadForm({data, onChange, onSubmit}) {
 // ─── Comisiones View ─────────────────────────────────────────────────────────
 function ComisionesView({leads, users, stages, indicators, commissions, setCommissions, ufHistory}) {
   const closingLeads = (leads||[]).filter(l => ['firma','escritura'].includes(l.stage))
-  const [filterAgent, setFilterAgent] = React.useState('all')
-  const [filterInmob, setFilterInmob] = React.useState('all')
-  const [filterStatus, setFilterStatus] = React.useState('all')
+  const [filterAgent, setFilterAgent] = useState('all')
+  const [filterInmob, setFilterInmob] = useState('all')
+  const [filterStatus, setFilterStatus] = useState('all')
 
   const ufHoy = indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null
   const getComm = key => commissions[key] || {pctComision:'', pctBroker:'', cobrado:false, notasInmob:''}
