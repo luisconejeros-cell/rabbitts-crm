@@ -1865,73 +1865,155 @@ export default function App() {
 
         {/* RANKING */}
         {nav==='ranking' && isAdmin && (() => {
+          const now = new Date()
+          const RANK_OPTS = [
+            {v:'all',        l:'Todo el tiempo'},
+            {v:'this_month', l:'Este mes'},
+            {v:'last_month', l:'Mes anterior'},
+            {v:'q1',         l:'Q1 (Ene-Mar)'},
+            {v:'q2',         l:'Q2 (Abr-Jun)'},
+            {v:'q3',         l:'Q3 (Jul-Sep)'},
+            {v:'q4',         l:'Q4 (Oct-Dic)'},
+            {v:'this_year',  l:'Este año'},
+            {v:'custom',     l:'Personalizado'},
+          ]
+
+          function getRankRange(v) {
+            const y = now.getFullYear()
+            if (v==='this_month') return [new Date(y,now.getMonth(),1), null]
+            if (v==='last_month') return [new Date(y,now.getMonth()-1,1), new Date(y,now.getMonth(),0,23,59,59)]
+            if (v==='q1') return [new Date(y,0,1), new Date(y,2,31,23,59,59)]
+            if (v==='q2') return [new Date(y,3,1), new Date(y,5,30,23,59,59)]
+            if (v==='q3') return [new Date(y,6,1), new Date(y,8,30,23,59,59)]
+            if (v==='q4') return [new Date(y,9,1), new Date(y,11,31,23,59,59)]
+            if (v==='this_year') return [new Date(y,0,1), null]
+            if (v==='custom' && customFrom) return [new Date(customFrom), customTo?new Date(customTo+'T23:59:59'):null]
+            return [null, null]
+          }
+
+          const [rFrom, rTo] = getRankRange(dateRange)
+          const inRankRange = l => {
+            const d = new Date(l.stage_moved_at || l.fecha)
+            if (rFrom && d < rFrom) return false
+            if (rTo && d > rTo) return false
+            return true
+          }
+
+          const rankingStages = ['firma','escritura']
           const agents = (users||[]).filter(u => u.role === 'agent')
-          const rankingStages = ['firma','escritura','ganado']
+
+          const calcUF = agLeads => agLeads.reduce((sum,l) => {
+            return sum + (l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
+          },0)
+          const calcUSD = agLeads => agLeads.reduce((sum,l) => {
+            return sum + (l.propiedades||[]).filter(p=>p.moneda==='USD').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
+          },0)
+
           const ranked = agents.map(ag => {
-            const agLeads = leads.filter(l => l.assigned_to === ag.id && rankingStages.includes(l.stage))
-            const totalUF = agLeads.reduce((sum, l) => {
-              const props = l.propiedades || []
-              return sum + props.filter(p=>p.moneda==='UF').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
-            }, 0)
-            const totalUSD = agLeads.reduce((sum, l) => {
-              const props = l.propiedades || []
-              return sum + props.filter(p=>p.moneda==='USD').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
-            }, 0)
-            const propCount = agLeads.reduce((s,l)=>s+(l.propiedades||[]).length,0)
-            return {...ag, totalUF, totalUSD, propCount, leadsCount:agLeads.length}
+            const allClosedLeads = leads.filter(l => l.assigned_to===ag.id && rankingStages.includes(l.stage))
+            const filteredLeads  = allClosedLeads.filter(inRankRange)
+            return {
+              ...ag,
+              totalUF:    calcUF(filteredLeads),
+              totalUSD:   calcUSD(filteredLeads),
+              ufYear:     calcUF(allClosedLeads.filter(l => new Date(l.stage_moved_at||l.fecha).getFullYear()===now.getFullYear())),
+              ufQ:        calcUF(allClosedLeads.filter(l => { const m=new Date(l.stage_moved_at||l.fecha).getMonth(); const q=Math.floor(now.getMonth()/3); return m>=q*3&&m<q*3+3 && new Date(l.stage_moved_at||l.fecha).getFullYear()===now.getFullYear() })),
+              ufMonth:    calcUF(allClosedLeads.filter(l => { const d=new Date(l.stage_moved_at||l.fecha); return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear() })),
+              propCount:  filteredLeads.reduce((s,l)=>s+(l.propiedades||[]).length,0),
+              leadsCount: filteredLeads.length,
+            }
           }).sort((a,b) => b.totalUF - a.totalUF)
 
           const medals = ['🥇','🥈','🥉']
+          const qName = ['Q1','Q2','Q3','Q4'][Math.floor(now.getMonth()/3)]
+          const grandTotalUF = ranked.reduce((s,ag)=>s+ag.totalUF,0)
 
           return (
             <div>
-              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
+              {/* Header */}
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
                 <div style={{fontSize:28}}>🏆</div>
-                <div>
+                <div style={{flex:1}}>
                   <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Ranking de Asesores</div>
-                  <div style={{fontSize:12,color:B.mid}}>Por UF en Firma Promesa, Firma Escritura y Ganados</div>
+                  <div style={{fontSize:12,color:B.mid}}>UF acumuladas en Firma Promesa y Firma Escritura</div>
                 </div>
+                {grandTotalUF > 0 && <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:11,color:B.mid}}>Total período</div>
+                  <div style={{fontSize:18,fontWeight:800,color:B.primary}}>UF {grandTotalUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                </div>}
               </div>
 
-              {ranked.length === 0 && <p style={{fontSize:13,color:'#9ca3af'}}>Sin asesores registrados aún.</p>}
+              {/* Period filter */}
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:12,flexWrap:'wrap'}}>
+                <span style={{fontSize:12,fontWeight:700,color:B.primary,flexShrink:0}}>Período:</span>
+                <div style={{display:'flex',gap:5,flexWrap:'wrap',flex:1}}>
+                  {RANK_OPTS.filter(o=>o.v!=='custom').map(o=>(
+                    <button key={o.v} onClick={()=>setDateRange(o.v)} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:dateRange===o.v?`2px solid ${B.primary}`:'1px solid #dce8ff',background:dateRange===o.v?B.light:'transparent',color:dateRange===o.v?B.primary:'#6b7280',cursor:'pointer',fontWeight:dateRange===o.v?700:400}}>
+                      {o.l}
+                    </button>
+                  ))}
+                  <button onClick={()=>setDateRange('custom')} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:dateRange==='custom'?`2px solid ${B.primary}`:'1px solid #dce8ff',background:dateRange==='custom'?B.light:'transparent',color:dateRange==='custom'?B.primary:'#6b7280',cursor:'pointer',fontWeight:dateRange==='custom'?700:400}}>Personalizado</button>
+                </div>
+                {dateRange==='custom' && (
+                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#111827'}}/>
+                    <span style={{fontSize:11,color:'#9ca3af'}}>→</span>
+                    <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#111827'}}/>
+                  </div>
+                )}
+              </div>
 
+              {/* Summary cards */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
+                {[
+                  {l:`Este mes (${now.toLocaleString('es-CL',{month:'short'})})`, v: ranked.reduce((s,ag)=>s+ag.ufMonth,0), col:'#14532d', bg:'#DCFCE7'},
+                  {l:`${qName} ${now.getFullYear()}`,                             v: ranked.reduce((s,ag)=>s+ag.ufQ,0),     col:'#92400e', bg:'#FFFBEB'},
+                  {l:`Año ${now.getFullYear()}`,                                   v: ranked.reduce((s,ag)=>s+ag.ufYear,0),  col:B.primary, bg:B.light},
+                ].map((k,i)=>(
+                  <div key={i} style={{background:k.bg,borderRadius:10,padding:'10px 14px',border:'1px solid '+k.col+'33'}}>
+                    <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:3}}>{k.l}</div>
+                    <div style={{fontSize:18,fontWeight:800,color:k.col}}>UF {k.v.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ranking list */}
+              {ranked.length === 0 && <p style={{fontSize:13,color:'#9ca3af'}}>Sin asesores registrados aún.</p>}
               <div style={{display:'flex',flexDirection:'column',gap:10}}>
                 {ranked.map((ag, idx) => {
-                  const pos = idx + 1
-                  const medal = medals[idx] || null
+                  const pos = idx+1
+                  const medal = medals[idx]||null
                   const isTop3 = idx < 3
                   return (
                     <div key={ag.id} style={{display:'flex',alignItems:'center',gap:14,padding:'14px 18px',background:isTop3?'#fff':'#f9fbff',border:isTop3?`2px solid ${B.border}`:'1px solid #dce8ff',borderRadius:12,boxShadow:isTop3?'0 2px 12px rgba(27,79,200,0.08)':'none'}}>
-                      {/* Position */}
                       <div style={{minWidth:52,textAlign:'center',flexShrink:0}}>
-                        {medal
-                          ? <div style={{fontSize:32,lineHeight:1}}>{medal}</div>
-                          : <div style={{fontSize:18,fontWeight:800,color:'#9ca3af'}}>#{pos}</div>
-                        }
+                        {medal ? <div style={{fontSize:32,lineHeight:1}}>{medal}</div> : <div style={{fontSize:18,fontWeight:800,color:'#9ca3af'}}>#{pos}</div>}
                         <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>{pos}/{ranked.length}</div>
                       </div>
-
-                      {/* Avatar + name */}
                       <AV name={ag.name} size={44}/>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:15,fontWeight:700,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
-                        <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{ag.leadsCount} leads · {ag.propCount} propiedades</div>
-                        {/* UF bar */}
+                        <div style={{fontSize:11,color:'#6b7280',marginTop:2,display:'flex',gap:10,flexWrap:'wrap'}}>
+                          <span>{ag.leadsCount} leads</span>
+                          <span>{ag.propCount} propiedades</span>
+                          <span style={{color:'#166534',fontWeight:600}}>Mes: UF {ag.ufMonth.toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0})}</span>
+                          <span style={{color:'#92400e',fontWeight:600}}>{qName}: UF {ag.ufQ.toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0})}</span>
+                        </div>
                         {ranked[0]?.totalUF > 0 && (
                           <div style={{marginTop:6}}>
-                            <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                            <div style={{height:7,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
                               <div style={{height:'100%',width:(ag.totalUF/ranked[0].totalUF*100)+'%',background:isTop3?B.primary:'#93c5fd',borderRadius:99,transition:'width .5s ease'}}/>
                             </div>
                           </div>
                         )}
                       </div>
-
-                      {/* Stats */}
                       <div style={{textAlign:'right',flexShrink:0}}>
-                        <div style={{fontSize:20,fontWeight:800,color:isTop3?B.primary:'#374151'}}>
+                        <div style={{fontSize:11,color:'#9ca3af',marginBottom:2}}>Período seleccionado</div>
+                        <div style={{fontSize:22,fontWeight:800,color:isTop3?B.primary:'#374151'}}>
                           {ag.totalUF > 0 ? 'UF '+ag.totalUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—'}
                         </div>
                         {ag.totalUSD > 0 && <div style={{fontSize:12,color:'#166534',fontWeight:600}}>+ USD {ag.totalUSD.toLocaleString('es-CL')}</div>}
+                        <div style={{fontSize:11,color:B.mid,marginTop:2}}>Año: UF {ag.ufYear.toLocaleString('es-CL',{minimumFractionDigits:0,maximumFractionDigits:0})}</div>
                       </div>
                     </div>
                   )
