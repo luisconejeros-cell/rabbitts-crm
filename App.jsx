@@ -4707,6 +4707,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
         return (
         <div>
+          return (<div>
           {/* Target toggle */}
           <div style={{display:'flex',gap:8,marginBottom:16,padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:10}}>
             <span style={{fontSize:12,fontWeight:600,color:B.primary,alignSelf:'center'}}>Enviar a:</span>
