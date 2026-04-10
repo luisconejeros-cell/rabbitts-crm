@@ -173,6 +173,8 @@ export default function App() {
   const [importing, setImporting] = useState(false)
   const [importDone, setImportDone] = useState(null)
   const [sessions, setSessions] = useState([])
+  const [commissions, setCommissions] = useState({}) // {propKey: {pctComision, pctBroker}}
+  const [ufHistory, setUfHistory] = useState({})   // {YYYY-MM-DD: ufValue}
   const [impTag, setImpTag] = useState('lead')
   const [impAgent, setImpAgent] = useState('')
   const [propModal, setPropModal] = useState(null)  // leadId to add properties to
@@ -343,7 +345,7 @@ export default function App() {
       setUsers(us)
       if (window.__sessionUserId) {
         const saved = us.find(u => u.id === window.__sessionUserId)
-        if (saved) { setMe(saved); setNav(saved.role === 'admin' || saved.role === 'partner' ? 'dashboard' : 'kanban') }
+        if (saved) { setMe(saved); setNav(saved.role==='admin'||saved.role==='partner'?'dashboard':saved.role==='finanzas'?'comisiones':'kanban') }
         window.__sessionUserId = null
       }
       setLeads(JSON.parse(localStorage.getItem('rcrm_leads') || '[]'))
@@ -441,7 +443,7 @@ export default function App() {
     const u = (users||[]).find(x => x.username === lu.trim().toLowerCase())
     if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
-    setNav(u.role === 'admin' || u.role === 'partner' ? 'dashboard' : 'kanban')
+    setNav(u.role==='admin'||u.role==='partner'?'dashboard':u.role==='finanzas'?'comisiones':'kanban')
     // Persist session for 8 hours
     localStorage.setItem('rcrm_session', JSON.stringify({id:u.id, expires: Date.now() + 8*60*60*1000}))
     // Record login for activity tracking
@@ -682,6 +684,25 @@ export default function App() {
     msg('Usuario actualizado')
   }
 
+  // ── Historical UF fetch ──────────────────────────────────────────────────
+  async function fetchUFForDate(dateStr) {
+    // dateStr = YYYY-MM-DD (stage_moved_at)
+    if (!dateStr) return null
+    const d = new Date(dateStr)
+    const key = d.toISOString().slice(0,10)
+    if (ufHistory[key]) return ufHistory[key]
+    try {
+      const day   = String(d.getDate()).padStart(2,'0')
+      const month = String(d.getMonth()+1).padStart(2,'0')
+      const year  = d.getFullYear()
+      const r = await fetch('https://mindicador.cl/api/uf/'+day+'-'+month+'-'+year)
+      const data = await r.json()
+      const val = data.serie?.[0]?.valor || null
+      if (val) setUfHistory(prev => ({...prev, [key]: val}))
+      return val
+    } catch(_) { return null }
+  }
+
   // ── Bulk import ──────────────────────────────────────────────────────────
   function parseCSV(text) {
     const lines = text.trim().split('\n').map(l => l.replace(/\r$/, ''))
@@ -790,13 +811,18 @@ export default function App() {
 
   async function savePropiedades(leadId, props, stageId) {
     const calculatedProps = props.map(calcProp)
+    // Capture UF value at the moment of closing
+    const closingUF = stageId && ['firma','escritura'].includes(stageId)
+      ? (indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null)
+      : null
     const updated = leads.map(l => l.id===leadId ? {
       ...l,
       propiedades: calculatedProps,
       ...(stageId ? {
         stage: stageId,
         stage_moved_at: new Date().toISOString(),
-        stage_history: [...(l.stage_history||[]), {stage:stageId, date:new Date().toISOString()}]
+        uf_cierre: closingUF,
+        stage_history: [...(l.stage_history||[]), {stage:stageId, date:new Date().toISOString(), uf:closingUF}]
       } : {})
     } : l)
     const changedLead = updated.find(l => l.id === leadId)
@@ -808,7 +834,8 @@ export default function App() {
         propiedades: changedLead.propiedades,
         stage: changedLead.stage,
         stage_moved_at: changedLead.stage_moved_at,
-        stage_history: changedLead.stage_history
+        stage_history: changedLead.stage_history,
+        uf_cierre: changedLead.uf_cierre || null
       }).eq('id', leadId)
     } else {
       localStorage.setItem('rcrm_leads', JSON.stringify(updated))
@@ -841,10 +868,11 @@ export default function App() {
     <RabbitsLogo size={28}/> Cargando Rabbitts CRM...
   </div>
 
-  const isAdmin   = me?.role === 'admin'
-  const isPartner = me?.role === 'partner'
-  const isAgent   = me?.role === 'agent'
-  const isOps     = me?.role === 'operaciones'
+  const isAdmin    = me?.role === 'admin'
+  const isPartner  = me?.role === 'partner'
+  const isAgent    = me?.role === 'agent'
+  const isOps      = me?.role === 'operaciones'
+  const isFinanzas = me?.role === 'finanzas'
 
   const OPS_STAGES = ['reserva','firma','escritura','perdido']
   const vL = !me ? [] : isAdmin
@@ -853,9 +881,10 @@ export default function App() {
     : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin   ? ['dashboard','kanban','lista','usuarios','ranking','etapas','importar','extraer']
-            : isPartner ? ['dashboard','pool']
-            : isOps     ? ['kanban','lista']
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','etapas','importar','extraer']
+            : isPartner  ? ['dashboard','pool']
+            : isOps      ? ['kanban','lista']
+            : isFinanzas ? ['comisiones']
             : ['kanban','lista','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
@@ -927,7 +956,7 @@ export default function App() {
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <AV name={me.name} size={28}/>
           <span style={{fontSize:13,color:'#6b7280',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{me.name}</span>
-          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':isOps?'#FEF9C3':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':isOps?'#713f12':'#1d4ed8',fontWeight:700}}>{me.role}</span>
+          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':isOps?'#FEF9C3':isFinanzas?'#F0FDF4':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':isOps?'#713f12':isFinanzas?'#166534':'#1d4ed8',fontWeight:700}}>{me.role}</span>
           {!isAdmin && (
             <div style={{position:'relative'}}>
               <button onClick={()=>{setShowNotifs(v=>!v);setNotifications(n=>n.map(x=>({...x,read:true})))}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid,position:'relative'}}>
@@ -1077,7 +1106,7 @@ export default function App() {
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
               {(users||[]).map(u => {
                 const uL = leads.filter(l=>l.assigned_to===u.id)
-                const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12']}
+                const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
                 const [rb,rc] = RC[u.role]||RC.agent
                 return (
                   <div key={u.id} style={sty.card}>
@@ -1123,7 +1152,7 @@ export default function App() {
                   const sessMonth = uSess.filter(s=>new Date(s.logged_at)>=startOfMonth).length
                   const minsAgo = lastLogin ? Math.floor((now-lastLogin)/60000) : null
                   const isOnline = minsAgo !== null && minsAgo < 30
-                  const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12']}
+                  const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
                   const [rb,rc] = RC[u.role]||RC.agent
                   return (
                     <div key={u.id} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
@@ -2023,6 +2052,147 @@ export default function App() {
           )
         })()}
 
+        {/* COMISIONES — Finanzas */}
+        {nav==='comisiones' && (isAdmin||isFinanzas) && (() => {
+          const closingLeads = leads.filter(l => ['firma','escritura'].includes(l.stage))
+          const agents = (users||[]).filter(u => u.role === 'agent')
+          const ufHoy = indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null
+
+          const getComm = key => commissions[key] || {pctComision:'', pctBroker:''}
+          const setComm = (key, field, val) => setCommissions(prev => ({...prev, [key]: {...(prev[key]||{pctComision:'',pctBroker:''}), [field]: val}}))
+
+          const calcComision = (precio, pctC, pctB, moneda, ufCierre) => {
+            const p = parseFloat(precio)||0
+            const c = parseFloat(pctC)||0
+            const b = parseFloat(pctB)||0
+            const comisionTotal = p * c / 100
+            const montoAsesor   = comisionTotal * b / 100
+            const ufRef = ufCierre || ufHoy
+            const pesos = moneda==='UF' && ufRef ? Math.round(montoAsesor * ufRef) : null
+            return { comisionTotal, montoAsesor, pesos, ufRef }
+          }
+
+          // Get UF from closing date — fetches from mindicador.cl if not cached
+          const getLeadUF = lead => {
+            if (!lead.stage_moved_at) return null
+            const key = new Date(lead.stage_moved_at).toISOString().slice(0,10)
+            if (ufHistory[key]) return ufHistory[key]
+            fetchUFForDate(lead.stage_moved_at) // triggers async fetch + re-render
+            return null
+          }
+
+          return (
+            <div>
+              {/* Header */}
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
+                <div style={{fontSize:28}}>💰</div>
+                <div>
+                  <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Control de Comisiones</div>
+                  <div style={{fontSize:12,color:B.mid}}>Leads en Firma Promesa y Firma Escritura · UF del día: {indicators.uf ? '$'+indicators.uf : '—'}</div>
+                </div>
+              </div>
+
+              {agents.filter(ag => closingLeads.some(l=>l.assigned_to===ag.id)).length === 0 && (
+                <div style={{padding:'32px',textAlign:'center',color:'#9ca3af',fontSize:13}}>
+                  Sin leads en Firma Promesa o Firma Escritura aún.
+                </div>
+              )}
+
+              {agents.map(ag => {
+                const agLeads = closingLeads.filter(l => l.assigned_to === ag.id)
+                if (agLeads.length === 0) return null
+                const allProps = agLeads.flatMap(l => { const ufC=getLeadUF(l); return (l.propiedades||[]).map(p => ({...p, leadId:l.id, leadNombre:l.nombre, stage:l.stage, ufCierre:ufC, fechaCierre:l.stage_moved_at})) })
+                if (allProps.length === 0) return null
+
+                return (
+                  <div key={ag.id} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:14,marginBottom:16,overflow:'hidden'}}>
+                    {/* Agent header */}
+                    <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:B.light,borderBottom:'1px solid #dce8ff'}}>
+                      <AV name={ag.name} size={36}/>
+                      <div style={{flex:1}}>
+                        <div style={{fontWeight:700,fontSize:14,color:B.primary}}>{ag.name}</div>
+                        <div style={{fontSize:12,color:B.mid}}>{agLeads.length} leads · {allProps.length} propiedades</div>
+                      </div>
+                      <div style={{textAlign:'right'}}>
+                        {(()=>{
+                          const totUF = allProps.filter(p=>p.moneda==='UF').reduce((s,p)=>{
+                            const key=p.leadId+'-'+p.id; const {montoAsesor}=calcComision(p.bono_pie?p.precio_sin_bono:p.precio,getComm(key).pctComision,getComm(key).pctBroker,'UF',p.ufCierre)
+                            return s+montoAsesor
+                          },0)
+                          const totUSD = allProps.filter(p=>p.moneda==='USD').reduce((s,p)=>{
+                            const key=p.leadId+'-'+p.id; const {montoAsesor}=calcComision(p.bono_pie?p.precio_sin_bono:p.precio,getComm(key).pctComision,getComm(key).pctBroker,'USD',p.ufCierre)
+                            return s+montoAsesor
+                          },0)
+                          return <>
+                            {totUF>0&&<div style={{fontSize:13,fontWeight:700,color:'#14532d'}}>Total a pagar: UF {totUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}{ufValue?<span style={{fontSize:11,color:'#6b7280'}}> · ${Math.round(totUF*ufValue).toLocaleString('es-CL')}</span>:''}</div>}
+                            {totUSD>0&&<div style={{fontSize:13,fontWeight:700,color:'#166534'}}>Total a pagar: USD {totUSD.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
+                          </>
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Properties */}
+                    <div style={{padding:'10px 16px'}}>
+                      {allProps.map((p, pi) => {
+                        const key = p.leadId+'-'+p.id
+                        const comm = getComm(key)
+                        const precioBase = parseFloat(p.bono_pie ? p.precio_sin_bono : p.precio)||0
+                        const {comisionTotal, montoAsesor, pesos, ufRef} = calcComision(precioBase, comm.pctComision, comm.pctBroker, p.moneda, p.ufCierre)
+
+                        return (
+                          <div key={key} style={{borderBottom:pi<allProps.length-1?'1px solid #f0f4ff':'none',paddingBottom:12,marginBottom:12}}>
+                            {/* Property info */}
+                            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8,flexWrap:'wrap',gap:6}}>
+                              <div>
+                                <div style={{fontWeight:600,fontSize:13,color:'#111827'}}>{p.inmobiliaria} — {p.proyecto}{p.depto?' · Depto '+p.depto:''}</div>
+                                <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>
+                                  Cliente: <strong>{p.leadNombre}</strong> · 
+                                  <span style={{marginLeft:4,fontSize:11,padding:'1px 6px',borderRadius:99,background:p.stage==='firma'?'#FFF7ED':'#FEF9C3',color:p.stage==='firma'?'#9a3412':'#713f12',fontWeight:600}}>{stages.find(s=>s.id===p.stage)?.label||p.stage}</span>
+                                </div>
+                                <div style={{fontSize:13,fontWeight:700,color:'#374151',marginTop:3}}>
+                                  {p.moneda} {precioBase.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                                  {p.bono_pie && <span style={{fontSize:11,color:'#9ca3af',fontWeight:400}}> (con bono pie {p.bono_pct}%)</span>}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Commission inputs */}
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,alignItems:'flex-end'}}>
+                              <Fld label="% Comisión inmobiliaria">
+                                <div style={{display:'flex',alignItems:'center',gap:4}}>
+                                  <input type="number" min="0" max="100" step="0.1" value={comm.pctComision} onChange={e=>setComm(key,'pctComision',e.target.value)} placeholder="Ej: 4" style={{...sty.inp,flex:1}}/>
+                                  <span style={{fontSize:12,color:'#9ca3af'}}>%</span>
+                                </div>
+                              </Fld>
+                              <Fld label="% Para el broker">
+                                <div style={{display:'flex',alignItems:'center',gap:4}}>
+                                  <input type="number" min="0" max="100" step="0.1" value={comm.pctBroker} onChange={e=>setComm(key,'pctBroker',e.target.value)} placeholder="Ej: 50" style={{...sty.inp,flex:1}}/>
+                                  <span style={{fontSize:12,color:'#9ca3af'}}>%</span>
+                                </div>
+                              </Fld>
+                              {/* Result */}
+                              <div style={{background: montoAsesor>0?'#F0FDF4':'#f9fbff',borderRadius:10,padding:'8px 12px',border:'1px solid '+(montoAsesor>0?'#86efac':'#e5e7eb')}}>
+                                {comm.pctComision&&comm.pctBroker ? <>
+                                  <div style={{fontSize:10,color:'#6b7280',marginBottom:2}}>Comisión total: {p.moneda} {comisionTotal.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                                  <div style={{fontSize:14,fontWeight:800,color:'#14532d'}}>A pagar: {p.moneda} {montoAsesor.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                                  {pesos && <div style={{fontSize:11,color:'#166534',fontWeight:600}}>${pesos.toLocaleString('es-CL')} CLP</div>}
+                                  {p.moneda==='UF' && ufRef && <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>
+                                    UF {p.ufCierre?'al cierre ('+new Date(p.fechaCierre).toLocaleDateString('es-CL',{day:'2-digit',month:'short',year:'numeric'})+')':'hoy'}: {ufRef.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                                  </div>}
+                                </> : <div style={{fontSize:11,color:'#9ca3af'}}>Ingresa los % para calcular</div>}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
+
         {/* EXTRAER */}
         {nav==='extraer' && isAdmin && (
           <div style={{maxWidth:560}}>
@@ -2301,6 +2471,7 @@ export default function App() {
             <select value={editUser.role} onChange={e=>setEditUser(p=>({...p,role:e.target.value}))} style={sty.sel}>
               <option value="agent">Agente / Vendedor</option>
               <option value="operaciones">Operaciones</option>
+              <option value="finanzas">Finanzas</option>
               <option value="partner">Socio Comercial</option>
               <option value="admin">Administrador</option>
             </select>
@@ -2348,6 +2519,7 @@ export default function App() {
             <select value={nu.role} onChange={e=>setNu(p=>({...p,role:e.target.value}))} style={sty.sel}>
               <option value="agent">Agente / Vendedor</option>
               <option value="operaciones">Operaciones</option>
+              <option value="finanzas">Finanzas</option>
               <option value="partner">Socio Comercial</option>
               <option value="admin">Administrador</option>
             </select>
