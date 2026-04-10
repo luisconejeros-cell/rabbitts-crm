@@ -194,8 +194,11 @@ export default function App() {
     tono: 'motivador',
     horarioDesde: '09:00',
     horarioHasta: '20:00',
+    siempreActivo: true, // 24/7
     activo: false,
     calendlyLink: 'https://calendly.com/agenda-rabbittscapital/60min',
+    driveUrl: '',
+    driveFiles: [], // cached file list from Drive
     rentaMinima: 1500000,
     rentaMinimaPareja: 2000000,
     eventos: {
@@ -3725,8 +3728,15 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
               <Fld label="Desde"><input type="time" value={iaConfig.horarioDesde} onChange={e=>upd(['horarioDesde'],e.target.value)} style={sty.inp}/></Fld>
               <Fld label="Hasta"><input type="time" value={iaConfig.horarioHasta} onChange={e=>upd(['horarioHasta'],e.target.value)} style={sty.inp}/></Fld>
             </div>
-            <div style={{marginTop:10,padding:'10px 12px',background:'#FFF7ED',borderRadius:8,fontSize:11,color:'#92400e'}}>
-              💡 Los mensajes fuera de este horario se enviarán al día siguiente dentro del horario configurado.
+            <div style={{display:'flex',alignItems:'center',gap:10,marginTop:10,padding:'10px 12px',background:iaConfig.siempreActivo?'#DCFCE7':'#FFF7ED',borderRadius:8,border:'1px solid '+(iaConfig.siempreActivo?'#86efac':'#fdba74')}}>
+              <div style={{flex:1,fontSize:11,color:iaConfig.siempreActivo?'#14532d':'#92400e'}}>
+                {iaConfig.siempreActivo ? '🟢 Rabito responde 24/7 sin restriccion de horario.' : '⏰ Los mensajes fuera de horario se envian al dia siguiente.'}
+              </div>
+              <button onClick={()=>upd(['siempreActivo'],!iaConfig.siempreActivo)}
+                style={{padding:'5px 14px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:700,fontSize:12,flexShrink:0,
+                  background:iaConfig.siempreActivo?'#DCFCE7':'#F3F4F6',color:iaConfig.siempreActivo?'#14532d':'#6b7280'}}>
+                {iaConfig.siempreActivo?'🟢 24/7':'⏰ Con horario'}
+              </button>
             </div>
           </div>
 
@@ -3779,43 +3789,155 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
             <textarea value={iaConfig.guion||''} onChange={e=>upd(['guion'],e.target.value)}
               style={{...sty.inp,minHeight:120,resize:'vertical',fontSize:12,fontFamily:'monospace'}}/>
           </div>
+
+          {/* Google Drive */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+              <img src="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" style={{width:24,height:24}} alt="Drive"/>
+              <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>Google Drive — Base de conocimiento</p>
+            </div>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Conecta tu carpeta de Drive con brochures, precios y guiones. Rabito los consultará automáticamente al responder.</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:8,marginBottom:10}}>
+              <Fld label="URL de carpeta Google Drive (pública o compartida)">
+                <input value={iaConfig.driveUrl||''} onChange={e=>upd(['driveUrl'],e.target.value)}
+                  placeholder="https://drive.google.com/drive/folders/..." style={sty.inp}/>
+              </Fld>
+              <div style={{paddingTop:18}}>
+                <button
+                  onClick={async ()=>{
+                    if (!iaConfig.driveUrl) return
+                    // Extract folder ID from URL
+                    const match = iaConfig.driveUrl.match(/folders\/([a-zA-Z0-9_-]+)/)
+                    if (!match) return alert('URL de Drive no válida')
+                    upd(['driveFolderId'], match[1])
+                    upd(['driveConectado'], true)
+                    alert('Carpeta conectada. Los documentos se cargarán cuando Rabito responda.')
+                  }}
+                  style={{...sty.btnP,fontSize:12,whiteSpace:'nowrap'}}>
+                  {iaConfig.driveConectado ? '✅ Conectado' : 'Conectar'}
+                </button>
+              </div>
+            </div>
+            {iaConfig.driveConectado && (
+              <div style={{padding:'10px 12px',background:'#DCFCE7',border:'1px solid #86efac',borderRadius:8,fontSize:11}}>
+                <div style={{fontWeight:700,color:'#14532d',marginBottom:4}}>✅ Drive conectado — Carpeta ID: {iaConfig.driveFolderId}</div>
+                <div style={{color:'#166534'}}>Rabito usará los documentos de esta carpeta como base de conocimiento. Actualiza el contenido en Drive y se refleja automáticamente.</div>
+                <div style={{marginTop:6,display:'flex',gap:8'}}>
+                  <a href={iaConfig.driveUrl} target="_blank" rel="noopener noreferrer"
+                    style={{fontSize:11,color:B.primary,textDecoration:'underline'}}>Abrir carpeta en Drive</a>
+                  <span style={{color:'#9ca3af',marginLeft:8}}>·</span>
+                  <button onClick={()=>{upd(['driveConectado'],false);upd(['driveFolderId'],'');upd(['driveUrl'],'')}}
+                    style={{fontSize:11,background:'none',border:'none',color:'#991b1b',cursor:'pointer',padding:0,marginLeft:8}}>
+                    Desconectar
+                  </button>
+                </div>
+              </div>
+            )}
+            {!iaConfig.driveConectado && (
+              <div style={{padding:'10px 12px',background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:8,fontSize:11,color:'#92400e'}}>
+                💡 La carpeta debe ser pública o compartida con "cualquiera con el link puede ver". Incluye PDFs, Word, Excel con info de proyectos, precios y guiones.
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {/* TAB: EVENTOS */}
       {tab==='eventos' && (
-        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
-          <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🔔 ¿Qué eventos disparan mensajes?</p>
-          <div style={{display:'flex',flexDirection:'column',gap:0}}>
-            {EVENTOS_LIST.map((ev,i)=>(
-              <div key={ev.k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 0',borderBottom:i<EVENTOS_LIST.length-1?'1px solid #f0f4ff':'none'}}>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{ev.l}</div>
-                  {ev.k==='inactividad' && iaConfig.eventos[ev.k] && (
-                    <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
-                      <span style={{fontSize:11,color:'#6b7280'}}>Avisar después de</span>
-                      <input type="number" min="1" max="30" value={iaConfig.eventos.diasInactividad||7}
-                        onChange={e=>upd(['eventos','diasInactividad'],parseInt(e.target.value))}
-                        style={{width:50,fontSize:11,padding:'3px 6px',border:'1px solid #dce8ff',borderRadius:5}}/>
-                      <span style={{fontSize:11,color:'#6b7280'}}>días sin actividad</span>
-                    </div>
-                  )}
+        <div>
+          {/* Built-in events */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',marginBottom:12}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🔔 Eventos del sistema</p>
+            <div style={{display:'flex',flexDirection:'column',gap:0}}>
+              {EVENTOS_LIST.map((ev,i)=>(
+                <div key={ev.k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 0',borderBottom:i<EVENTOS_LIST.length-1?'1px solid #f0f4ff':'none'}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{ev.l}</div>
+                    {ev.k==='inactividad' && iaConfig.eventos[ev.k] && (
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginTop:5}}>
+                        <span style={{fontSize:11,color:'#6b7280'}}>Avisar después de</span>
+                        <input type="number" min="1" max="30" value={iaConfig.eventos.diasInactividad||7}
+                          onChange={e=>upd(['eventos','diasInactividad'],parseInt(e.target.value))}
+                          style={{width:50,fontSize:11,padding:'3px 6px',border:'1px solid #dce8ff',borderRadius:5}}/>
+                        <span style={{fontSize:11,color:'#6b7280'}}>días sin actividad</span>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                    <button onClick={()=>upd(['eventos',ev.k],!iaConfig.eventos[ev.k])}
+                      style={{padding:'5px 14px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:700,fontSize:12,
+                        background:iaConfig.eventos[ev.k]?'#DCFCE7':'#F3F4F6',
+                        color:iaConfig.eventos[ev.k]?'#14532d':'#6b7280'}}>
+                      {iaConfig.eventos[ev.k]?'🟢 ON':'⚪ OFF'}
+                    </button>
+                  </div>
                 </div>
-                <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-                  <button onClick={()=>{ setPreviewPlant(null); setTab('plantillas'); setTimeout(()=>previewTemplate(ev.tpl),100) }}
-                    style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#f9fbff',color:B.primary,cursor:'pointer'}}>
-                    Ver plantilla
-                  </button>
-                  <button onClick={()=>upd(['eventos',ev.k],!iaConfig.eventos[ev.k])}
-                    style={{padding:'6px 16px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:700,fontSize:12,
-                      background:iaConfig.eventos[ev.k]?'#DCFCE7':'#F3F4F6',
-                      color:iaConfig.eventos[ev.k]?'#14532d':'#6b7280'}}>
-                    {iaConfig.eventos[ev.k]?'🟢 ON':'⚪ OFF'}
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
+
+          {/* Custom events */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',marginBottom:12}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>➕ Crear evento personalizado</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+              <Fld label="Nombre del evento">
+                <input id="nuevo_evento_nombre" style={sty.inp} placeholder="Ej: Recordatorio escritura"/>
+              </Fld>
+              <Fld label="Descripción">
+                <input id="nuevo_evento_desc" style={sty.inp} placeholder="Ej: Avisar al broker 3 días antes"/>
+              </Fld>
+            </div>
+            <Fld label="Mensaje a enviar">
+              <textarea id="nuevo_evento_msg" style={{...sty.inp,minHeight:52,resize:'vertical'}} placeholder="Hola {broker}, recuerda que {cliente} tiene escritura en 3 días..."/>
+            </Fld>
+            <button onClick={()=>{
+              const nombre = document.getElementById('nuevo_evento_nombre')?.value
+              const desc = document.getElementById('nuevo_evento_desc')?.value
+              const msg = document.getElementById('nuevo_evento_msg')?.value
+              if (!nombre||!msg) return
+              const key = 'custom_'+Date.now()
+              const newEventos = {...iaConfig.eventos, [key]: false}
+              const newPlantillas = {...iaConfig.plantillas, [key]: msg}
+              const newCustomEvs = [...(iaConfig.customEventos||[]), {k:key, l:nombre, desc, tpl:key}]
+              upd(['eventos'], newEventos)
+              upd(['plantillas'], newPlantillas)
+              upd(['customEventos'], newCustomEvs)
+              if (document.getElementById('nuevo_evento_nombre')) document.getElementById('nuevo_evento_nombre').value=''
+              if (document.getElementById('nuevo_evento_desc')) document.getElementById('nuevo_evento_desc').value=''
+              if (document.getElementById('nuevo_evento_msg')) document.getElementById('nuevo_evento_msg').value=''
+            }} style={{...sty.btnP,marginTop:8,fontSize:12}}>Crear evento</button>
+          </div>
+
+          {/* Custom events list */}
+          {(iaConfig.customEventos||[]).length > 0 && (
+            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+              <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>📋 Eventos personalizados</p>
+              {(iaConfig.customEventos||[]).map((ev,i)=>(
+                <div key={ev.k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0',borderBottom:i<(iaConfig.customEventos||[]).length-1?'1px solid #f0f4ff':'none'}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{ev.l}</div>
+                    {ev.desc&&<div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{ev.desc}</div>}
+                    <div style={{fontSize:11,color:B.mid,marginTop:2,fontStyle:'italic'}}>{iaConfig.plantillas[ev.k]?.slice(0,60)}...</div>
+                  </div>
+                  <div style={{display:'flex',gap:6,flexShrink:0}}>
+                    <button onClick={()=>upd(['eventos',ev.k],!iaConfig.eventos[ev.k])}
+                      style={{padding:'5px 12px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:700,fontSize:11,
+                        background:iaConfig.eventos[ev.k]?'#DCFCE7':'#F3F4F6',color:iaConfig.eventos[ev.k]?'#14532d':'#6b7280'}}>
+                      {iaConfig.eventos[ev.k]?'🟢 ON':'⚪ OFF'}
+                    </button>
+                    <button onClick={()=>{
+                      const newCust = (iaConfig.customEventos||[]).filter(e=>e.k!==ev.k)
+                      const newEv = {...iaConfig.eventos}; delete newEv[ev.k]
+                      const newPl = {...iaConfig.plantillas}; delete newPl[ev.k]
+                      upd(['customEventos'],newCust); upd(['eventos'],newEv); upd(['plantillas'],newPl)
+                    }} style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',cursor:'pointer',color:'#991b1b'}}>
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -3851,6 +3973,42 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
               )}
             </div>
           ))}
+
+          {/* Custom plantillas */}
+          {(iaConfig.customEventos||[]).map(ev=>(
+            <div key={ev.k} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px',position:'relative'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <span style={{fontSize:12,fontWeight:700,color:B.primary}}>{ev.l} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>(personalizado)</span></span>
+              </div>
+              <textarea value={iaConfig.plantillas[ev.k]||''}
+                onChange={e=>upd(['plantillas',ev.k],e.target.value)}
+                style={{...sty.inp,minHeight:60,resize:'vertical',fontSize:12}}/>
+            </div>
+          ))}
+
+          {/* Crear nueva plantilla */}
+          <div style={{background:'#f9fbff',border:'2px dashed #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+            <p style={{margin:'0 0 10px',fontSize:12,fontWeight:700,color:B.mid}}>➕ Nueva plantilla personalizada</p>
+            <Fld label="Nombre">
+              <input id="nueva_plant_nombre" style={sty.inp} placeholder="Ej: Bienvenida nueva campaña"/>
+            </Fld>
+            <div style={{marginTop:8}}>
+              <Fld label="Texto del mensaje">
+                <textarea id="nueva_plant_msg" style={{...sty.inp,minHeight:60,resize:'vertical'}} placeholder="Hola {broker}, ..."/>
+              </Fld>
+            </div>
+            <button onClick={()=>{
+              const nombre = document.getElementById('nueva_plant_nombre')?.value
+              const msg = document.getElementById('nueva_plant_msg')?.value
+              if (!nombre||!msg) return
+              const key = 'custom_plant_'+Date.now()
+              upd(['plantillas',key],msg)
+              upd(['customEventos'],[...(iaConfig.customEventos||[]),{k:key,l:nombre,desc:'',tpl:key}])
+              upd(['eventos',key],false)
+              if (document.getElementById('nueva_plant_nombre')) document.getElementById('nueva_plant_nombre').value=''
+              if (document.getElementById('nueva_plant_msg')) document.getElementById('nueva_plant_msg').value=''
+            }} style={{...sty.btnP,marginTop:8,fontSize:12}}>Crear plantilla</button>
+          </div>
         </div>
       )}
 
