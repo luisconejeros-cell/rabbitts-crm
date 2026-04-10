@@ -3084,8 +3084,8 @@ const OC_ESTADOS = [
   {id:'pagado_broker',     label:'✅ Broker Pagado',         bg:'#DCFCE7', col:'#14532d'},
 ]
 
-function ComisionesView({
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768leads, users, stages, indicators, commissions, setCommissions, saveCommission, savePropField, ufHistory}) {
+function ComisionesView({leads, users, stages, indicators, commissions, setCommissions, saveCommission, savePropField, ufHistory}) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const closingLeads = (leads||[]).filter(l => ['firma','escritura'].includes(l.stage))
   const [filterAgent, setFilterAgent] = useState('all')
   const [filterInmob, setFilterInmob] = useState('all')
@@ -3463,8 +3463,8 @@ function ComisionesView({
 }
 
 // ─── Agent Comisiones View ───────────────────────────────────────────────────
-function AgentComisionesView({
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768leads, me, users, stages, indicators, commissions, ufHistory}) {
+function AgentComisionesView({leads, me, users, stages, indicators, commissions, ufHistory}) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const now = new Date()
   const [fStatus, setFStatus]   = useState('all')   // all | pendiente | cobrado
   const [fInmob,  setFInmob]    = useState('all')
@@ -3806,8 +3806,8 @@ function AgentComisionesView({
 }
 
 // ─── IA Config View ───────────────────────────────────────────────────────────
-function IAConfigView({
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768iaConfig, setIaConfig, users, leads}) {
+function IAConfigView({iaConfig, setIaConfig, users, leads}) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const [tab, setTab] = useState('config')
   const [testMsg, setTestMsg] = useState('')
   const [testEvento, setTestEvento] = useState('asignacion')
@@ -4507,8 +4507,9 @@ function RabitoChat({iaConfig}) {
 }
 
 // ─── Conversaciones View ─────────────────────────────────────────────────────
-function ConversacionesView({
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, users, leads, setLeads, supabase, dbReady, me}) {
+function ConversacionesView({conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, users, leads, setLeads, supabase, dbReady, me}) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const [tab, setTab] = useState('bandeja')       // bandeja | masivo
   const [newMsg, setNewMsg] = useState('')
   const [sending, setSending] = useState(false)
