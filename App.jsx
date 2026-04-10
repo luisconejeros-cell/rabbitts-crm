@@ -4667,47 +4667,8 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
       )}
 
       {/* TAB: MASIVO */}
-      {tab==='masivo' && (() => {
-        const teamUsers = (users||[]).filter(u=>u.role!=='partner')
-        const roleLabel = r => ({admin:'Admin',agent:'Asesor',operaciones:'Operaciones',finanzas:'Finanzas'}[r]||r)
-
-        const TWILIO_CONFIGURED = false // flip to true when Twilio/Meta is connected
-        const sendMasivoEquipo = async () => {
-          if (!masivo.msg.trim()||selectedUsers.length===0) return
-          const withPhone = selectedUsers.map(id=>teamUsers.find(u=>u.id===id)).filter(u=>u?.phone)
-          const noPhone   = selectedUsers.map(id=>teamUsers.find(u=>u.id===id)).filter(u=>!u?.phone)
-          if (withPhone.length===0) {
-            alert('Ningún usuario seleccionado tiene número de WhatsApp registrado. Agrégalo en Usuarios → editar.')
-            return
-          }
-          if (TWILIO_CONFIGURED) {
-            // When API is connected: send via Twilio/Meta
-            setMasivoSending(true)
-            let sent=0, failed=0
-            for (const u of withPhone) {
-              try {
-                await fetch('/api/whatsapp', {method:'POST',headers:{'Content-Type':'application/json'},
-                  body:JSON.stringify({to:u.phone, mensaje:masivo.msg.replace('{nombre}',u.name||'')})})
-                sent++
-              } catch(_) { failed++ }
-            }
-            setMasivoResult({sent, failed:failed+(noPhone.length)})
-            setMasivoSending(false)
-          } else {
-            // Fallback: open wa.me links one by one
-            withPhone.forEach((u,i) => {
-              const msg = encodeURIComponent(masivo.msg.replace('{nombre}',u.name||''))
-              const phone = u.phone.replace(/[^0-9]/g,'')
-              setTimeout(()=>window.open('https://wa.me/'+phone+'?text='+msg,'_blank'), i*800)
-            })
-            setMasivoResult({sent:withPhone.length, failed:noPhone.length, waLinks:true})
-          }
-          setSelectedUsers([])
-        }
-
-        return (
-        <div>
-          return (<div>
+      {tab==='masivo' && (
+          <div>
           {/* Target toggle */}
           <div style={{display:'flex',gap:8,marginBottom:16,padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:10}}>
             <span style={{fontSize:12,fontWeight:600,color:B.primary,alignSelf:'center'}}>Enviar a:</span>
@@ -4719,7 +4680,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
             <button onClick={()=>setMasivoTarget('equipo')}
               style={{fontSize:12,padding:'6px 16px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,
                 background:masivoTarget==='equipo'?B.primary:'#f0f4ff',color:masivoTarget==='equipo'?'#fff':B.mid}}>
-              👥 Equipo interno ({teamUsers.length})
+              👥 Equipo interno ({(users||[]).filter(u=>u.role!=='partner').length})
             </button>
           </div>
 
@@ -4753,7 +4714,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
               {masivoResult && (
                 <div style={{marginTop:10,padding:'8px 12px',background:'#DCFCE7',border:'1px solid #86efac',borderRadius:8,fontSize:12,color:'#14532d'}}>
                   {masivoResult.waLinks
-                    ? <div><strong>✅ Se abrieron {masivoResult.sent} chats de WhatsApp</strong><br/><span style={{fontSize:11,fontWeight:400}}>Confirma el envío en cada ventana de WhatsApp Web que se abrió.{masivoResult.failed>0?' · '+masivoResult.failed+' sin número registrado':''}</span></div>
+                    ? <div><strong>✅ Se abrieron {masivoResult.sent} chats de WhatsApp</strong><br/><span style={{fontSize:11,fontWeight:400}}>Confirma el envío en cada ventana que se abrió.{masivoResult.failed>0?' · '+masivoResult.failed+' sin número':''}</span></div>
                     : <strong>✅ Enviado a {masivoResult.sent}{masivoResult.failed>0?' · '+masivoResult.failed+' fallaron':''}</strong>
                   }
                 </div>
@@ -4761,63 +4722,100 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
               {masivoTarget==='leads'
                 ? <button onClick={sendMasivo} disabled={masivoSending||!masivo.msg.trim()||selectedConvs.length===0}
                     style={{...sty.btnP,marginTop:12,width:'100%',opacity:masivoSending||!masivo.msg.trim()||selectedConvs.length===0?0.5:1}}>
-                    {masivoSending?'Enviando...': `Enviar a ${selectedConvs.length} seleccionados`}
+                    {masivoSending?'Enviando...':`Enviar a ${selectedConvs.length} seleccionados`}
                   </button>
                 : <button onClick={sendMasivoEquipo} disabled={masivoSending||!masivo.msg.trim()||selectedUsers.length===0}
                     style={{...sty.btnP,marginTop:12,width:'100%',opacity:masivoSending||!masivo.msg.trim()||selectedUsers.length===0?0.5:1}}>
-                    {masivoSending?'Enviando...': `Enviar a ${selectedUsers.length} del equipo`}
+                    {masivoSending?'Enviando...':`Enviar a ${selectedUsers.length} del equipo`}
                   </button>
               }
             </div>
 
-            {/* Contact selector */}
-            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>👥 Seleccionar destinatarios</p>
-                <div style={{display:'flex',gap:6}}>
-                  <button onClick={()=>setSelectedConvs(conversations.map(c=>c.id))}
-                    style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:`1px solid ${B.primary}`,background:B.light,color:B.primary,cursor:'pointer'}}>Todos</button>
-                  <button onClick={()=>setSelectedConvs([])}
-                    style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',color:'#6b7280',cursor:'pointer'}}>Ninguno</button>
+            {/* Selector panel */}
+            {masivoTarget==='leads' ? (
+              <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                  <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>📱 Contactos WhatsApp</p>
+                  <div style={{display:'flex',gap:6}}>
+                    <button onClick={()=>setSelectedConvs(conversations.map(c=>c.id))} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:`1px solid ${B.primary}`,background:B.light,color:B.primary,cursor:'pointer'}}>Todos</button>
+                    <button onClick={()=>setSelectedConvs([])} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',color:'#6b7280',cursor:'pointer'}}>Ninguno</button>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:4,marginBottom:8,flexWrap:'wrap'}}>
+                  {[
+                    {l:'Activos',f:()=>setSelectedConvs(conversations.filter(c=>c.status==='activo').map(c=>c.id))},
+                    {l:'Calificados',f:()=>setSelectedConvs(conversations.filter(c=>c.status==='calificado').map(c=>c.id))},
+                    {l:'Sin respuesta 24h',f:()=>setSelectedConvs(conversations.filter(c=>(Date.now()-new Date(c.updated_at||0).getTime())>86400000).map(c=>c.id))},
+                    {l:'Fríos',f:()=>setSelectedConvs(conversations.filter(c=>c.status==='frio').map(c=>c.id))},
+                  ].map(({l,f})=>(
+                    <button key={l} onClick={f} style={{fontSize:10,padding:'3px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#f9fbff',color:B.mid,cursor:'pointer'}}>{l}</button>
+                  ))}
+                </div>
+                <div style={{maxHeight:280,overflowY:'auto',border:'1px solid #f0f4ff',borderRadius:8}}>
+                  {conversations.map(c=>(
+                    <div key={c.id} onClick={()=>setSelectedConvs(prev=>prev.includes(c.id)?prev.filter(id=>id!==c.id):[...prev,c.id])}
+                      style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:selectedConvs.includes(c.id)?B.light:'#fff'}}>
+                      <div style={{width:16,height:16,borderRadius:3,border:`2px solid ${selectedConvs.includes(c.id)?B.primary:'#dce8ff'}`,background:selectedConvs.includes(c.id)?B.primary:'#fff',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                        {selectedConvs.includes(c.id)&&<span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600}}>{c.nombre||c.telefono}</div>
+                        <div style={{fontSize:10,color:'#9ca3af'}}>{c.telefono} · {c.status||'activo'}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {conversations.length===0&&<div style={{padding:'16px',textAlign:'center',color:'#9ca3af',fontSize:12}}>Sin conversaciones</div>}
+                </div>
+                <div style={{marginTop:6,fontSize:11,color:B.mid,textAlign:'right'}}>{selectedConvs.length} seleccionados</div>
+              </div>
+            ) : (
+              <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                  <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>👥 Equipo interno</p>
+                  <div style={{display:'flex',gap:6}}>
+                    <button onClick={()=>setSelectedUsers((users||[]).filter(u=>u.role!=='partner').map(u=>u.id))} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:`1px solid ${B.primary}`,background:B.light,color:B.primary,cursor:'pointer'}}>Todos</button>
+                    <button onClick={()=>setSelectedUsers([])} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',color:'#6b7280',cursor:'pointer'}}>Ninguno</button>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:4,marginBottom:8,flexWrap:'wrap'}}>
+                  {['agent','operaciones','finanzas','admin'].map(role=>{
+                    const ru = (users||[]).filter(u=>u.role===role)
+                    if (!ru.length) return null
+                    const label = {admin:'Admin',agent:'Asesor',operaciones:'Operaciones',finanzas:'Finanzas'}[role]||role
+                    return (
+                      <button key={role} onClick={()=>{
+                        const ids=ru.map(u=>u.id)
+                        setSelectedUsers(prev=>ids.every(id=>prev.includes(id))?prev.filter(id=>!ids.includes(id)):[...new Set([...prev,...ids])])
+                      }} style={{fontSize:10,padding:'3px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#f9fbff',color:B.mid,cursor:'pointer'}}>
+                        {label} ({ru.length})
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{maxHeight:280,overflowY:'auto',border:'1px solid #f0f4ff',borderRadius:8}}>
+                  {(users||[]).filter(u=>u.role!=='partner').map(u=>(
+                    <div key={u.id} onClick={()=>setSelectedUsers(prev=>prev.includes(u.id)?prev.filter(id=>id!==u.id):[...prev,u.id])}
+                      style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:selectedUsers.includes(u.id)?B.light:'#fff'}}>
+                      <div style={{width:16,height:16,borderRadius:3,border:`2px solid ${selectedUsers.includes(u.id)?B.primary:'#dce8ff'}`,background:selectedUsers.includes(u.id)?B.primary:'#fff',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                        {selectedUsers.includes(u.id)&&<span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}
+                      </div>
+                      <AV name={u.name} size={28}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600}}>{u.name}</div>
+                        <div style={{fontSize:10,color:'#9ca3af'}}>{({admin:'Admin',agent:'Asesor',operaciones:'Operaciones',finanzas:'Finanzas'}[u.role]||u.role)}{u.phone?' · '+u.phone:' · Sin teléfono registrado'}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginTop:6,fontSize:11,color:B.mid,textAlign:'right'}}>{selectedUsers.length} seleccionados</div>
+                <div style={{marginTop:8,padding:'8px 12px',background:'#FFF7ED',borderRadius:8,fontSize:11,color:'#92400e'}}>
+                  💡 Ahora abre WhatsApp Web por cada miembro. Cuando conectes Meta/Twilio se enviará automáticamente.
                 </div>
               </div>
-              {/* Quick filters */}
-              <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
-                {[
-                  {l:'Todos activos', f:()=>setSelectedConvs(conversations.filter(c=>c.status==='activo').map(c=>c.id))},
-                  {l:'Calificados', f:()=>setSelectedConvs(conversations.filter(c=>c.status==='calificado').map(c=>c.id))},
-                  {l:'Sin respuesta 24h', f:()=>setSelectedConvs(conversations.filter(c=>{
-                    if (!c.updated_at) return false
-                    return (Date.now()-new Date(c.updated_at).getTime()) > 86400000
-                  }).map(c=>c.id))},
-                  {l:'Frío', f:()=>setSelectedConvs(conversations.filter(c=>c.status==='frio').map(c=>c.id))},
-                ].map(({l,f})=>(
-                  <button key={l} onClick={f} style={{fontSize:10,padding:'3px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#f9fbff',color:B.mid,cursor:'pointer'}}>{l}</button>
-                ))}
-              </div>
-              <div style={{maxHeight:300,overflowY:'auto',border:'1px solid #f0f4ff',borderRadius:8}}>
-                {conversations.map(conv=>(
-                  <div key={conv.id} onClick={()=>setSelectedConvs(prev=>prev.includes(conv.id)?prev.filter(id=>id!==conv.id):[...prev,conv.id])}
-                    style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',
-                      background:selectedConvs.includes(conv.id)?B.light:'#fff'}}>
-                    <div style={{width:16,height:16,borderRadius:3,border:`2px solid ${selectedConvs.includes(conv.id)?B.primary:'#dce8ff'}`,
-                      background:selectedConvs.includes(conv.id)?B.primary:'#fff',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                      {selectedConvs.includes(conv.id)&&<span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}
-                    </div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:600,color:'#111827'}}>{conv.nombre||conv.telefono}</div>
-                      <div style={{fontSize:10,color:'#9ca3af'}}>{conv.telefono} · {conv.status||'activo'}</div>
-                    </div>
-                  </div>
-                ))}
-                {conversations.length===0&&<div style={{padding:'16px',textAlign:'center',color:'#9ca3af',fontSize:12}}>Sin conversaciones</div>}
-              </div>
-              <div style={{marginTop:8,fontSize:11,color:B.mid,textAlign:'right'}}>{selectedConvs.length} seleccionados</div>
-            </div>
+            )}
           </div>
-        </div>
+          </div>
       )}
-
       {/* TAB: NUEVA */}
       {tab==='nuevo' && (
         <div style={{maxWidth:400}}>
