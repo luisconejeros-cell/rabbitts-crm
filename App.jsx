@@ -951,7 +951,7 @@ export default function App() {
             : isPartner  ? ['dashboard','pool']
             : isOps      ? ['kanban','lista']
             : isFinanzas ? ['dashboard_finanzas','comisiones']
-            : ['kanban','lista','nuevo lead']
+            : ['kanban','lista','mis comisiones','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
@@ -2369,6 +2369,19 @@ export default function App() {
           />
         )}
 
+        {/* MIS COMISIONES — Agente */}
+        {nav==='mis comisiones' && isAgent && (
+          <AgentComisionesView
+            leads={leads.filter(l=>l.assigned_to===me.id)}
+            me={me}
+            users={users}
+            stages={stages}
+            indicators={indicators}
+            commissions={commissions}
+            ufHistory={ufHistory}
+          />
+        )}
+
         {/* EXTRAER */}
         {nav==='extraer' && isAdmin && (
           <div style={{maxWidth:560}}>
@@ -3146,6 +3159,267 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ─── Agent Comisiones View ───────────────────────────────────────────────────
+function AgentComisionesView({leads, me, users, stages, indicators, commissions, ufHistory}) {
+  const now = new Date()
+
+  const ufHoy = indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null
+  const dolarHoy = indicators.dolar ? parseFloat(indicators.dolar.split('.').join('').replace(',','.')) : null
+
+  // All closed leads for this agent
+  const closedLeads  = leads.filter(l => ['firma','escritura','ganado'].includes(l.stage))
+  const closingLeads = leads.filter(l => ['firma','escritura'].includes(l.stage))
+
+  const getUF = lead => {
+    if (!lead.stage_moved_at) return ufHoy
+    const k = new Date(lead.stage_moved_at).toISOString().slice(0,10)
+    return ufHistory[k] || ufHoy
+  }
+
+  // Build all properties with commission data
+  const myProps = closingLeads.flatMap((l,li) =>
+    (l.propiedades||[]).map((p,pi) => {
+      const key = l.id+'-'+(p.id||'idx'+pi)
+      const comm = commissions[key] || {}
+      const base = parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0
+      const ufRef = getUF(l)
+      const pctC = parseFloat(comm.pctComision)||0
+      const pctB = parseFloat(comm.pctBroker)||0
+      const comisTotal  = base * pctC / 100
+      const miComision  = comisTotal * pctB / 100
+      let clp = null
+      if (p.moneda==='UF' && ufRef) clp = Math.round(miComision * ufRef)
+      else if (p.moneda==='USD' && dolarHoy) clp = Math.round(miComision * dolarHoy)
+      const ocEst = p.oc_estado || 'pendiente_oc'
+      return {
+        ...p, key, comm, base, ufRef, comisTotal, miComision, clp,
+        leadNombre: l.nombre, stage: l.stage,
+        fechaPromesa: l.stage_moved_at
+      }
+    })
+  )
+
+  // KPIs
+  const totalUFVendida = closedLeads.reduce((s,l) =>
+    s + (l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((a,p)=>a+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0), 0)
+
+  const totalMiComisionUF = myProps.filter(p=>p.moneda==='UF').reduce((s,p)=>s+p.miComision,0)
+  const totalMiComisionUSD = myProps.filter(p=>p.moneda==='USD').reduce((s,p)=>s+p.miComision,0)
+  const totalClp = myProps.reduce((s,p)=>s+(p.clp||0),0)
+
+  const cobradoUF = myProps.filter(p=>p.moneda==='UF'&&p.comm.cobrado).reduce((s,p)=>s+p.miComision,0)
+  const pendienteUF = totalMiComisionUF - cobradoUF
+  const enProcesoUF = myProps.filter(p=>p.moneda==='UF'&&!p.comm.cobrado&&p.miComision>0).reduce((s,p)=>s+p.miComision,0)
+
+  // Ranking vs all agents
+  const allAgents = (users||[]).filter(u=>u.role==='agent')
+  const rankingStages = ['firma','escritura','ganado']
+  const ranked = allAgents.map(ag => {
+    const agLeads = (leads.__all || []).filter ? [] : []
+    return ag
+  })
+  // Simple ranking: use commissions keys to find others - just show position from users
+  const myRank = null // will compute if we have all leads
+
+  // OC status labels
+  const OC_LABEL = {
+    pendiente_oc:     {l:'⏳ Esperando OC',        bg:'#FFF7ED',col:'#9a3412'},
+    oc_recibida:      {l:'📋 OC Recibida',          bg:'#E8EFFE',col:'#1B4FC8'},
+    factura_rabbitts: {l:'🧾 Facturado a Inmob.',   bg:'#F5F3FF',col:'#5b21b6'},
+    inmob_pago:       {l:'💵 Inmob. Pagó',           bg:'#FFFBEB',col:'#92400e'},
+    broker_factura:   {l:'📄 Enviá tu factura',      bg:'#FEF9C3',col:'#713f12'},
+    pagado_broker:    {l:'✅ Pagado',                bg:'#DCFCE7',col:'#14532d'},
+  }
+
+  const fmt2 = n => (parseFloat(n)||0).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})
+  const hasComm = myProps.some(p=>p.miComision>0)
+
+  // Monthly earnings (paid)
+  const byMonth = {}
+  myProps.filter(p=>p.comm.cobrado&&p.miComision>0&&p.comm.pago_fecha).forEach(p => {
+    const d = new Date(p.pago_fecha||p.comm.pago_fecha||now)
+    const mk = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')
+    byMonth[mk] = (byMonth[mk]||0) + (p.moneda==='UF'?p.miComision:0)
+  })
+
+  return (
+    <div>
+      {/* Hero header */}
+      <div style={{background:'linear-gradient(135deg,#1B4FC8 0%,#3b82f6 100%)',borderRadius:16,padding:'20px 24px',marginBottom:20,color:'#fff',position:'relative',overflow:'hidden'}}>
+        <div style={{position:'absolute',right:-20,top:-20,width:120,height:120,borderRadius:'50%',background:'rgba(255,255,255,0.07)'}}/>
+        <div style={{position:'absolute',right:40,bottom:-30,width:80,height:80,borderRadius:'50%',background:'rgba(255,255,255,0.05)'}}/>
+        <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:16}}>
+          <AV name={me.name} size={52}/>
+          <div>
+            <div style={{fontSize:20,fontWeight:800}}>{me.name}</div>
+            <div style={{fontSize:13,opacity:.8}}>{me.role==='agent'?'Asesor Comercial':me.role} · Rabbitts Capital</div>
+          </div>
+        </div>
+        {/* Hero KPIs */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10}}>
+          {[
+            {l:'UF total vendida',       v:'UF '+fmt2(totalUFVendida),     sub:closedLeads.length+' cierres'},
+            {l:'Mi comisión total',      v:'UF '+fmt2(totalMiComisionUF),  sub:totalClp>0?'$'+totalClp.toLocaleString('es-CL')+' CLP':null},
+            {l:'✅ Ya cobrado',          v:'UF '+fmt2(cobradoUF),           sub:null},
+            {l:'⏳ Pendiente de cobro',  v:'UF '+fmt2(pendienteUF),         sub:myProps.filter(p=>!p.comm.cobrado&&p.miComision>0).length+' props'},
+            ...(totalMiComisionUSD>0?[{l:'Comisión USD',v:'USD '+fmt2(totalMiComisionUSD),sub:null}]:[]),
+          ].map((k,i) => (
+            <div key={i} style={{background:'rgba(255,255,255,0.13)',borderRadius:10,padding:'10px 12px',backdropFilter:'blur(4px)'}}>
+              <div style={{fontSize:10,opacity:.75,marginBottom:3,fontWeight:600}}>{k.l}</div>
+              <div style={{fontSize:15,fontWeight:800,lineHeight:1.2}}>{k.v}</div>
+              {k.sub&&<div style={{fontSize:10,opacity:.65,marginTop:2}}>{k.sub}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Progress bar cobrado vs pendiente */}
+      {totalMiComisionUF > 0 && (
+        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px',marginBottom:16}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+            <span style={{fontSize:13,fontWeight:700,color:B.primary}}>Progreso de cobros</span>
+            <span style={{fontSize:12,color:'#6b7280'}}>{Math.round(cobradoUF/totalMiComisionUF*100)}% cobrado</span>
+          </div>
+          <div style={{height:12,background:'#f0f4ff',borderRadius:99,overflow:'hidden',marginBottom:8}}>
+            <div style={{height:'100%',width:(cobradoUF/totalMiComisionUF*100)+'%',background:'linear-gradient(90deg,#22c55e,#16a34a)',borderRadius:99,transition:'width .5s ease'}}/>
+          </div>
+          <div style={{display:'flex',gap:16,fontSize:11}}>
+            <span style={{color:'#166534'}}>✅ Cobrado: UF {fmt2(cobradoUF)}</span>
+            <span style={{color:'#9a3412'}}>⏳ Pendiente: UF {fmt2(pendienteUF)}</span>
+          </div>
+        </div>
+      )}
+
+      {myProps.length === 0 ? (
+        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'40px',textAlign:'center'}}>
+          <div style={{fontSize:40,marginBottom:12}}>🚀</div>
+          <div style={{fontSize:15,fontWeight:700,color:B.primary,marginBottom:6}}>¡A cerrar negocios!</div>
+          <div style={{fontSize:13,color:'#6b7280'}}>Cuando tengas propiedades en Firma Promesa o Firma Escritura aparecerán aquí con el detalle de tus comisiones.</div>
+        </div>
+      ) : (
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:B.primary,marginBottom:12}}>
+            💼 Mis negocios en curso — {myProps.length} {myProps.length===1?'propiedad':'propiedades'}
+          </div>
+          {myProps.map((p,i) => {
+            const ocInfo = OC_LABEL[p.oc_estado||'pendiente_oc']||OC_LABEL.pendiente_oc
+            const stLab = (stages||[]).find(s=>s&&s.id===p.stage)?.label||(p.stage||'—')
+            const needsBrokerInvoice = p.oc_estado==='broker_factura'
+
+            return (
+              <div key={p.key} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,marginBottom:10,overflow:'hidden'}}>
+                <div style={{display:'flex',alignItems:'stretch',gap:0}}>
+                  {/* Left accent bar based on OC state */}
+                  <div style={{width:5,flexShrink:0,background:ocInfo.col,borderRadius:'12px 0 0 12px'}}/>
+
+                  <div style={{flex:1,padding:'14px 16px'}}>
+                    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+                      {/* Deal info */}
+                      <div style={{flex:1,minWidth:180}}>
+                        <div style={{fontWeight:700,fontSize:14,color:'#111827'}}>{p.inmobiliaria} — {p.proyecto}{p.depto?' · '+p.depto:''}</div>
+                        <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>
+                          <strong>{p.leadNombre}</strong>
+                          <span style={{marginLeft:8,padding:'1px 7px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontSize:11,fontWeight:600}}>{stLab}</span>
+                          {p.tipo_entrega&&<span style={{marginLeft:6,fontSize:11,color:'#9ca3af'}}>{p.tipo_entrega}</span>}
+                        </div>
+                        <div style={{fontSize:12,fontWeight:600,color:'#374151',marginTop:4}}>
+                          {p.moneda} {fmt2(p.base)}
+                          {p.bono_pie&&<span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}> (sin bono {p.bono_pct}%)</span>}
+                          {p.ufRef&&p.moneda==='UF'&&<span style={{fontSize:10,color:'#9ca3af',marginLeft:6}}>UF: {fmt2(p.ufRef)}</span>}
+                        </div>
+                      </div>
+
+                      {/* Commission box */}
+                      {p.miComision > 0 ? (
+                        <div style={{background:'linear-gradient(135deg,#f0fdf4,#dcfce7)',border:'1px solid #86efac',borderRadius:10,padding:'10px 14px',textAlign:'right',flexShrink:0}}>
+                          <div style={{fontSize:10,color:'#166534',fontWeight:600,marginBottom:2}}>Mi comisión</div>
+                          <div style={{fontSize:20,fontWeight:800,color:'#14532d'}}>{p.moneda} {fmt2(p.miComision)}</div>
+                          {p.clp&&<div style={{fontSize:12,fontWeight:700,color:'#166534'}}>${p.clp.toLocaleString('es-CL')} CLP</div>}
+                          <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>
+                            {fmt2(parseFloat(p.comm.pctBroker)||0)}% de comis. {fmt2(p.comisTotal)} {p.moneda}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{background:'#f9fbff',border:'1px solid #dce8ff',borderRadius:10,padding:'10px 14px',textAlign:'center',flexShrink:0}}>
+                          <div style={{fontSize:11,color:'#9ca3af'}}>Finanzas está<br/>configurando %</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* OC Status + alert if broker needs to invoice */}
+                    <div style={{marginTop:10,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                      <span style={{fontSize:11,padding:'4px 12px',borderRadius:99,background:ocInfo.bg,color:ocInfo.col,fontWeight:700,border:'1px solid '+ocInfo.col+'44'}}>
+                        {ocInfo.l}
+                      </span>
+
+                      {/* Call to action for broker when they need to send invoice */}
+                      {needsBrokerInvoice && (
+                        <span style={{fontSize:11,padding:'4px 12px',borderRadius:99,background:'#FEF9C3',color:'#713f12',fontWeight:700,border:'1px solid #fcd34d',animation:'pulse 2s infinite'}}>
+                          ⚡ La inmobiliaria ya pagó — envía tu factura a Rabbitts para recibir tu pago
+                        </span>
+                      )}
+
+                      {/* Payment received */}
+                      {p.oc_estado==='pagado_broker' && (
+                        <span style={{fontSize:11,padding:'4px 12px',borderRadius:99,background:'#DCFCE7',color:'#14532d',fontWeight:700}}>
+                          🎉 ¡Pago recibido! {p.broker_pago_fecha?new Date(p.broker_pago_fecha).toLocaleDateString('es-CL',{day:'2-digit',month:'short',year:'numeric'}):''}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* OC timeline mini for agent (read-only) */}
+                    {(p.oc_fecha_solicitud||p.oc_fecha_recepcion||p.factura_fecha||p.inmob_pago_fecha||p.broker_pago_fecha) && (
+                      <div style={{marginTop:10,display:'flex',alignItems:'center',gap:0,overflowX:'auto',paddingBottom:2}}>
+                        {[
+                          {l:'Firma',       d:p.fechaPromesa,          c:'#A8C0F0'},
+                          {l:'OC',          d:p.oc_fecha_recepcion,    c:'#93c5fd'},
+                          {l:'Factura R.',  d:p.factura_fecha,         c:'#c4b5fd'},
+                          {l:'Inmob. Pagó', d:p.inmob_pago_fecha,      c:'#fbbf24'},
+                          {l:'Tu factura',  d:p.broker_factura_fecha,  c:'#6ee7b7'},
+                          {l:'¡Cobrado!',   d:p.broker_pago_fecha,     c:'#4ade80'},
+                        ].filter(s=>s.d).map((step,idx,arr)=>(
+                          <div key={idx} style={{display:'flex',alignItems:'center'}}>
+                            <div style={{textAlign:'center',minWidth:60}}>
+                              <div style={{width:10,height:10,borderRadius:'50%',background:step.c,margin:'0 auto 2px',border:'2px solid '+step.c+'88'}}/>
+                              <div style={{fontSize:9,fontWeight:600,color:'#374151'}}>{step.l}</div>
+                              <div style={{fontSize:8,color:'#9ca3af'}}>{new Date(step.d).toLocaleDateString('es-CL',{day:'2-digit',month:'short'})}</div>
+                            </div>
+                            {idx<arr.length-1&&<div style={{height:2,width:20,background:'#dce8ff',flexShrink:0}}/>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Factura broker info (read) */}
+                    {p.factura_numero&&<div style={{marginTop:6,fontSize:11,color:'#6b7280'}}>📄 Fact. Rabbitts N° {p.factura_numero}{p.broker_factura_numero?' · Tu factura N° '+p.broker_factura_numero:''}</div>}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Monthly earnings if any paid */}
+      {Object.keys(byMonth).length > 0 && (
+        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px',marginTop:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:B.primary,marginBottom:10}}>📈 Historial de cobros</div>
+          {Object.entries(byMonth).sort((a,b)=>b[0].localeCompare(a[0])).map(([mk,uf])=>{
+            const [y,m] = mk.split('-')
+            const mNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+            return (
+              <div key={mk} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f0f4ff',fontSize:13}}>
+                <span style={{color:'#374151',fontWeight:600}}>{mNames[parseInt(m)-1]} {y}</span>
+                <span style={{fontWeight:700,color:'#14532d'}}>UF {fmt2(uf)}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
