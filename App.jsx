@@ -3288,7 +3288,8 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
 
   const totalMiComisionUF = myProps.filter(p=>p.moneda==='UF').reduce((s,p)=>s+p.miComision,0)
   const totalMiComisionUSD = myProps.filter(p=>p.moneda==='USD').reduce((s,p)=>s+p.miComision,0)
-  const totalClp = myProps.reduce((s,p)=>s+(p.clp||0),0)
+  const totalClp    = myProps.filter(p=>p.moneda==='UF').reduce((s,p)=>s+(p.clp||0),0)
+  const totalClpUSD = myProps.filter(p=>p.moneda==='USD').reduce((s,p)=>s+(p.clp||0),0)
 
   const cobradoUF    = myProps.filter(p=>p.moneda==='UF' &&  isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
   const pendienteUF  = myProps.filter(p=>p.moneda==='UF' && !isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
@@ -3348,7 +3349,7 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
           {[
             {l:'UF total vendida',      v:'UF '+fmt2(totalUFVendida),    sub:closedLeads.length+' cierres'},
-            {l:'Mi comisión total',     v:'UF '+fmt2(totalMiComisionUF), sub:totalClp>0?'$'+totalClp.toLocaleString('es-CL')+' CLP':null},
+            {l:'Mi comisión total (UF)', v:'UF '+fmt2(totalMiComisionUF), sub:totalClp>0?'$'+totalClp.toLocaleString('es-CL')+' CLP':null},
             {l:'✅ Ya cobrado (UF)',    v:'UF '+fmt2(cobradoUF),          sub:cobradoCLP>0?'$'+cobradoCLP.toLocaleString('es-CL')+' CLP':null},
             {l:'⏳ Pendiente (UF)',     v:'UF '+fmt2(pendienteUF),        sub:pendienteCLP>0?'$'+pendienteCLP.toLocaleString('es-CL')+' CLP':null},
             ...(totalMiComisionUSD>0?[
