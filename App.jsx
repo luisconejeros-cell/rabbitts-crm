@@ -334,6 +334,15 @@ export default function App() {
       }
       const { data: ls } = await supabase.from('crm_leads').select('*').order('fecha', {ascending:false})
       setLeads(ls || [])
+      // Load commissions
+      try {
+        const { data: comms } = await supabase.from('crm_commissions').select('*')
+        if (comms && comms.length > 0) {
+          const commMap = {}
+          comms.forEach(c => { commMap[c.id] = {pctComision:c.pct_comision||'',pctBroker:c.pct_broker||'',cobrado:c.cobrado||false,notasInmob:c.notas_inmob||''} })
+          setCommissions(commMap)
+        }
+      } catch(_) {}
       // Load custom stages — merge with DEFAULT_STAGES to ensure new required stages always exist
       try {
         const { data: st } = await supabase.from('crm_settings').select('value').eq('key','stages').single()
@@ -437,6 +446,20 @@ export default function App() {
     } else {
       localStorage.setItem('rcrm_users', JSON.stringify(us))
     }
+  }
+
+  async function saveCommission(key, data) {
+    if (!dbReady) return
+    try {
+      await supabase.from('crm_commissions').upsert({
+        id: key,
+        pct_comision: data.pctComision || '',
+        pct_broker: data.pctBroker || '',
+        cobrado: data.cobrado || false,
+        notas_inmob: data.notasInmob || '',
+        updated_at: new Date().toISOString()
+      })
+    } catch(e) { console.warn('Commission save failed:', e) }
   }
 
   async function saveLeads(ls) {
@@ -2073,6 +2096,7 @@ export default function App() {
             indicators={indicators}
             commissions={commissions}
             setCommissions={setCommissions}
+            saveCommission={saveCommission}
             ufHistory={ufHistory}
           />
         )}
@@ -2472,7 +2496,7 @@ function LeadForm({data, onChange, onSubmit}) {
 }
 
 // ─── Comisiones View ─────────────────────────────────────────────────────────
-function ComisionesView({leads, users, stages, indicators, commissions, setCommissions, ufHistory}) {
+function ComisionesView({leads, users, stages, indicators, commissions, setCommissions, saveCommission, ufHistory}) {
   const closingLeads = (leads||[]).filter(l => ['firma','escritura'].includes(l.stage))
   const [filterAgent, setFilterAgent] = useState('all')
   const [filterInmob, setFilterInmob] = useState('all')
@@ -2480,8 +2504,17 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
 
   const ufHoy = indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null
   const getComm = key => commissions[key] || {pctComision:'', pctBroker:'', cobrado:false, notasInmob:''}
-  const setComm = (key, field, val) =>
-    setCommissions(prev => ({...prev, [key]: {...(prev[key]||{pctComision:'',pctBroker:'',cobrado:false,notasInmob:''}), [field]: val}}))
+  const setComm = (key, field, val) => {
+    setCommissions(prev => {
+      const updated = {...prev, [key]: {...(prev[key]||{pctComision:'',pctBroker:'',cobrado:false,notasInmob:''}), [field]: val}}
+      // Debounced save to Supabase
+      if (saveCommission) {
+        clearTimeout(window['_commTimer_'+key])
+        window['_commTimer_'+key] = setTimeout(() => saveCommission(key, updated[key]), 800)
+      }
+      return updated
+    })
+  }
   const getUF = lead => {
     if (!lead.stage_moved_at) return ufHoy
     const k = new Date(lead.stage_moved_at).toISOString().slice(0,10)
