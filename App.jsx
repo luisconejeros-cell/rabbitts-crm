@@ -189,6 +189,37 @@ export default function App() {
   const [importDone, setImportDone] = useState(null)
   const [sessions, setSessions] = useState([])
   const [commissions, setCommissions] = useState({}) // {propKey: {pctComision, pctBroker, cobrado}}
+  const [iaConfig, setIaConfig] = useState({
+    nombre: 'Rabito',
+    tono: 'motivador',
+    horarioDesde: '09:00',
+    horarioHasta: '20:00',
+    activo: false,
+    calendlyLink: 'https://calendly.com/agenda-rabbittscapital/60min',
+    rentaMinima: 1500000,
+    rentaMinimaPareja: 2000000,
+    eventos: {
+      asignacion: true, cambioEtapa: true, ocRecibida: true,
+      brokerPagar: true, inactividad: true, diasInactividad: 7
+    },
+    plantillas: {
+      asignacion:   'Hola {broker}, te asignaron un nuevo cliente: {cliente}, interesado en {proyecto}. Revisalo en el CRM.',
+      firma:        'Excelente, {broker}. Tu cliente {cliente} acaba de avanzar a {etapa}. Sigue gestionando desde el CRM.',
+      ocRecibida:   'Llego la OC de {inmobiliaria} por {cliente}. Ya puedes emitir la factura.',
+      brokerPagar:  'La inmobiliaria pago la comision de {cliente}. Envia tu factura a Rabbitts para recibir tu pago.',
+      inactividad:  'Hola {broker}, tienes {n} clientes sin actividad hace mas de {dias} dias. Quieres repasarlos?',
+    },
+    personalidad: "Eres Rabito, asistente de ventas de Rabbitts Capital. Sigues estas reglas AL PIE DE LA LETRA. TONO MOTIVADOR: Inspira confianza y entusiasmo. Usa frases de animo. Celebra logros. Transmite energia positiva. MENSAJES MEDIOS: 3-4 oraciones (50-120 palabras). Balancea claridad con brevedad. TRATO CASUAL: Tutea al cliente siempre. Usa expresiones coloquiales apropiadas. Tono relajado pero respetuoso. SIN EMOJIS: Cero emojis en cualquier contexto. Usa palabras para expresar emociones. NUNCA: cambies de tono, excedas longitud, mezcles tu/usted, inventes informacion, seas condescendiente, prometas pagos, descuentos, reembolsos, compartas datos bancarios, opines de politica o religion, hables mal de competidores ni garantices resultados. ESCALA A HUMANO SI: pide hablar con persona, menciona demanda/abogado/legal, esta enojado sin solucion, ya intentaste 3 veces sin exito.",
+    guion: "FLUJO DE VENTAS - PASO 0 SALUDO: Hola como estas? Mi nombre es Rabito y soy parte del equipo de Rabbitts Capital. Ayudamos a invertir en departamentos, usar multicrédito y pagar menos impuestos. En que te puedo ayudar? PASO 1 DETECTAR NECESIDAD: Ofrecer menu si no es claro: 1.Primer depto inversion 2.Multicredito/varios/IVA 3.Renta corta Airbnb 4.Asesoria tributaria. PASO 2 DIAGNOSTICO: Obtener renta liquida, propiedades a nombre, preferencia renta. PASO 3 ESTRATEGIA: Multicredito=entrega inmediata preferible, futura max 2 deptos mismo proyecto, DFL2+IVA desde tercero. Primera prop=revisar credito+proyecto+modelo renta. Renta corta=experiencia real Airbnb/Booking. PASO 4 FILTRO: Califica si renta>=1500000 o pareja>=2000000 -> agendar calendly.com/agenda-rabbittscapital/60min. No califica->orientacion basica sin reunion. PASO 5 CIERRE: Confirmar reunion, aclarar asesoria SIN COSTO para cliente (pagan inmobiliarias). SEGUIMIENTO: 24h sin respuesta=recordar, 48-72h=ultimo intento, No me interesa/No quiero=marcar No interesado y detener.",
+    entrenamiento: [
+      {pregunta: 'Que es Rabbitts Capital?', respuesta: 'Rabbitts Capital es un marketplace PropTech que conecta compradores, brokers e inmobiliarias. Ayudamos a personas a invertir en departamentos, usar multicrédito y pagar menos impuestos con estrategias inmobiliarias. La asesoria no tiene costo para el cliente.'},
+      {pregunta: 'Cuanto cuesta la asesoria?', respuesta: 'La asesoria por la compra de departamentos no tiene costo para ti. Nuestros honorarios los pagan las inmobiliarias con las que trabajamos.'},
+      {pregunta: 'Que es el multicrédito?', respuesta: 'El multicrédito es la estrategia de comprar varios departamentos usando multiples créditos hipotecarios. Es viable principalmente en proyectos con entrega inmediata, donde podemos coordinar que todos los créditos se firmen casi al mismo tiempo.'},
+      {pregunta: 'Que renta necesito para invertir?', respuesta: 'Trabajamos de forma personalizada con clientes desde una renta liquida cercana a $1.500.000, o que sumando ingresos con pareja lleguen a $2.000.000 mensuales. Si no llegas a ese monto, igual puedo darte orientacion general.'},
+      {pregunta: 'Que es la recuperacion de IVA?', respuesta: 'Desde el tercer departamento en adelante, cuando corresponde, es posible recuperar el IVA pagado en la construccion. Es uno de los beneficios tributarios que trabajamos con nuestros clientes de multicrédito.'},
+      {pregunta: 'Que es DFL2?', respuesta: 'El DFL2 es un beneficio tributario para departamentos de hasta 140 m2 que permite exencion o reduccion de impuestos. Se aplica en los primeros departamentos de la estrategia de inversion.'},
+    ]
+  })
   const [ufHistory, setUfHistory] = useState({})   // {YYYY-MM-DD: ufValue}
   const [impTag, setImpTag] = useState('lead')
   const [impAgent, setImpAgent] = useState('')
@@ -270,6 +301,14 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbReady, me?.id])
 
+  // ── Auto-save iaConfig to Supabase ──────────────────────────────────────
+  useEffect(() => {
+    if (!dbReady) return
+    clearTimeout(window._iaConfigTimer)
+    window._iaConfigTimer = setTimeout(() => saveIaConfig(iaConfig), 1000)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [iaConfig, dbReady])
+
   // ── Preload historical UF for closing leads ─────────────────────────────
   useEffect(() => {
     if (nav !== 'comisiones') return
@@ -348,6 +387,11 @@ export default function App() {
       }
       const { data: ls } = await supabase.from('crm_leads').select('*').order('fecha', {ascending:false})
       setLeads(ls || [])
+      // Load iaConfig
+      try {
+        const { data: ia } = await supabase.from('crm_settings').select('value').eq('key','ia_config').single()
+        if (ia?.value) setIaConfig(prev => ({...prev, ...ia.value}))
+      } catch(_) {}
       // Load commissions
       try {
         const { data: comms } = await supabase.from('crm_commissions').select('*')
@@ -460,6 +504,13 @@ export default function App() {
     } else {
       localStorage.setItem('rcrm_users', JSON.stringify(us))
     }
+  }
+
+  async function saveIaConfig(config) {
+    if (!dbReady) return
+    try {
+      await supabase.from('crm_settings').upsert({key:'ia_config', value:config})
+    } catch(e) { console.warn('iaConfig save failed:', e) }
   }
 
   async function saveCommission(key, data) {
@@ -947,7 +998,7 @@ export default function App() {
     : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','etapas','importar','extraer']
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','ia','etapas','importar','extraer']
             : isPartner  ? ['dashboard','pool']
             : isOps      ? ['kanban','lista']
             : isFinanzas ? ['dashboard_finanzas','comisiones']
@@ -2428,6 +2479,11 @@ export default function App() {
           />
         )}
 
+        {/* IA CONFIG */}
+        {nav==='ia' && isAdmin && (
+          <IAConfigView iaConfig={iaConfig} setIaConfig={setIaConfig} users={users} leads={leads}/>
+        )}
+
         {/* EXTRAER */}
         {nav==='extraer' && isAdmin && (
           <div style={{maxWidth:560}}>
@@ -3547,6 +3603,457 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── IA Config View ───────────────────────────────────────────────────────────
+function IAConfigView({iaConfig, setIaConfig, users, leads}) {
+  const [tab, setTab] = useState('config')
+  const [testMsg, setTestMsg] = useState('')
+  const [testEvento, setTestEvento] = useState('asignacion')
+  const [testBroker, setTestBroker] = useState('')
+  const [editIdx, setEditIdx] = useState(null)
+  const [newPair, setNewPair] = useState({pregunta:'',respuesta:''})
+  const [previewPlant, setPreviewPlant] = useState(null)
+
+  const agents = (users||[]).filter(u=>u.role==='agent')
+  const upd = (path, val) => {
+    setIaConfig(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      path.reduce((o,k,i) => i===path.length-1 ? (o[k]=val,o) : o[k], next)
+      return next
+    })
+  }
+
+  const previewTemplate = (key) => {
+    const tpl = iaConfig.plantillas[key]||''
+    const broker = agents[0]?.name||'Iván Orellana'
+    const filled = tpl
+      .replace('{broker}',broker)
+      .replace('{cliente}','Juan Pérez')
+      .replace('{proyecto}','Borde Vivo')
+      .replace('{etapa}','Firma Promesa')
+      .replace('{inmobiliaria}','Norte Verde')
+      .replace('{n}','3')
+      .replace('{dias}',iaConfig.eventos.diasInactividad||7)
+    setPreviewPlant({key, filled})
+  }
+
+  // Stats
+  const closingLeads = (leads||[]).filter(l=>['firma','escritura'].includes(l.stage))
+  const inactive = (leads||[]).filter(l => {
+    if (['ganado','perdido','desistio'].includes(l.stage)) return false
+    const d = l.fecha ? (Date.now()-new Date(l.fecha).getTime())/86400000 : 0
+    return d > (iaConfig.eventos.diasInactividad||7)
+  })
+
+  const TABS = [
+    {id:'config',    label:'⚙️ Configuración'},
+    {id:'eventos',   label:'🔔 Eventos'},
+    {id:'plantillas',label:'💬 Plantillas'},
+    {id:'entrena',   label:'🧠 Entrenamiento'},
+    {id:'monitor',   label:'📊 Monitor'},
+  ]
+
+  const TONOS = ['profesional','amigable','formal','motivador']
+  const EVENTOS_LIST = [
+    {k:'asignacion',  l:'Nuevo lead asignado al broker',      tpl:'asignacion'},
+    {k:'cambioEtapa', l:'Lead avanza a Firma Promesa/Escritura', tpl:'firma'},
+    {k:'ocRecibida',  l:'OC recibida de inmobiliaria',        tpl:'ocRecibida'},
+    {k:'brokerPagar', l:'Listo para pagar al broker',         tpl:'brokerPagar'},
+    {k:'inactividad', l:'Leads sin actividad',                tpl:'inactividad'},
+  ]
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
+        <div style={{fontSize:32}}>🤖</div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Centro de IA — Configuración y Entrenamiento</div>
+          <div style={{fontSize:12,color:B.mid}}>Todo se guarda automáticamente · Personaliza cómo Rabito se comunica</div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
+          <span style={{fontSize:11,color:'#9ca3af'}}>💾 Guardado automático</span>
+          <span style={{fontSize:12,color:B.mid}}>IA activa:</span>
+          <button onClick={()=>upd(['activo'],!iaConfig.activo)}
+            style={{padding:'6px 16px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:700,fontSize:12,
+              background:iaConfig.activo?'#DCFCE7':'#F3F4F6',color:iaConfig.activo?'#14532d':'#6b7280'}}>
+            {iaConfig.activo?'🟢 ON':'⚪ OFF'}
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex',gap:4,marginBottom:16,borderBottom:'2px solid #f0f4ff',flexWrap:'wrap'}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{padding:'8px 14px',borderRadius:'8px 8px 0 0',border:'none',cursor:'pointer',fontSize:12,fontWeight:600,
+              background:tab===t.id?'#fff':'transparent',color:tab===t.id?B.primary:'#6b7280',
+              borderBottom:tab===t.id?'2px solid '+B.primary:'2px solid transparent',marginBottom:-2}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* TAB: CONFIG */}
+      {tab==='config' && (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🤖 Identidad del bot</p>
+            <Fld label="Nombre del bot"><input value={iaConfig.nombre} onChange={e=>upd(['nombre'],e.target.value)} style={sty.inp} placeholder="Ej: RabbittsBot"/></Fld>
+            <div style={{marginTop:10}}>
+              <Fld label="Tono de comunicación">
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {TONOS.map(t=>(
+                    <button key={t} onClick={()=>upd(['tono'],t)}
+                      style={{fontSize:11,padding:'5px 12px',borderRadius:99,cursor:'pointer',fontWeight:600,
+                        border:iaConfig.tono===t?`2px solid ${B.primary}`:'1px solid #dce8ff',
+                        background:iaConfig.tono===t?B.light:'transparent',color:iaConfig.tono===t?B.primary:'#6b7280'}}>
+                      {t.charAt(0).toUpperCase()+t.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </Fld>
+            </div>
+          </div>
+
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>⏰ Horario de envío</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+              <Fld label="Desde"><input type="time" value={iaConfig.horarioDesde} onChange={e=>upd(['horarioDesde'],e.target.value)} style={sty.inp}/></Fld>
+              <Fld label="Hasta"><input type="time" value={iaConfig.horarioHasta} onChange={e=>upd(['horarioHasta'],e.target.value)} style={sty.inp}/></Fld>
+            </div>
+            <div style={{marginTop:10,padding:'10px 12px',background:'#FFF7ED',borderRadius:8,fontSize:11,color:'#92400e'}}>
+              💡 Los mensajes fuera de este horario se enviarán al día siguiente dentro del horario configurado.
+            </div>
+          </div>
+
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>📱 Integración WhatsApp</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+              <Fld label="Proveedor">
+                <select style={sty.sel}>
+                  <option>Twilio WhatsApp API</option>
+                  <option>Meta WhatsApp Business</option>
+                </select>
+              </Fld>
+              <Fld label="Account SID / API Key"><input style={sty.inp} placeholder="AC..." type="password"/></Fld>
+              <Fld label="Número de Rabbitts"><input style={sty.inp} placeholder="+56 9 XXXX XXXX"/></Fld>
+            </div>
+            <div style={{marginTop:10,padding:'10px 12px',background:B.light,borderRadius:8,fontSize:11,color:B.primary,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span>🔧 Configuración real disponible cuando actives la integración con Twilio o Meta</span>
+              <button style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:`1px solid ${B.primary}`,background:'#fff',color:B.primary,cursor:'pointer',fontWeight:600}}>Probar conexión</button>
+            </div>
+          </div>
+
+          {/* Calificacion y Calendly */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🎯 Criterios de calificación</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+              <Fld label="Renta mínima individual ($)">
+                <input type="number" value={iaConfig.rentaMinima||1500000} onChange={e=>upd(['rentaMinima'],parseInt(e.target.value))} style={sty.inp}/>
+              </Fld>
+              <Fld label="Renta mínima con pareja ($)">
+                <input type="number" value={iaConfig.rentaMinimaPareja||2000000} onChange={e=>upd(['rentaMinimaPareja'],parseInt(e.target.value))} style={sty.inp}/>
+              </Fld>
+              <Fld label="Link Calendly reunión">
+                <input value={iaConfig.calendlyLink||''} onChange={e=>upd(['calendlyLink'],e.target.value)} placeholder="https://calendly.com/..." style={sty.inp}/>
+              </Fld>
+            </div>
+          </div>
+
+          {/* Personalidad completa */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+            <p style={{margin:'0 0 6px',fontSize:13,fontWeight:700,color:B.primary}}>🧬 Personalidad del agente (system prompt)</p>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Define quién es Rabito, su tono y sus reglas inamovibles.</p>
+            <textarea value={iaConfig.personalidad||''} onChange={e=>upd(['personalidad'],e.target.value)}
+              style={{...sty.inp,minHeight:100,resize:'vertical',fontSize:12,fontFamily:'monospace'}}/>
+          </div>
+
+          {/* Guion de ventas */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+            <p style={{margin:'0 0 6px',fontSize:13,fontWeight:700,color:B.primary}}>📋 Guion de ventas (flujo de conversación)</p>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>El paso a paso que sigue Rabito: saludo, diagnóstico, calificación y cierre.</p>
+            <textarea value={iaConfig.guion||''} onChange={e=>upd(['guion'],e.target.value)}
+              style={{...sty.inp,minHeight:120,resize:'vertical',fontSize:12,fontFamily:'monospace'}}/>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: EVENTOS */}
+      {tab==='eventos' && (
+        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+          <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🔔 ¿Qué eventos disparan mensajes?</p>
+          <div style={{display:'flex',flexDirection:'column',gap:0}}>
+            {EVENTOS_LIST.map((ev,i)=>(
+              <div key={ev.k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 0',borderBottom:i<EVENTOS_LIST.length-1?'1px solid #f0f4ff':'none'}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{ev.l}</div>
+                  {ev.k==='inactividad' && iaConfig.eventos[ev.k] && (
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
+                      <span style={{fontSize:11,color:'#6b7280'}}>Avisar después de</span>
+                      <input type="number" min="1" max="30" value={iaConfig.eventos.diasInactividad||7}
+                        onChange={e=>upd(['eventos','diasInactividad'],parseInt(e.target.value))}
+                        style={{width:50,fontSize:11,padding:'3px 6px',border:'1px solid #dce8ff',borderRadius:5}}/>
+                      <span style={{fontSize:11,color:'#6b7280'}}>días sin actividad</span>
+                    </div>
+                  )}
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                  <button onClick={()=>{ setPreviewPlant(null); setTab('plantillas'); setTimeout(()=>previewTemplate(ev.tpl),100) }}
+                    style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#f9fbff',color:B.primary,cursor:'pointer'}}>
+                    Ver plantilla
+                  </button>
+                  <button onClick={()=>upd(['eventos',ev.k],!iaConfig.eventos[ev.k])}
+                    style={{padding:'6px 16px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:700,fontSize:12,
+                      background:iaConfig.eventos[ev.k]?'#DCFCE7':'#F3F4F6',
+                      color:iaConfig.eventos[ev.k]?'#14532d':'#6b7280'}}>
+                    {iaConfig.eventos[ev.k]?'🟢 ON':'⚪ OFF'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* TAB: PLANTILLAS */}
+      {tab==='plantillas' && (
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          <div style={{padding:'10px 14px',background:B.light,borderRadius:8,fontSize:12,color:B.primary}}>
+            💡 Variables disponibles: <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{broker}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{cliente}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{proyecto}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{etapa}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{inmobiliaria}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{n}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{dias}'}</code>
+          </div>
+          {[
+            {k:'asignacion',  l:'Nuevo lead asignado'},
+            {k:'firma',       l:'Avance a Firma Promesa / Escritura'},
+            {k:'ocRecibida',  l:'OC recibida — listo para facturar'},
+            {k:'brokerPagar', l:'Inmobiliaria pagó — broker debe facturar'},
+            {k:'inactividad', l:'Recordatorio de inactividad'},
+          ].map(({k,l})=>(
+            <div key={k} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <span style={{fontSize:12,fontWeight:700,color:B.primary}}>{l}</span>
+                <button onClick={()=>previewTemplate(k)}
+                  style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:`1px solid ${B.primary}`,background:B.light,color:B.primary,cursor:'pointer',fontWeight:600}}>
+                  👁 Vista previa
+                </button>
+              </div>
+              <textarea value={iaConfig.plantillas[k]||''}
+                onChange={e=>upd(['plantillas',k],e.target.value)}
+                style={{...sty.inp,minHeight:64,resize:'vertical',fontSize:12}}/>
+              {previewPlant?.key===k && (
+                <div style={{marginTop:8,padding:'10px 14px',background:'#F0FDF4',border:'1px solid #86efac',borderRadius:8}}>
+                  <div style={{fontSize:10,color:'#166534',fontWeight:600,marginBottom:4}}>📱 Vista previa (datos de ejemplo):</div>
+                  <div style={{fontSize:12,color:'#111827',whiteSpace:'pre-wrap'}}>{previewPlant.filled}</div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* TAB: ENTRENAMIENTO */}
+      {tab==='entrena' && (
+        <div>
+          <div style={{padding:'12px 14px',background:B.light,borderRadius:10,fontSize:12,color:B.primary,marginBottom:14}}>
+            🧠 Entrena a la IA con preguntas frecuentes de tus brokers. Cuando alguien pregunte algo similar, la IA responderá con tu respuesta personalizada.
+          </div>
+
+          {/* Add new pair */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px',marginBottom:14}}>
+            <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:B.primary}}>➕ Agregar nueva pregunta</p>
+            <Fld label="Pregunta del broker"><input value={newPair.pregunta} onChange={e=>setNewPair(p=>({...p,pregunta:e.target.value}))} placeholder="Ej: ¿Cuándo me pagan mi comisión?" style={sty.inp}/></Fld>
+            <div style={{marginTop:8}}>
+              <Fld label="Respuesta de la IA">
+                <textarea value={newPair.respuesta} onChange={e=>setNewPair(p=>({...p,respuesta:e.target.value}))}
+                  placeholder="Ej: El pago se realiza 30 días después de emitir la factura..." style={{...sty.inp,minHeight:60,resize:'vertical'}}/>
+              </Fld>
+            </div>
+            <button onClick={()=>{
+              if (!newPair.pregunta||!newPair.respuesta) return
+              upd(['entrenamiento'],[...iaConfig.entrenamiento,{...newPair}])
+              setNewPair({pregunta:'',respuesta:''})
+            }} style={{...sty.btnP,marginTop:8,fontSize:12}}>Guardar respuesta</button>
+          </div>
+
+          {/* Existing pairs */}
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {(iaConfig.entrenamiento||[]).map((par,idx)=>(
+              <div key={idx} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'12px 14px'}}>
+                {editIdx===idx ? (
+                  <div>
+                    <Fld label="Pregunta"><input value={par.pregunta} onChange={e=>{ const t=[...iaConfig.entrenamiento]; t[idx]={...t[idx],pregunta:e.target.value}; upd(['entrenamiento'],t) }} style={sty.inp}/></Fld>
+                    <div style={{marginTop:6}}>
+                      <Fld label="Respuesta"><textarea value={par.respuesta} onChange={e=>{ const t=[...iaConfig.entrenamiento]; t[idx]={...t[idx],respuesta:e.target.value}; upd(['entrenamiento'],t) }} style={{...sty.inp,minHeight:60,resize:'vertical'}}/></Fld>
+                    </div>
+                    <button onClick={()=>setEditIdx(null)} style={{...sty.btnP,fontSize:11,marginTop:6}}>Guardar</button>
+                  </div>
+                ) : (
+                  <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,fontWeight:700,color:'#111827',marginBottom:3}}>❓ {par.pregunta}</div>
+                      <div style={{fontSize:12,color:'#6b7280'}}>💬 {par.respuesta}</div>
+                    </div>
+                    <div style={{display:'flex',gap:4,flexShrink:0}}>
+                      <button onClick={()=>setEditIdx(idx)} style={{fontSize:11,padding:'3px 8px',borderRadius:5,border:'1px solid #dce8ff',background:'#f9fbff',cursor:'pointer',color:B.primary}}>Editar</button>
+                      <button onClick={()=>{ const t=[...iaConfig.entrenamiento]; t.splice(idx,1); upd(['entrenamiento'],t) }} style={{fontSize:11,padding:'3px 8px',borderRadius:5,border:'1px solid #fca5a5',background:'#FEF2F2',cursor:'pointer',color:'#991b1b'}}>Eliminar</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* TAB: MONITOR */}
+      {tab==='monitor' && (
+        <div>
+          {/* Stats */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginBottom:16}}>
+            {[
+              {l:'Leads en cierre',    v:closingLeads.length,  bg:B.light,    col:B.primary},
+              {l:'Leads inactivos',    v:inactive.length,       bg:'#FFF7ED',  col:'#92400e'},
+              {l:'Brokers activos',    v:agents.length,         bg:'#DCFCE7',  col:'#14532d'},
+              {l:'Mensajes enviados',  v:'—',                   bg:'#F5F3FF',  col:'#5b21b6'},
+            ].map((k,i)=>(
+              <div key={i} style={{background:k.bg,borderRadius:10,padding:'10px 14px',border:'1px solid '+k.col+'33'}}>
+                <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:4}}>{k.l}</div>
+                <div style={{fontSize:22,fontWeight:800,color:k.col}}>{k.v}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Inactive leads alert */}
+          {inactive.length > 0 && (
+            <div style={{background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:12,padding:'14px 16px',marginBottom:14}}>
+              <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:'#92400e'}}>⚠️ Leads inactivos (más de {iaConfig.eventos.diasInactividad||7} días sin actividad)</p>
+              {inactive.slice(0,5).map(l=>{
+                const ag = agents.find(u=>u.id===l.assigned_to)
+                const dias = Math.floor((Date.now()-new Date(l.fecha).getTime())/86400000)
+                return (
+                  <div key={l.id} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #fcd34d',fontSize:12}}>
+                    <span><strong>{l.nombre}</strong> → {ag?.name||'Sin asignar'}</span>
+                    <span style={{color:'#9a3412',fontWeight:600}}>{dias} días</span>
+                  </div>
+                )
+              })}
+              {inactive.length>5&&<p style={{fontSize:11,color:'#9ca3af',margin:'6px 0 0'}}>...y {inactive.length-5} más</p>}
+            </div>
+          )}
+
+          {/* Live test chat */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+            <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:B.primary}}>💬 Probar a Rabito en vivo</p>
+            <RabitoChat iaConfig={iaConfig}/>
+          </div>
+
+          {/* Message log placeholder */}
+          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',marginTop:12}}>
+            <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:B.primary}}>📨 Log de mensajes WhatsApp</p>
+            <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:12,background:'#f9fbff',borderRadius:8}}>
+              <div style={{fontSize:28,marginBottom:6}}>📱</div>
+              Los mensajes enviados aparecerán aquí cuando actives la integración con WhatsApp.
+              <div style={{marginTop:8,fontSize:11}}>Compatible con Twilio WhatsApp API y Meta WhatsApp Business API</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ─── Rabito Chat Test ────────────────────────────────────────────────────────
+function RabitoChat({iaConfig}) {
+  const [msgs, setMsgs] = useState([
+    {role:'assistant', content: 'Hola, como estas? Mi nombre es Rabito y soy parte del equipo de Rabbitts Capital. Nosotros ayudamos a personas a invertir en departamentos, aprovechar el multicredito y pagar menos impuestos con estrategias inmobiliarias. Cuentame, en que te puedo ayudar hoy?'}
+  ])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [leadData, setLeadData] = useState({})
+  const [lastAction, setLastAction] = useState(null)
+  const endRef = useState(null)[0]
+
+  const send = async () => {
+    if (!input.trim() || loading) return
+    const userMsg = input.trim()
+    setInput('')
+    const newMsgs = [...msgs, {role:'user', content:userMsg}]
+    setMsgs(newMsgs)
+    setLoading(true)
+    try {
+      const res = await fetch('/api/agent', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          message: userMsg,
+          conversationHistory: newMsgs.slice(0,-1),
+          iaConfig,
+          leadData
+        })
+      })
+      const data = await res.json()
+      if (data.reply) {
+        setMsgs(prev => [...prev, {role:'assistant', content:data.reply}])
+        if (data.leadUpdate && Object.keys(data.leadUpdate).length > 0)
+          setLeadData(prev => ({...prev, ...data.leadUpdate}))
+        if (data.action) setLastAction(data.action)
+      }
+    } catch(e) {
+      setMsgs(prev => [...prev, {role:'assistant', content:'Error conectando con el agente. Verifica que la API key de Anthropic esté configurada.'}])
+    }
+    setLoading(false)
+  }
+
+  const reset = () => {
+    setMsgs([{role:'assistant', content:'Hola, como estas? Mi nombre es Rabito y soy parte del equipo de Rabbitts Capital. Nosotros ayudamos a personas a invertir en departamentos, aprovechar el multicredito y pagar menos impuestos con estrategias inmobiliarias. Cuentame, en que te puedo ayudar hoy?'}])
+    setLeadData({})
+    setLastAction(null)
+  }
+
+  return (
+    <div>
+      {/* Lead data detected */}
+      {Object.keys(leadData).length > 0 && (
+        <div style={{marginBottom:10,padding:'8px 12px',background:'#F0FDF4',border:'1px solid #86efac',borderRadius:8,fontSize:11}}>
+          <span style={{fontWeight:700,color:'#14532d'}}>Datos detectados: </span>
+          {Object.entries(leadData).map(([k,v])=><span key={k} style={{marginRight:10,color:'#166534'}}>{k}: <strong>{v}</strong></span>)}
+        </div>
+      )}
+      {lastAction && (
+        <div style={{marginBottom:10,padding:'6px 12px',background:lastAction==='calificado'?'#DCFCE7':lastAction==='no_interesado'?'#FEF2F2':'#FFF7ED',border:'1px solid',borderColor:lastAction==='calificado'?'#86efac':lastAction==='no_interesado'?'#fca5a5':'#fdba74',borderRadius:8,fontSize:11,fontWeight:700,color:lastAction==='calificado'?'#14532d':lastAction==='no_interesado'?'#991b1b':'#92400e'}}>
+          {lastAction==='calificado'?'LEAD CALIFICADO — Se agendaria reunion':lastAction==='no_interesado'?'LEAD NO INTERESADO — Se detendrian seguimientos':'ESCALAR A HUMANO'}
+        </div>
+      )}
+      {/* Chat */}
+      <div style={{height:280,overflowY:'auto',display:'flex',flexDirection:'column',gap:8,padding:'8px',background:'#f9fbff',borderRadius:8,marginBottom:10,border:'1px solid #dce8ff'}}>
+        {msgs.map((m,i)=>(
+          <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
+            <div style={{maxWidth:'75%',padding:'8px 12px',borderRadius:m.role==='user'?'12px 12px 2px 12px':'12px 12px 12px 2px',background:m.role==='user'?B.primary:'#fff',color:m.role==='user'?'#fff':'#111827',fontSize:12,border:m.role==='assistant'?'1px solid #dce8ff':'none',lineHeight:1.5}}>
+              {m.content}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{display:'flex',justifyContent:'flex-start'}}>
+            <div style={{padding:'8px 14px',borderRadius:'12px 12px 12px 2px',background:'#fff',border:'1px solid #dce8ff',fontSize:12,color:'#9ca3af'}}>
+              Rabito esta escribiendo...
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{display:'flex',gap:8}}>
+        <input value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>e.key==='Enter'&&send()}
+          placeholder="Escribe como si fueras un cliente..." 
+          style={{...sty.inp,flex:1}}/>
+        <button onClick={send} disabled={loading||!input.trim()} style={{...sty.btnP,opacity:loading||!input.trim()?0.5:1,flexShrink:0}}>Enviar</button>
+        <button onClick={reset} style={{...sty.btn,flexShrink:0}}>Reiniciar</button>
+      </div>
+      <p style={{fontSize:10,color:'#9ca3af',marginTop:6}}>Esta es una prueba interna. Rabito usa la personalidad y guion configurados arriba.</p>
     </div>
   )
 }
