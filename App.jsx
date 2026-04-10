@@ -3253,6 +3253,7 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
   )
 
   // Filter helpers
+  const isCobrado = p => (p.oc_estado==='pagado_broker') || p.comm.cobrado
   const allInmobsAgent = [...new Set(myProps.map(p=>p.inmobiliaria).filter(Boolean))].sort()
 
   const inPeriod = p => {
@@ -3289,7 +3290,6 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
   const totalMiComisionUSD = myProps.filter(p=>p.moneda==='USD').reduce((s,p)=>s+p.miComision,0)
   const totalClp = myProps.reduce((s,p)=>s+(p.clp||0),0)
 
-  const isCobrado = p => (p.oc_estado==='pagado_broker') || p.comm.cobrado
   const cobradoUF    = myProps.filter(p=>p.moneda==='UF' &&  isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
   const pendienteUF  = myProps.filter(p=>p.moneda==='UF' && !isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
   const cobradoUSD   = myProps.filter(p=>p.moneda==='USD'&&  isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
