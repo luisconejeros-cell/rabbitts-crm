@@ -2504,9 +2504,9 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
   }
 
   const allProps = closingLeads.flatMap(l =>
-    (l.propiedades||[]).map(p => ({
+    (l.propiedades||[]).map((p, pi) => ({
       ...p,
-      _key: l.id+'-'+(p.id||Math.random().toString(36).slice(2)),
+      _key: l.id+'-'+(p.id||('idx'+pi)),
       _agId: l.assigned_to, _leadNombre: l.nombre, _leadTag: l.tag,
       _stage: l.stage, _ufCierre: getUF(l),
       _fechaCierre: l.stage_moved_at, _fechaPromesa: l.stage_moved_at,
@@ -2632,7 +2632,7 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
                     const comm = getComm(p._key)
                     const base = parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0
                     const {comisionTotal, montoAsesor, pesos} = calc(base, comm.pctComision, comm.pctBroker, p.moneda, p._ufCierre)
-                    const stLab = (stages||[]).find(s=>s.id===p._stage)?.label||p._stage
+                    const stLab = (stages||[]).find(s=>s&&s.id===p._stage)?.label||(p._stage||'—')
                     const fechaPago = calcFechaPago(p)
                     const isVencido = fechaPago && fechaPago<=new Date() && !comm.cobrado
                     const rowBg = comm.cobrado ? '#f0fdf4' : isVencido ? '#fff7ed' : '#fff'
