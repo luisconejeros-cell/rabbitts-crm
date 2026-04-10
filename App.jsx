@@ -2171,12 +2171,26 @@ export default function App() {
           const totalComisUF   = allProps.filter(p=>p.moneda==='UF'&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
           const totalBrokerUF  = allProps.filter(p=>p.moneda==='UF'&&p.pagoAsesor>0).reduce((s,p)=>s+p.pagoAsesor,0)
           const margenTotalUF  = allProps.filter(p=>p.moneda==='UF'&&p.margen>0).reduce((s,p)=>s+p.margen,0)
-          const cobradoUF      = allProps.filter(p=>p.moneda==='UF'&&p.comm.cobrado&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
-          const pendienteUF    = totalComisUF - cobradoUF
-          const vencidoUF      = allProps.filter(p=>p.moneda==='UF'&&p.isVencido&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
-          const proximoUF      = allProps.filter(p=>p.moneda==='UF'&&p.isProximo&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
-          const totalComisUSD  = allProps.filter(p=>p.moneda==='USD'&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
-          const cobradoUSD     = allProps.filter(p=>p.moneda==='USD'&&p.comm.cobrado&&p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const isCob = p => (p.oc_estado==='pagado_broker') || p.comm.cobrado
+          const cobradoUF     = allProps.filter(p=>p.moneda==='UF' && isCob(p) && p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const pendienteUF   = allProps.filter(p=>p.moneda==='UF' && !isCob(p) && p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const vencidoUF     = allProps.filter(p=>p.moneda==='UF' && p.isVencido && p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const proximoUF     = allProps.filter(p=>p.moneda==='UF' && p.isProximo && p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const totalComisUSD = allProps.filter(p=>p.moneda==='USD'&& p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const cobradoUSD    = allProps.filter(p=>p.moneda==='USD'&& isCob(p) && p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const pendienteUSD  = allProps.filter(p=>p.moneda==='USD'&& !isCob(p) && p.comisTotal>0).reduce((s,p)=>s+p.comisTotal,0)
+          const dolarHoy      = indicators.dolar ? parseFloat(indicators.dolar.split('.').join('').replace(',','.')) : null
+          const ufHoyD        = indicators.uf    ? parseFloat(indicators.uf.split('.').join('').replace(',','.'))    : null
+          const cobradoCLP    = allProps.filter(p=>isCob(p)  && p.comisTotal>0).reduce((s,p)=>{
+            if (p.moneda==='UF') return s+Math.round(p.comisTotal*(p.ufRef||ufHoyD||0))
+            if (p.moneda==='USD') return s+Math.round(p.comisTotal*(dolarHoy||0))
+            return s
+          },0)
+          const pendienteCLP  = allProps.filter(p=>!isCob(p) && p.comisTotal>0).reduce((s,p)=>{
+            if (p.moneda==='UF') return s+Math.round(p.comisTotal*(p.ufRef||ufHoyD||0))
+            if (p.moneda==='USD') return s+Math.round(p.comisTotal*(dolarHoy||0))
+            return s
+          },0)
 
           // Monthly flow (next 12 months)
           const monthlyFlow = {}
@@ -2191,25 +2205,37 @@ export default function App() {
           const sortedMonths = Object.entries(monthlyFlow).sort((a,b)=>a[0].localeCompare(b[0])).slice(0,8)
           const maxUF = Math.max(...sortedMonths.map(([,v])=>v.uf), 1)
 
-          // By inmobiliaria
+          // By inmobiliaria — track UF and USD separately
           const byInmob = {}
           allProps.filter(p=>p.comisTotal>0).forEach(p => {
-            if (!byInmob[p.inmob]) byInmob[p.inmob] = {total:0,cobrado:0,pendiente:0,vencido:0,count:0}
-            byInmob[p.inmob].total += p.moneda==='UF'?p.comisTotal:0
+            if (!byInmob[p.inmob]) byInmob[p.inmob] = {totalUF:0,cobradoUF:0,pendienteUF:0,totalUSD:0,cobradoUSD:0,pendienteUSD:0,vencido:0,count:0}
             byInmob[p.inmob].count++
-            if (p.comm.cobrado) byInmob[p.inmob].cobrado += p.moneda==='UF'?p.comisTotal:0
-            else byInmob[p.inmob].pendiente += p.moneda==='UF'?p.comisTotal:0
-            if (p.isVencido) byInmob[p.inmob].vencido += p.moneda==='UF'?p.comisTotal:0
+            const c = isCob(p)
+            if (p.moneda==='UF') {
+              byInmob[p.inmob].totalUF += p.comisTotal
+              if (c) byInmob[p.inmob].cobradoUF += p.comisTotal
+              else byInmob[p.inmob].pendienteUF += p.comisTotal
+              if (p.isVencido) byInmob[p.inmob].vencido += p.comisTotal
+            } else if (p.moneda==='USD') {
+              byInmob[p.inmob].totalUSD += p.comisTotal
+              if (c) byInmob[p.inmob].cobradoUSD += p.comisTotal
+              else byInmob[p.inmob].pendienteUSD += p.comisTotal
+            }
           })
 
           // By broker (what we owe them)
           const byBroker = {}
           allProps.filter(p=>p.pagoAsesor>0).forEach(p => {
-            if (!byBroker[p.agName]) byBroker[p.agName] = {total:0,cobrado:0,pendiente:0}
+            if (!byBroker[p.agName]) byBroker[p.agName] = {totalUF:0,cobradoUF:0,pendienteUF:0,totalUSD:0,cobradoUSD:0,pendienteUSD:0}
+            const c = isCob(p)
             if (p.moneda==='UF') {
-              byBroker[p.agName].total += p.pagoAsesor
-              if (p.comm.cobrado) byBroker[p.agName].cobrado += p.pagoAsesor
-              else byBroker[p.agName].pendiente += p.pagoAsesor
+              byBroker[p.agName].totalUF += p.pagoAsesor
+              if (c) byBroker[p.agName].cobradoUF += p.pagoAsesor
+              else byBroker[p.agName].pendienteUF += p.pagoAsesor
+            } else if (p.moneda==='USD') {
+              byBroker[p.agName].totalUSD += p.pagoAsesor
+              if (c) byBroker[p.agName].cobradoUSD += p.pagoAsesor
+              else byBroker[p.agName].pendienteUSD += p.pagoAsesor
             }
           })
 
@@ -2229,20 +2255,25 @@ export default function App() {
               </div>
 
               {/* KPI Row */}
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:10,marginBottom:20}}>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(155px,1fr))',gap:10,marginBottom:20}}>
                 {[
-                  {l:'Comisiones total (UF)',  v:'UF '+fmt2(totalComisUF),  bg:B.light,     col:B.primary},
-                  {l:'✅ Cobrado',             v:'UF '+fmt2(cobradoUF),     bg:'#DCFCE7',   col:'#14532d'},
-                  {l:'⏳ Pendiente',           v:'UF '+fmt2(pendienteUF),   bg:'#FFFBEB',   col:'#92400e'},
-                  {l:'⚠️ Vencido',             v:'UF '+fmt2(vencidoUF),     bg: vencidoUF>0?'#FEF2F2':'#F9FAFB', col:vencidoUF>0?'#991b1b':'#374151'},
-                  {l:'⏰ Próx. 30 días',       v:'UF '+fmt2(proximoUF),     bg:'#F5F3FF',   col:'#5b21b6'},
-                  {l:'Margen Rabbitts (UF)',   v:'UF '+fmt2(margenTotalUF), bg:'#E8EFFE',   col:B.primary},
-                  {l:'Total pago brokers (UF)',v:'UF '+fmt2(totalBrokerUF), bg:'#F0FDF4',   col:'#166534'},
-                  ...(totalComisUSD>0?[{l:'Comisiones (USD)',v:'USD '+fmt2(totalComisUSD),bg:'#F0FDF4',col:'#166534'}]:[]),
+                  {l:'Comisiones total (UF)',   v:'UF '+fmt2(totalComisUF),   sub:cobradoCLP>0||pendienteCLP>0?'$'+Math.round(cobradoCLP+pendienteCLP).toLocaleString('es-CL')+' CLP':null, bg:B.light,   col:B.primary},
+                  {l:'✅ Broker pagado (UF)',    v:'UF '+fmt2(cobradoUF),      sub:cobradoCLP>0?'$'+cobradoCLP.toLocaleString('es-CL')+' CLP':null, bg:'#DCFCE7', col:'#14532d'},
+                  {l:'⏳ Pendiente cobro (UF)', v:'UF '+fmt2(pendienteUF),    sub:pendienteCLP>0?'$'+pendienteCLP.toLocaleString('es-CL')+' CLP':null, bg:'#FFFBEB', col:'#92400e'},
+                  {l:'⚠️ Vencido',              v:'UF '+fmt2(vencidoUF),      sub:null, bg:vencidoUF>0?'#FEF2F2':'#F9FAFB', col:vencidoUF>0?'#991b1b':'#9ca3af'},
+                  {l:'⏰ Próx. 30 días',        v:'UF '+fmt2(proximoUF),      sub:null, bg:'#F5F3FF', col:'#5b21b6'},
+                  {l:'Margen Rabbitts (UF)',    v:'UF '+fmt2(margenTotalUF),  sub:null, bg:'#E8EFFE', col:B.primary},
+                  {l:'Pago brokers (UF)',       v:'UF '+fmt2(totalBrokerUF),  sub:null, bg:'#F0FDF4', col:'#166534'},
+                  ...(totalComisUSD>0?[
+                    {l:'Comisiones (USD)',         v:'USD '+fmt2(totalComisUSD),  sub:null, bg:'#F0FDF4', col:'#166534'},
+                    {l:'✅ Broker pagado (USD)',    v:'USD '+fmt2(cobradoUSD),     sub:null, bg:'#DCFCE7', col:'#14532d'},
+                    {l:'⏳ Pendiente cobro (USD)', v:'USD '+fmt2(pendienteUSD),   sub:null, bg:'#FFFBEB', col:'#92400e'},
+                  ]:[]),
                 ].map((k,i) => (
                   <div key={i} style={{background:k.bg,borderRadius:10,padding:'10px 14px',border:'1px solid '+k.col+'33'}}>
                     <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:4,opacity:.8}}>{k.l}</div>
                     <div style={{fontSize:15,fontWeight:800,color:k.col,lineHeight:1.2}}>{k.v}</div>
+                    {k.sub&&<div style={{fontSize:10,color:k.col,opacity:.7,marginTop:2}}>{k.sub}</div>}
                   </div>
                 ))}
               </div>
@@ -2281,20 +2312,34 @@ export default function App() {
                 {/* By inmobiliaria */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Estado cobros por inmobiliaria</p>
-                  {Object.entries(byInmob).sort((a,b)=>b[1].pendiente-a[1].pendiente).map(([inmob, d]) => (
+                  {Object.entries(byInmob).sort((a,b)=>(b[1].pendienteUF+b[1].pendienteUSD)-(a[1].pendienteUF+a[1].pendienteUSD)).map(([inmob, d]) => (
                     <div key={inmob} style={{marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
                         <span style={{fontWeight:700,fontSize:13,color:'#111827'}}>{inmob}</span>
                         {d.vencido>0&&<span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:600}}>⚠ UF {fmt2(d.vencido)} vencido</span>}
                       </div>
-                      <div style={{display:'flex',gap:12,fontSize:11}}>
-                        <span style={{color:'#6b7280'}}>Total: UF {fmt2(d.total)}</span>
-                        <span style={{color:'#166534',fontWeight:600}}>✅ UF {fmt2(d.cobrado)}</span>
-                        <span style={{color:'#92400e',fontWeight:600}}>⏳ UF {fmt2(d.pendiente)}</span>
-                      </div>
-                      {d.total > 0 && (
-                        <div style={{height:5,background:'#f0f4ff',borderRadius:99,marginTop:5,overflow:'hidden'}}>
-                          <div style={{height:'100%',width:(d.cobrado/d.total*100)+'%',background:'#22c55e',borderRadius:99}}/>
+                      {d.totalUF>0&&(
+                        <div style={{marginBottom:4}}>
+                          <div style={{display:'flex',gap:10,fontSize:11,marginBottom:3}}>
+                            <span style={{color:'#6b7280'}}>UF total: {fmt2(d.totalUF)}</span>
+                            <span style={{color:'#166534',fontWeight:600}}>✅ {fmt2(d.cobradoUF)}</span>
+                            <span style={{color:'#92400e',fontWeight:600}}>⏳ {fmt2(d.pendienteUF)}</span>
+                          </div>
+                          <div style={{height:5,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:d.totalUF>0?(d.cobradoUF/d.totalUF*100)+'%':'0%',background:'#22c55e',borderRadius:99}}/>
+                          </div>
+                        </div>
+                      )}
+                      {d.totalUSD>0&&(
+                        <div style={{marginBottom:2}}>
+                          <div style={{display:'flex',gap:10,fontSize:11,marginBottom:3}}>
+                            <span style={{color:'#6b7280'}}>USD total: {fmt2(d.totalUSD)}</span>
+                            <span style={{color:'#166534',fontWeight:600}}>✅ {fmt2(d.cobradoUSD)}</span>
+                            <span style={{color:'#92400e',fontWeight:600}}>⏳ {fmt2(d.pendienteUSD)}</span>
+                          </div>
+                          <div style={{height:5,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:d.totalUSD>0?(d.cobradoUSD/d.totalUSD*100)+'%':'0%',background:'#3b82f6',borderRadius:99}}/>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2307,17 +2352,18 @@ export default function App() {
                 {/* By broker - what we owe */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Pago pendiente a brokers</p>
-                  {Object.entries(byBroker).sort((a,b)=>b[1].pendiente-a[1].pendiente).map(([agName, d]) => (
+                  {Object.entries(byBroker).sort((a,b)=>(b[1].pendienteUF+b[1].pendienteUSD)-(a[1].pendienteUF+a[1].pendienteUSD)).map(([agName, d]) => (
                     <div key={agName} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,paddingBottom:10,borderBottom:'1px solid #f0f4ff'}}>
                       <AV name={agName} size={32}/>
                       <div style={{flex:1}}>
                         <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{agName}</div>
-                        <div style={{fontSize:11,color:'#6b7280'}}>Total: UF {fmt2(d.total)} · Cobrado: UF {fmt2(d.cobrado)}</div>
+                        {d.totalUF>0&&<div style={{fontSize:11,color:'#6b7280'}}>UF: Total {fmt2(d.totalUF)} · ✅ {fmt2(d.cobradoUF)}</div>}
+                        {d.totalUSD>0&&<div style={{fontSize:11,color:'#6b7280'}}>USD: Total {fmt2(d.totalUSD)} · ✅ {fmt2(d.cobradoUSD)}</div>}
                       </div>
                       <div style={{textAlign:'right'}}>
-                        <div style={{fontSize:14,fontWeight:700,color:d.pendiente>0?'#9a3412':'#166534'}}>
-                          {d.pendiente>0?'⏳ UF '+fmt2(d.pendiente):'✅ Al día'}
-                        </div>
+                        {d.pendienteUF>0&&<div style={{fontSize:13,fontWeight:700,color:'#9a3412'}}>⏳ UF {fmt2(d.pendienteUF)}</div>}
+                        {d.pendienteUSD>0&&<div style={{fontSize:13,fontWeight:700,color:'#9a3412'}}>⏳ USD {fmt2(d.pendienteUSD)}</div>}
+                        {d.pendienteUF===0&&d.pendienteUSD===0&&<div style={{fontSize:13,fontWeight:700,color:'#166534'}}>✅ Al día</div>}
                       </div>
                     </div>
                   ))}
