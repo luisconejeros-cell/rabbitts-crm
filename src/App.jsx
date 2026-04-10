@@ -142,7 +142,7 @@ const sty = {
 
 const Modal = ({title, onClose, children, wide=false}) => (
   <div style={{position:'fixed',inset:0,background:'rgba(27,79,200,0.18)',display:'flex',alignItems:'flex-start',justifyContent:'center',paddingTop:60,zIndex:1000}}>
-    <div style={{background:'#fff',borderRadius:14,padding:'20px 24px',width:'100%',maxWidth:wide?600:440,margin:'0 16px',maxHeight:'80vh',overflowY:'auto',boxShadow:'0 8px 40px rgba(27,79,200,0.18)',border:'1px solid #dce8ff'}}>
+    <div style={{background:'#fff',borderRadius:14,padding:isMobile?'12px':'20px 24px',width:'100%',maxWidth:wide?600:440,margin:'0 16px',maxHeight:'80vh',overflowY:'auto',boxShadow:'0 8px 40px rgba(27,79,200,0.18)',border:'1px solid #dce8ff'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
         <span style={{fontWeight:700,fontSize:16,color:B.primary}}>● {title}</span>
         <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#9ca3af',lineHeight:1}}>×</button>
@@ -162,6 +162,8 @@ export default function App() {
   const [me,     setMe]     = useState(null)
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  // Responsive helper
+  const R = (desktop, mobile) => isMobile ? mobile : desktop
   const [nav,    setNav]    = useState('kanban')
   const [modal,  setModal]  = useState(null)
   const [sel,    setSel]    = useState(null)
@@ -1066,7 +1068,7 @@ export default function App() {
   if (!me) return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:32,background:'linear-gradient(135deg,#E8EFFE 0%,#f0f4ff 100%)'}}>
       <div style={{width:'100%',maxWidth:360}}>
-        <div style={{display:'flex',flexDirection:'column',alignItems:'center',marginBottom:28,gap:12}}>
+        <div style={{display:'flex',flexDirection:'column',alignItems:'center',marginBottom:28,gap:isMobile?8:12}}>
           <RabbitsLogo size={80}/>
           <div style={{textAlign:'center'}}>
             <div style={{fontWeight:800,fontSize:22,color:B.primary,letterSpacing:'-0.5px'}}>Rabbitts Capital</div>
@@ -1092,6 +1094,14 @@ export default function App() {
         body { margin: 0; -webkit-text-size-adjust: 100%; }
         input, textarea, select, button { font-family: inherit; -webkit-appearance: none; }
         @media (max-width: 767px) {
+          input, select, textarea {
+            font-size: 16px !important;
+            padding: 10px 12px !important;
+            min-height: 44px;
+          }
+          button {
+            min-height: 40px;
+          }
           .rcrm-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
           .rcrm-grid-2 { grid-template-columns: 1fr !important; }
           .rcrm-grid-3 { grid-template-columns: 1fr !important; }
@@ -1110,9 +1120,9 @@ export default function App() {
       <Toast msg={toast}/>
 
       {/* Topbar */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:isMobile?'10px 12px':'10px 16px',borderBottom:'3px solid '+B.primary,background:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 12px rgba(27,79,200,0.08)',gap:8}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:isMobile?'8px 12px':'10px 16px',borderBottom:'3px solid '+B.primary,background:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 12px rgba(27,79,200,0.08)',gap:6,minHeight:isMobile?52:56}}>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{display:'flex',alignItems:'center',gap:isMobile?6:8,marginLeft:'auto',flexShrink:0}}>
             <RabbitsLogo size={isMobile?28:34}/>
             {!isMobile && <div>
               <div style={{fontWeight:800,fontSize:13,color:B.primary,lineHeight:1}}>Rabbitts Capital</div>
@@ -1151,13 +1161,13 @@ export default function App() {
           </div>
         </div>}
 
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
-          <AV name={me.name} size={28} src={me.avatar_url||null}/>
-          <span style={{fontSize:13,color:'#6b7280',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{me.name}</span>
-          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':isOps?'#FEF9C3':isFinanzas?'#F0FDF4':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':isOps?'#713f12':isFinanzas?'#166534':'#1d4ed8',fontWeight:700}}>{me.role}</span>
+        <div style={{display:'flex',alignItems:'center',gap:isMobile?6:8}}>
+          <AV name={me.name} size={isMobile?30:28} src={me.avatar_url||null}/>
+          {!isMobile && <span style={{fontSize:13,color:'#6b7280',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{me.name}</span>}
+          {!isMobile && <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':isOps?'#FEF9C3':isFinanzas?'#F0FDF4':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':isOps?'#713f12':isFinanzas?'#166534':'#1d4ed8',fontWeight:700}}>{me.role}</span>}
           {!isAdmin && (
             <div style={{position:'relative'}}>
-              <button onClick={()=>{setShowNotifs(v=>!v);setNotifications(n=>n.map(x=>({...x,read:true})))}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid,position:'relative'}}>
+              <button onClick={()=>{setShowNotifs(v=>!v);setNotifications(n=>n.map(x=>({...x,read:true})))}} style={{fontSize:isMobile?18:12,padding:isMobile?'6px':'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid,position:'relative',width:isMobile?36:undefined,height:isMobile?36:undefined,display:'flex',alignItems:'center',justifyContent:'center'}}>
                 🔔
                 {notifications.filter(n=>!n.read).length>0 && (
                   <span style={{position:'absolute',top:-4,right:-4,width:16,height:16,borderRadius:'50%',background:'#E24B4A',color:'#fff',fontSize:9,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -1199,7 +1209,12 @@ export default function App() {
           })()}
           {!isMobile && <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid}}>Mi perfil</button>}
           {!isMobile && <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'none',background:'transparent',cursor:'pointer',color:'#9ca3af'}}>Salir</button>}
-          {isMobile && <button onClick={()=>setMobileMenuOpen(v=>!v)} style={{fontSize:20,padding:'4px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.primary}}>☰</button>}
+          {isMobile && (
+            <button onClick={()=>setMobileMenuOpen(v=>!v)}
+              style={{width:38,height:38,borderRadius:10,border:'none',background:B.light,cursor:'pointer',color:B.primary,fontSize:20,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginLeft:4}}>
+              ☰
+            </button>
+          )}
         </div>
       </div>
 
@@ -1253,13 +1268,13 @@ export default function App() {
         </div>
       )}
 
-      <div style={{padding:isMobile?'12px 10px':'16px',paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
+      <div style={{padding:isMobile?'10px 8px':'16px',paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
 
         {/* KANBAN */}
         {(nav==='kanban'||nav==='pool') && !isFinanzas && (
           <div>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8}}>
-              <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+            <div style={{display:'flex',alignItems:isMobile?'flex-start':'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8,flexDirection:isMobile?'column':'row'}}>
+              <div style={{display:'flex',gap:isMobile?6:8,flexWrap:'wrap',alignItems:'center'}}>
                 {isAdmin && <>
                   <select value={fa} onChange={e=>setFa(e.target.value)} style={{...sty.sel,width:'auto'}}>
                     <option value="all">Todos los agentes</option>
@@ -1352,7 +1367,7 @@ export default function App() {
               <span style={{fontSize:14,fontWeight:700,color:B.primary}}>{(users||[]).length} usuarios</span>
               <button onClick={()=>setModal('newUser')} style={sty.btnP}>+ Nuevo usuario</button>
             </div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
               {(users||[]).map(u => {
                 const uL = leads.filter(l=>l.assigned_to===u.id)
                 const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
@@ -1390,7 +1405,7 @@ export default function App() {
             {/* Activity stats */}
             <div style={{marginTop:24}}>
               <p style={{margin:'0 0 12px',fontSize:14,fontWeight:700,color:B.primary}}>Actividad de usuarios</p>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
                 {(users||[]).map(u => {
                   const uSess = sessions.filter(s => s.user_id === u.id)
                   const lastLogin = uSess[0]?.logged_at ? new Date(uSess[0].logged_at) : null
@@ -1421,7 +1436,7 @@ export default function App() {
                           }
                         </div>
                       </div>
-                      <div style={{borderTop:'1px solid #f0f4ff',paddingTop:10,display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                      <div style={{borderTop:'1px solid #f0f4ff',paddingTop:10,display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:6}}>
                         <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px',gridColumn:'1/-1'}}>
                           <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Última conexión</div>
                           <div style={{fontSize:12,fontWeight:600,color:'#374151'}}>
@@ -1685,7 +1700,7 @@ export default function App() {
               </div>
 
               {/* KPI cards row */}
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:10,marginBottom:20}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(150px,1fr))',gap:10,marginBottom:20}}>
                 {[
                   {label:'Total período', value:filteredLeads.length, bg:'#E8EFFE', col:B.primary},
                   {label:'Esta semana',   value:leadsThisWeek, bg:'#F0FDF4', col:'#166534'},
@@ -1704,7 +1719,7 @@ export default function App() {
                 ))}
               </div>
 
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginBottom:16}}>
 
                 {/* Pipeline por etapa */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
@@ -1749,7 +1764,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
 
                 {/* Por etiqueta */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
@@ -1874,7 +1889,7 @@ export default function App() {
               <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
                 <div style={{width:40,height:40,borderRadius:10,background:B.light,border:`1px solid ${B.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>📊</div>
                 <div>
-                  <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Dashboard Pool</div>
+                  <div style={{fontSize:isMobile?15:16,fontWeight:800,color:B.primary}}>Dashboard Pool</div>
                   <div style={{fontSize:12,color:B.mid}}>Rendimiento de leads etiquetados como pool</div>
                 </div>
               </div>
@@ -1911,7 +1926,7 @@ export default function App() {
               })()}
 
               {/* KPIs */}
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10,marginBottom:20}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(140px,1fr))',gap:10,marginBottom:20}}>
                 {[
                   {label:'Total pool',    value:poolLeads.length,  bg:'#E8EFFE', col:B.primary},
                   {label:'Este mes',      value:poolThisMonth,     bg:'#F5F3FF', col:'#5b21b6',
@@ -1932,7 +1947,7 @@ export default function App() {
                 ))}
               </div>
 
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginBottom:16}}>
 
                 {/* Pipeline pool por etapa */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
@@ -1973,7 +1988,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
 
                 {/* Brokers asignados */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
@@ -2082,7 +2097,7 @@ export default function App() {
                   </div>
 
                   {/* Options */}
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                  <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:10,marginBottom:12}}>
                     <Fld label="Etiqueta para todos los leads">
                       <select value={impTag} onChange={e=>setImpTag(e.target.value)} style={sty.sel}>
                         <option value="lead">Lead</option>
@@ -2100,7 +2115,7 @@ export default function App() {
 
                   {/* Table preview */}
                   <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,overflow:'auto',maxHeight:280,marginBottom:12}}>
-                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <table className='rcrm-table' style={{width:'100%',borderCollapse:'collapse',fontSize:isMobile?11:12}}>
                       <thead>
                         <tr style={{background:B.light,position:'sticky',top:0}}>
                           {['#','Nombre','Teléfono','Email','Renta'].map(h=><th key={h} style={{padding:'7px 10px',textAlign:'left',fontWeight:700,color:B.primary,whiteSpace:'nowrap'}}>{h}</th>)}
@@ -2130,7 +2145,7 @@ export default function App() {
 
               {/* Success */}
               {importDone!==null && (
-                <div style={{background:'#DCFCE7',border:'1px solid #86efac',borderRadius:10,padding:'16px 20px',textAlign:'center'}}>
+                <div style={{background:'#DCFCE7',border:'1px solid #86efac',borderRadius:10,padding:isMobile?'12px':'16px 20px',textAlign:'center'}}>
                   <div style={{fontSize:28,marginBottom:6}}>✅</div>
                   <div style={{fontSize:15,fontWeight:700,color:'#14532d',marginBottom:4}}>{importDone} leads importados exitosamente</div>
                   <div style={{fontSize:12,color:'#166534',marginBottom:12}}>Ya puedes verlos en el Kanban y asignarlos a tus agentes</div>
@@ -2212,7 +2227,7 @@ export default function App() {
               <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
                 <div style={{fontSize:28}}>🏆</div>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Ranking de Asesores</div>
+                  <div style={{fontSize:isMobile?15:16,fontWeight:800,color:B.primary}}>Ranking de Asesores</div>
                   <div style={{fontSize:12,color:B.mid}}>UF acumuladas en Firma Promesa y Firma Escritura</div>
                 </div>
                 {grandTotalUF > 0 && <div style={{textAlign:'right'}}>
@@ -2242,7 +2257,7 @@ export default function App() {
               </div>
 
               {/* Summary cards */}
-              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(3,1fr)',gap:10,marginBottom:16}}>
                 {[
                   {l:`Este mes (${now.toLocaleString('es-CL',{month:'short'})})`, v: ranked.reduce((s,ag)=>s+ag.ufMonth,0), col:'#14532d', bg:'#DCFCE7'},
                   {l:`${qName} ${now.getFullYear()}`,                             v: ranked.reduce((s,ag)=>s+ag.ufQ,0),     col:'#92400e', bg:'#FFFBEB'},
@@ -2287,7 +2302,7 @@ export default function App() {
                       </div>
                       <div style={{textAlign:'right',flexShrink:0}}>
                         <div style={{fontSize:11,color:'#9ca3af',marginBottom:2}}>Período seleccionado</div>
-                        <div style={{fontSize:22,fontWeight:800,color:isTop3?B.primary:'#374151'}}>
+                        <div style={{fontSize:isMobile?20:22,fontWeight:800,color:isTop3?B.primary:'#374151'}}>
                           {ag.totalUF > 0 ? 'UF '+ag.totalUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—'}
                         </div>
                         {ag.totalUSD > 0 && <div style={{fontSize:12,color:'#166534',fontWeight:600}}>+ USD {ag.totalUSD.toLocaleString('es-CL')}</div>}
@@ -2428,13 +2443,13 @@ export default function App() {
               <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE'}}>
                 <div style={{fontSize:28}}>📊</div>
                 <div>
-                  <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Dashboard Finanzas</div>
+                  <div style={{fontSize:isMobile?15:16,fontWeight:800,color:B.primary}}>Dashboard Finanzas</div>
                   <div style={{fontSize:12,color:B.mid}}>Control de comisiones, cobros y flujo de pagos</div>
                 </div>
               </div>
 
               {/* KPI Row */}
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(155px,1fr))',gap:10,marginBottom:20}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(155px,1fr))',gap:10,marginBottom:20}}>
                 {[
                   {l:'Comisiones total (UF)',   v:'UF '+fmt2(totalComisUF),   sub:totalUFclp>0?'$'+totalUFclp.toLocaleString('es-CL')+' CLP':null,     bg:B.light,   col:B.primary},
                   {l:'✅ Broker pagado (UF)',    v:'UF '+fmt2(cobradoUF),      sub:cobradoCLP>0?'$'+cobradoCLP.toLocaleString('es-CL')+' CLP':null,   bg:'#DCFCE7', col:'#14532d'},
@@ -2461,7 +2476,7 @@ export default function App() {
                 ))}
               </div>
 
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginBottom:16}}>
 
                 {/* Monthly flow */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
@@ -2530,7 +2545,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
 
                 {/* By broker - what we owe */}
                 <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
@@ -2672,7 +2687,7 @@ export default function App() {
             <Days d={daysIn(sel)}/>
             {sel.stage==='perdido'&&sel.loss_reason&&<span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:'#FEF2F2',color:'#991b1b'}}>Motivo: {sel.loss_reason}</span>}
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:12}}>
             {[['Teléfono',sel.telefono],['Email',sel.email],['Renta',sel.renta],['Origen',sel.origen||'—'],['Creado',fmt(sel.fecha)],['Agente',((users||[]).find(u=>u.id===sel.assigned_to)||{}).name||'Sin asignar']].map(([k,v])=>(
               <div key={k} style={{background:B.light,padding:'8px 10px',borderRadius:8,border:'1px solid #dce8ff'}}>
                 <div style={{fontSize:11,color:B.mid,marginBottom:2}}>{k}</div>
@@ -2796,7 +2811,7 @@ export default function App() {
                   <span style={{fontSize:13,fontWeight:700,color:'#713f12'}}>Propiedad {idx+1}</span>
                   {editingProps.length > 1 && <button onClick={()=>setEditingProps(prev=>prev.filter((_,i)=>i!==idx))} style={{fontSize:11,padding:'2px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>Eliminar</button>}
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
                   <Fld label="Inmobiliaria *">
                     <input value={p.inmobiliaria} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,inmobiliaria:e.target.value}:x))} placeholder="Nombre inmobiliaria" style={sty.inp}/>
                   </Fld>
@@ -2804,7 +2819,7 @@ export default function App() {
                     <input value={p.proyecto} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,proyecto:e.target.value}:x))} placeholder="Nombre proyecto" style={sty.inp}/>
                   </Fld>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
                   <Fld label="N° Depto / Unidad">
                     <input value={p.depto||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,depto:e.target.value}:x))} placeholder="Ej: 502, Casa 3, Lote 12" style={sty.inp}/>
                   </Fld>
@@ -2820,7 +2835,7 @@ export default function App() {
                     <input type="date" value={p.fecha_escritura||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,fecha_escritura:e.target.value}:x))} style={sty.inp}/>
                   </Fld>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
                   <Fld label="Moneda">
                     <select value={p.moneda} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,moneda:e.target.value}:x))} style={sty.sel}>
                       <option value="UF">UF</option>
@@ -2838,7 +2853,7 @@ export default function App() {
                   </label>
                 </div>
                 {p.bono_pie && (
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
+                  <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginTop:8}}>
                     <Fld label="Porcentaje bono pie (1-20%)">
                       <input type="number" min="1" max="20" value={p.bono_pct} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,bono_pct:Math.min(20,Math.max(1,parseInt(e.target.value)||1))}:x))} style={sty.inp}/>
                     </Fld>
@@ -2877,7 +2892,7 @@ export default function App() {
           <Fld label="Nombre completo *">
             <input value={editLead.nombre} onChange={e=>setEditLead(p=>({...p,nombre:e.target.value}))} style={sty.inp} placeholder="Nombre completo"/>
           </Fld>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:10}}>
             <Fld label="Teléfono">
               <input value={editLead.telefono} onChange={e=>setEditLead(p=>({...p,telefono:e.target.value}))} style={sty.inp} placeholder="+56 9 ..."/>
             </Fld>
@@ -2901,7 +2916,7 @@ export default function App() {
       {/* EDITAR USUARIO */}
       {editUser && (
         <Modal title={'Editar — '+editUser.name} onClose={()=>setEditUser(null)} wide>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:10}}>
             <Fld label="Nombre completo *">
               <input value={editUser.name} onChange={e=>setEditUser(p=>({...p,name:e.target.value}))} style={sty.inp} placeholder="Nombre completo"/>
             </Fld>
@@ -2964,7 +2979,7 @@ export default function App() {
       {/* Nuevo usuario */}
       {modal==='newUser' && (
         <Modal title="Nuevo usuario" onClose={()=>{setModal(null);setNu(EU)}} wide>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:12}}>
             {[['Nombre completo *','name','text','Juan Pérez'],['RUT *','rut','text','12.345.678-9'],['Teléfono *','phone','text','+56 9 1234 5678'],['Email *','email','email','juan@email.com'],['Usuario (login) *','username','text','juan.perez'],['PIN *','pin','password','••••']].map(([lbl,key,type,ph])=>(
               <Fld key={key} label={lbl}><input type={type} value={nu[key]} onChange={e=>setNu(p=>({...p,[key]:e.target.value}))} placeholder={ph} style={sty.inp}/></Fld>
             ))}
@@ -3165,7 +3180,7 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
       <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
         <div style={{fontSize:28}}>💰</div>
         <div style={{flex:1}}>
-          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Control de Comisiones</div>
+          <div style={{fontSize:isMobile?15:16,fontWeight:800,color:B.primary}}>Control de Comisiones</div>
           <div style={{fontSize:12,color:B.mid}}>Firma Promesa · Firma Escritura · UF: {indicators.uf?'$'+indicators.uf:'—'} · USD: {indicators.dolar?'$'+indicators.dolar:'—'}</div>
         </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
@@ -3336,7 +3351,7 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
                         <div style={{fontSize:11,fontWeight:700,color:'#1B4FC8',marginBottom:8,paddingBottom:4,borderBottom:'1px solid #dce8ff'}}>
                           1️⃣ OC y Facturación a Inmobiliaria
                         </div>
-                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:10,marginBottom:14}}>
+                        <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(190px,1fr))',gap:10,marginBottom:14}}>
                           <Fld label="Solicitud OC enviada a inmob.">
                             <input type="date" value={p.oc_fecha_solicitud||''}
                               onChange={e=>updateProp({oc_fecha_solicitud:e.target.value})}
@@ -3363,7 +3378,7 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
                         <div style={{fontSize:11,fontWeight:700,color:'#92400e',marginBottom:8,paddingBottom:4,borderBottom:'1px solid #fcd34d'}}>
                           2️⃣ Cobro a Inmobiliaria
                         </div>
-                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:10,marginBottom:14}}>
+                        <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(190px,1fr))',gap:10,marginBottom:14}}>
                           <Fld label="Fecha pago de inmob. recibido">
                             <input type="date" value={p.inmob_pago_fecha||''}
                               onChange={e=>updateProp({inmob_pago_fecha:e.target.value, oc_estado:'inmob_pago'})}
@@ -3381,7 +3396,7 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
                         <div style={{fontSize:11,fontWeight:700,color:'#166534',marginBottom:8,paddingBottom:4,borderBottom:'1px solid #86efac'}}>
                           3️⃣ Pago al Broker
                         </div>
-                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:10,marginBottom:12}}>
+                        <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(190px,1fr))',gap:10,marginBottom:12}}>
                           <Fld label="Factura broker recibida">
                             <input type="date" value={p.broker_factura_fecha||''}
                               onChange={e=>updateProp({broker_factura_fecha:e.target.value, oc_estado:'broker_factura'})}
@@ -3572,7 +3587,7 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
   return (
     <div>
       {/* Hero header */}
-      <div style={{background:'linear-gradient(135deg,#1B4FC8 0%,#3b82f6 100%)',borderRadius:16,padding:'20px 24px',marginBottom:20,color:'#fff',position:'relative',overflow:'hidden'}}>
+      <div style={{background:'linear-gradient(135deg,#1B4FC8 0%,#3b82f6 100%)',borderRadius:16,padding:isMobile?'12px':'20px 24px',marginBottom:20,color:'#fff',position:'relative',overflow:'hidden'}}>
         <div style={{position:'absolute',right:-20,top:-20,width:120,height:120,borderRadius:'50%',background:'rgba(255,255,255,0.07)'}}/>
         <div style={{position:'absolute',right:40,bottom:-30,width:80,height:80,borderRadius:'50%',background:'rgba(255,255,255,0.05)'}}/>
         <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:16}}>
@@ -3583,7 +3598,7 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
           </div>
         </div>
         {/* Hero KPIs */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
           {[
             {l:'UF total vendida',      v:'UF '+fmt2(totalUFVendida),    sub:closedLeads.length+' cierres'},
             {l:'Mi comisión total (UF)', v:'UF '+fmt2(totalMiComisionUF), sub:totalClp>0?'$'+totalClp.toLocaleString('es-CL')+' CLP':null},
@@ -3852,7 +3867,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
       <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
         <div style={{fontSize:32}}>🤖</div>
         <div style={{flex:1}}>
-          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Centro de IA — Configuración y Entrenamiento</div>
+          <div style={{fontSize:isMobile?15:16,fontWeight:800,color:B.primary}}>Centro de IA — Configuración y Entrenamiento</div>
           <div style={{fontSize:12,color:B.mid}}>Todo se guarda automáticamente · Personaliza cómo Rabito se comunica</div>
         </div>
         <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
@@ -3880,7 +3895,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
 
       {/* TAB: CONFIG */}
       {tab==='config' && (
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
           <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🤖 Identidad del bot</p>
             <Fld label="Nombre del bot"><input value={iaConfig.nombre} onChange={e=>upd(['nombre'],e.target.value)} style={sty.inp} placeholder="Ej: RabbittsBot"/></Fld>
@@ -3902,7 +3917,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
 
           <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>⏰ Horario de envío</p>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:10}}>
               <Fld label="Desde"><input type="time" value={iaConfig.horarioDesde} onChange={e=>upd(['horarioDesde'],e.target.value)} style={sty.inp}/></Fld>
               <Fld label="Hasta"><input type="time" value={iaConfig.horarioHasta} onChange={e=>upd(['horarioHasta'],e.target.value)} style={sty.inp}/></Fld>
             </div>
@@ -3920,7 +3935,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
 
           <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>📱 Integración WhatsApp</p>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10}}>
               <Fld label="Proveedor">
                 <select style={sty.sel}>
                   <option>Twilio WhatsApp API</option>
@@ -3939,7 +3954,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           {/* Calificacion y Calendly */}
           <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🎯 Criterios de calificación</p>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10}}>
               <Fld label="Renta mínima individual ($)">
                 <input type="number" value={iaConfig.rentaMinima||1500000} onChange={e=>upd(['rentaMinima'],parseInt(e.target.value))} style={sty.inp}/>
               </Fld>
@@ -4069,7 +4084,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
               <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>Google Drive — Base de conocimiento</p>
             </div>
             <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Conecta tu carpeta de Drive con brochures, precios y guiones. Rabito los consultará automáticamente al responder.</p>
-            <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:8,marginBottom:10}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr auto',gap:8,marginBottom:10}}>
               <Fld label="URL de carpeta Google Drive (pública o compartida)">
                 <input value={iaConfig.driveUrl||''} onChange={e=>upd(['driveUrl'],e.target.value)}
                   placeholder="https://drive.google.com/drive/folders/..." style={sty.inp}/>
@@ -4151,7 +4166,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           {/* Custom events */}
           <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',marginBottom:12}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>➕ Crear evento personalizado</p>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:10,marginBottom:10}}>
               <Fld label="Nombre del evento">
                 <input id="nuevo_evento_nombre" style={sty.inp} placeholder="Ej: Recordatorio escritura"/>
               </Fld>
@@ -4215,7 +4230,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
 
       {/* TAB: PLANTILLAS */}
       {tab==='plantillas' && (
-        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{display:'flex',flexDirection:'column',gap:isMobile?8:12}}>
           <div style={{padding:'10px 14px',background:B.light,borderRadius:8,fontSize:12,color:B.primary}}>
             💡 Variables disponibles: <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{broker}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{cliente}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{proyecto}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{etapa}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{inmobiliaria}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{n}'}</code> <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>{'{dias}'}</code>
           </div>
@@ -4342,7 +4357,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
       {tab==='monitor' && (
         <div>
           {/* Stats */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginBottom:16}}>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginBottom:16}}>
             {[
               {l:'Leads en cierre',    v:closingLeads.length,  bg:B.light,    col:B.primary},
               {l:'Leads inactivos',    v:inactive.length,       bg:'#FFF7ED',  col:'#92400e'},
@@ -4351,7 +4366,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
             ].map((k,i)=>(
               <div key={i} style={{background:k.bg,borderRadius:10,padding:'10px 14px',border:'1px solid '+k.col+'33'}}>
                 <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:4}}>{k.l}</div>
-                <div style={{fontSize:22,fontWeight:800,color:k.col}}>{k.v}</div>
+                <div style={{fontSize:isMobile?20:22,fontWeight:800,color:k.col}}>{k.v}</div>
               </div>
             ))}
           </div>
@@ -4659,7 +4674,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
       <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
         <div style={{fontSize:28}}>💬</div>
         <div style={{flex:1}}>
-          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Conversaciones WhatsApp</div>
+          <div style={{fontSize:isMobile?15:16,fontWeight:800,color:B.primary}}>Conversaciones WhatsApp</div>
           <div style={{fontSize:12,color:B.mid}}>{conversations.length} conversaciones · {conversations.filter(c=>c.mode==='humano').length} en modo humano</div>
         </div>
         <div style={{display:'flex',gap:8}}>
@@ -4671,7 +4686,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
       {/* TAB: BANDEJA */}
       {tab==='bandeja' && (
-        <div style={{display:'grid',gridTemplateColumns:'320px 1fr',gap:0,height:'calc(100vh - 200px)',border:'1px solid #dce8ff',borderRadius:12,overflow:'hidden'}}>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'320px 1fr',gap:0,height:isMobile?'calc(100vh - 120px)':'calc(100vh - 200px)',border:'1px solid #dce8ff',borderRadius:12,overflow:'hidden'}}>
           {/* Left: conversation list */}
           <div style={{borderRight:'1px solid #dce8ff',display:'flex',flexDirection:'column',background:'#fff'}}>
             {/* Filters */}
@@ -4827,7 +4842,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
             </button>
           </div>
 
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
             {/* Message composer */}
             <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
               <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>
@@ -4991,7 +5006,7 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
   const ag = (users||[]).find(u=>u.id===lead.assigned_to)
   const cal = CAL[lead.calificacion]
   return (
-    <div onClick={onOpen} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'10px 12px',cursor:'pointer',marginBottom:8,boxShadow:'0 1px 4px rgba(27,79,200,0.05)'}}>
+    <div onClick={onOpen} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'10px 10px',cursor:'pointer',marginBottom:8,boxShadow:'0 1px 4px rgba(27,79,200,0.05)',wordBreak:'break-word'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
         <div style={{fontWeight:600,fontSize:13,color:'#111827',lineHeight:1.3,flex:1,marginRight:6}}>{lead.nombre}</div>
         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3,flexShrink:0}}>
