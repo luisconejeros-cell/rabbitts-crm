@@ -447,7 +447,25 @@ export default function App() {
     if ((users||[]).find(u => u.username === nu.username.toLowerCase())) { msg('Usuario ya existe'); return }
     const u = {id:'u-'+Date.now(), ...nu, username:nu.username.toLowerCase()}
     await saveUsers([...users, u])
-    setNu(EU); setModal(null); msg('Usuario creado')
+    // Send welcome email with credentials
+    if (nu.email) {
+      try {
+        await fetch('/api/notify', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            type: 'welcome',
+            to: nu.email,
+            agentName: nu.name,
+            adminName: me.name,
+            username: nu.username.toLowerCase(),
+            pin: nu.pin,
+            role: nu.role
+          })
+        })
+      } catch(e) { console.warn('Welcome email failed:', e) }
+    }
+    setNu(EU); setModal(null); msg('Usuario creado — se envió email de bienvenida')
   }
   async function deleteUser(id) {
     if (dbReady) await supabase.from('crm_users').delete().eq('id', id)
