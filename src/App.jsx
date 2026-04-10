@@ -14,8 +14,8 @@ const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY || ''
 
 // ─── Brand ───────────────────────────────────────────────────────────────────
 const B = {
-  primary: '#1B4FC8', dark: '#1240A0', light: '#E8EFFE',
-  mid: '#4A76D8', border: '#A8C0F0',
+  primary: '#2563EB', dark: '#1D4ED8', light: '#EFF6FF',
+  mid: '#64748B', border: '#E2E8F0', bg: '#F8FAFC',
 }
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -131,20 +131,20 @@ const Fld = ({label, children}) => (
 )
 
 const sty = {
-  inp: {width:'100%',padding:'8px 12px',borderRadius:8,border:'1px solid #c5d5f5',background:'#fff',color:'#111827',fontSize:13},
-  sel: {width:'100%',padding:'8px 12px',borderRadius:8,border:'1px solid #c5d5f5',background:'#fff',color:'#111827',fontSize:13,cursor:'pointer'},
-  btn: {fontSize:13,padding:'7px 14px',borderRadius:8,cursor:'pointer',border:'1px solid #c5d5f5',background:'#fff',color:'#374151'},
-  btnP:{fontSize:13,padding:'7px 16px',borderRadius:8,cursor:'pointer',border:`1px solid ${B.primary}`,background:B.primary,color:'#fff',fontWeight:500},
+  inp: {width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',color:'#0F172A',fontSize:13,transition:'border-color .15s',outline:'none'},
+  sel: {width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',color:'#0F172A',fontSize:13,cursor:'pointer',outline:'none'},
+  btn: {fontSize:13,padding:'8px 14px',borderRadius:8,cursor:'pointer',border:'1px solid #E2E8F0',background:'#fff',color:'#374151',fontWeight:500},
+  btnP:{fontSize:13,padding:'8px 16px',borderRadius:8,cursor:'pointer',border:'1px solid #2563EB',background:'#2563EB',color:'#fff',fontWeight:600},
   btnO:{fontSize:13,padding:'7px 14px',borderRadius:8,cursor:'pointer',border:`1px solid ${B.border}`,background:'transparent',color:B.primary},
   btnD:{fontSize:13,padding:'7px 14px',borderRadius:8,cursor:'pointer',border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b'},
-  card:{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'12px 16px'},
+  card:{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,padding:'12px 16px'},
 }
 
 const Modal = ({title, onClose, children, wide=false}) => {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   return (
   <div style={{position:'fixed',inset:0,background:'rgba(27,79,200,0.18)',display:'flex',alignItems:isMobile?'flex-end':'flex-start',justifyContent:'center',paddingTop:isMobile?0:60,zIndex:1000}}>
-    <div style={{background:'#fff',borderRadius:isMobile?'20px 20px 0 0':14,padding:isMobile?'16px':'20px 24px',width:'100%',maxWidth:isMobile?'100%':wide?600:440,margin:isMobile?0:'0 16px',maxHeight:isMobile?'92vh':'80vh',overflowY:'auto',boxShadow:'0 8px 40px rgba(27,79,200,0.18)',border:'1px solid #dce8ff'}}>
+    <div style={{background:'#fff',borderRadius:isMobile?'20px 20px 0 0':14,padding:isMobile?'16px':'20px 24px',width:'100%',maxWidth:isMobile?'100%':wide?600:440,margin:isMobile?0:'0 16px',maxHeight:isMobile?'92vh':'80vh',overflowY:'auto',boxShadow:'0 8px 40px rgba(27,79,200,0.18)',border:'1px solid #E2E8F0'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
         <span style={{fontWeight:700,fontSize:16,color:B.primary}}>● {title}</span>
         <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#9ca3af',lineHeight:1}}>×</button>
@@ -1078,7 +1078,7 @@ export default function App() {
             <div style={{fontSize:12,color:B.mid,fontWeight:500,letterSpacing:'0.5px',textTransform:'uppercase'}}>CRM Inmobiliario</div>
           </div>
         </div>
-        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:14,padding:28,boxShadow:'0 4px 24px rgba(27,79,200,0.10)'}}>
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:28,boxShadow:'0 4px 24px rgba(27,79,200,0.10)'}}>
           <Fld label="Usuario"><input value={lu} onChange={e=>setLu(e.target.value)} placeholder="tu.usuario" style={sty.inp}/></Fld>
           <Fld label="PIN"><input type="password" value={lp} onChange={e=>setLp(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()} placeholder="••••" style={sty.inp}/></Fld>
           {lerr && <p style={{margin:'0 0 10px',fontSize:12,color:'#991b1b'}}>{lerr}</p>}
@@ -1091,9 +1091,11 @@ export default function App() {
 
   // ── APP ────────────────────────────────────────────────────────────────────
   return (
-    <div style={{fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',minHeight:'100vh',background:'#f0f4ff'}}>
+    <div style={{fontFamily:'Inter,"SF Pro Display",-apple-system,BlinkMacSystemFont,sans-serif',minHeight:'100vh',background:'#F8FAFC'}}>
       <style>{`
-        * { box-sizing: border-box; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        * { box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; letter-spacing: -0.01em; }
         body { margin: 0; -webkit-text-size-adjust: 100%; }
         input, textarea, select, button { font-family: inherit; -webkit-appearance: none; }
         @media (max-width: 767px) {
@@ -1117,13 +1119,17 @@ export default function App() {
           .rcrm-hide-desktop { display: none !important; }
         }
         ::-webkit-scrollbar { width: 4px; height: 4px; }
-        ::-webkit-scrollbar-track { background: #f0f4ff; }
-        ::-webkit-scrollbar-thumb { background: #c5d5f5; border-radius: 99px; }
+        ::-webkit-scrollbar-track { background: #F8FAFC; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+        input:focus, select:focus, textarea:focus { border-color: #2563EB !important; box-shadow: 0 0 0 3px rgba(37,99,235,0.1) !important; }
+        button { transition: opacity .15s, transform .1s; }
+        button:active { transform: scale(0.97); }
+        .rcrm-card { box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04) !important; }
       `}</style>
       <Toast msg={toast}/>
 
       {/* Topbar */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:isMobile?'8px 12px':'10px 16px',borderBottom:'3px solid '+B.primary,background:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 12px rgba(27,79,200,0.08)',gap:6,minHeight:isMobile?52:56}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:isMobile?'8px 12px':'10px 16px',borderBottom:'2px solid '+B.primary,background:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 12px rgba(27,79,200,0.08)',gap:6,minHeight:isMobile?52:56}}>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
           <div style={{display:'flex',alignItems:'center',gap:isMobile?6:8,marginLeft:'auto',flexShrink:0}}>
             <RabbitsLogo size={isMobile?28:34}/>
@@ -1170,7 +1176,7 @@ export default function App() {
           {!isMobile && <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:isAdmin?B.light:isPartner?'#F5F3FF':isOps?'#FEF9C3':isFinanzas?'#F0FDF4':'#EFF6FF',color:isAdmin?B.primary:isPartner?'#5b21b6':isOps?'#713f12':isFinanzas?'#166534':'#1d4ed8',fontWeight:700}}>{me.role}</span>}
           {!isAdmin && (
             <div style={{position:'relative'}}>
-              <button onClick={()=>{setShowNotifs(v=>!v);setNotifications(n=>n.map(x=>({...x,read:true})))}} style={{fontSize:isMobile?18:12,padding:isMobile?'6px':'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid,position:'relative',width:isMobile?36:undefined,height:isMobile?36:undefined,display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <button onClick={()=>{setShowNotifs(v=>!v);setNotifications(n=>n.map(x=>({...x,read:true})))}} style={{fontSize:isMobile?18:12,padding:isMobile?'6px':'4px 10px',borderRadius:8,border:'1px solid #E2E8F0',background:'transparent',cursor:'pointer',color:B.mid,position:'relative',width:isMobile?36:undefined,height:isMobile?36:undefined,display:'flex',alignItems:'center',justifyContent:'center'}}>
                 🔔
                 {notifications.filter(n=>!n.read).length>0 && (
                   <span style={{position:'absolute',top:-4,right:-4,width:16,height:16,borderRadius:'50%',background:'#E24B4A',color:'#fff',fontSize:9,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -1179,12 +1185,12 @@ export default function App() {
                 )}
               </button>
               {showNotifs && (
-                <div style={{position:'absolute',top:36,right:0,width:320,background:'#fff',border:'1px solid #dce8ff',borderRadius:12,boxShadow:'0 8px 32px rgba(27,79,200,0.15)',zIndex:500,maxHeight:360,overflowY:'auto'}}>
+                <div style={{position:'absolute',top:36,right:0,width:320,background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,boxShadow:'0 8px 32px rgba(27,79,200,0.15)',zIndex:500,maxHeight:360,overflowY:'auto'}}>
                   <div style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',fontWeight:700,fontSize:13,color:B.primary}}>Notificaciones</div>
                   {notifications.length===0 && <div style={{padding:'20px 14px',fontSize:12,color:'#9ca3af',textAlign:'center'}}>Sin notificaciones</div>}
                   {notifications.map(n=>(
                     <div key={n.id} onClick={()=>{setShowNotifs(false);const l=leads.find(x=>x.id===n.leadId);if(l){setSel(l);setModal('lead')}}} style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:n.read?'#fff':B.light}}>
-                      <div style={{fontSize:12,color:'#111827',lineHeight:1.5}}>{n.text}</div>
+                      <div style={{fontSize:12,color:'#0F172A',lineHeight:1.5}}>{n.text}</div>
                       <div style={{fontSize:11,color:'#9ca3af',marginTop:3}}>{fmt(n.date)}</div>
                     </div>
                   ))}
@@ -1210,7 +1216,7 @@ export default function App() {
               </div>
             )
           })()}
-          {!isMobile && <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid}}>Mi perfil</button>}
+          {!isMobile && <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'1px solid #E2E8F0',background:'transparent',cursor:'pointer',color:B.mid}}>Mi perfil</button>}
           {!isMobile && <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{fontSize:12,padding:'4px 10px',borderRadius:8,border:'none',background:'transparent',cursor:'pointer',color:'#9ca3af'}}>Salir</button>}
           {isMobile && (
             <button onClick={()=>setMobileMenuOpen(v=>!v)}
@@ -1229,7 +1235,7 @@ export default function App() {
             <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
               <AV name={me.name} size={36} src={me.avatar_url||null}/>
               <div>
-                <div style={{fontWeight:700,fontSize:14,color:'#111827'}}>{me.name}</div>
+                <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{me.name}</div>
                 <div style={{fontSize:11,color:'#9ca3af'}}>{me.role}</div>
               </div>
             </div>
@@ -1244,7 +1250,7 @@ export default function App() {
               )
             })}
             <div style={{marginTop:'auto',paddingTop:12,borderTop:'1px solid #f0f4ff',display:'flex',flexDirection:'column',gap:6}}>
-              <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile');setMobileMenuOpen(false)}} style={{padding:'10px 14px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:B.mid,fontSize:13,textAlign:'left'}}>👤 Mi perfil</button>
+              <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile');setMobileMenuOpen(false)}} style={{padding:'10px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'transparent',cursor:'pointer',color:B.mid,fontSize:13,textAlign:'left'}}>👤 Mi perfil</button>
               <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{padding:'10px 14px',borderRadius:8,border:'none',background:'#FEF2F2',cursor:'pointer',color:'#991b1b',fontSize:13,textAlign:'left',fontWeight:600}}>🚪 Cerrar sesión</button>
             </div>
           </div>
@@ -1327,7 +1333,7 @@ export default function App() {
             <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
               {isAdmin && <button onClick={exportCSV} style={sty.btnO}>Exportar CSV</button>}
             </div>
-            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,overflow:'auto'}}>
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,overflow:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
                 <thead>
                   <tr style={{background:B.light,borderBottom:'1px solid #dce8ff'}}>
@@ -1344,7 +1350,7 @@ export default function App() {
                     const cal = CAL[lead.calificacion]
                     return (
                       <tr key={lead.id} onClick={()=>{setSel(lead);setModal('lead')}} style={{borderBottom:'1px solid #f0f4ff',cursor:'pointer'}}>
-                        <td style={{padding:'9px 10px'}}><div style={{display:'flex',alignItems:'center',gap:7}}><AV name={lead.nombre} size={26}/><span style={{fontWeight:600,color:'#111827',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.nombre}</span></div></td>
+                        <td style={{padding:'9px 10px'}}><div style={{display:'flex',alignItems:'center',gap:7}}><AV name={lead.nombre} size={26}/><span style={{fontWeight:600,color:'#0F172A',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.nombre}</span></div></td>
                         <td style={{padding:'9px 10px',color:'#6b7280',whiteSpace:'nowrap'}}>{lead.telefono}</td>
                         <td style={{padding:'9px 10px',color:'#6b7280',whiteSpace:'nowrap'}}>{lead.renta}</td>
                         <td style={{padding:'9px 10px'}}><Tag tag={lead.tag||'lead'} sm/></td>
@@ -1380,7 +1386,7 @@ export default function App() {
                     <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
                       <AV name={u.name} size={38}/>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontWeight:700,fontSize:14,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.name}</div>
+                        <div style={{fontWeight:700,fontSize:14,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.name}</div>
                         <div style={{fontSize:12,color:'#9ca3af'}}>@{u.username}</div>
                       </div>
                       <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:rb,color:rc,fontWeight:700}}>{u.role}</span>
@@ -1422,14 +1428,14 @@ export default function App() {
                   const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
                   const [rb,rc] = RC[u.role]||RC.agent
                   return (
-                    <div key={u.id} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                    <div key={u.id} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
                         <div style={{position:'relative'}}>
                           <AV name={u.name} size={34}/>
                           <div style={{position:'absolute',bottom:0,right:0,width:10,height:10,borderRadius:'50%',background:isOnline?'#22c55e':'#d1d5db',border:'2px solid #fff'}}/>
                         </div>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:700,fontSize:13,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.name}</div>
+                          <div style={{fontWeight:700,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.name}</div>
                           <span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:rb,color:rc,fontWeight:700}}>{u.role}</span>
                         </div>
                         <div style={{flexShrink:0}}>
@@ -1487,7 +1493,7 @@ export default function App() {
             </div>
 
             {/* Existing stages list */}
-            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,overflow:'hidden',marginBottom:16}}>
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden',marginBottom:16}}>
               {stages.map((st, idx) => (
                 <div key={st.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderBottom: idx<stages.length-1 ? '1px solid #f0f4ff' : 'none'}}>
                   {/* Color dot */}
@@ -1500,7 +1506,7 @@ export default function App() {
                       value={editStageLabel}
                       onChange={e=>setEditStageLabel(e.target.value)}
                       onKeyDown={e=>{ if(e.key==='Enter') renameStage(st.id,editStageLabel); if(e.key==='Escape') setEditStageId(null) }}
-                      style={{flex:1,fontSize:13,padding:'4px 8px',borderRadius:6,border:'1px solid #A8C0F0',background:'#f0f4ff',color:'#111827'}}
+                      style={{flex:1,fontSize:13,padding:'4px 8px',borderRadius:6,border:'1px solid #A8C0F0',background:'#F8FAFC',color:'#0F172A'}}
                     />
                   ) : (
                     <span style={{flex:1,fontSize:13,fontWeight:600,color:st.col}}>{st.label}</span>
@@ -1513,7 +1519,7 @@ export default function App() {
                   <select
                     value={COLOR_PRESETS.findIndex(p=>p.col===st.col)}
                     onChange={e=>changeStageColor(st.id,parseInt(e.target.value))}
-                    style={{fontSize:11,padding:'3px 6px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',color:'#374151',cursor:'pointer'}}
+                    style={{fontSize:11,padding:'3px 6px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',color:'#374151',cursor:'pointer'}}
                   >
                     {COLOR_PRESETS.map((p,i)=><option key={i} value={i}>{p.label}</option>)}
                   </select>
@@ -1526,10 +1532,10 @@ export default function App() {
                         <button onClick={()=>setEditStageId(null)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #e5e7eb',background:'transparent',color:'#9ca3af',cursor:'pointer'}}>✕</button>
                       </>
                     ) : (
-                      <button onClick={()=>{setEditStageId(st.id);setEditStageLabel(st.label)}} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'transparent',color:B.mid,cursor:'pointer'}}>Renombrar</button>
+                      <button onClick={()=>{setEditStageId(st.id);setEditStageLabel(st.label)}} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'transparent',color:B.mid,cursor:'pointer'}}>Renombrar</button>
                     )}
-                    <button onClick={()=>moveStageUp(idx)} disabled={idx===0} style={{fontSize:12,padding:'3px 7px',borderRadius:6,border:'1px solid #dce8ff',background:'transparent',color:idx===0?'#e5e7eb':B.mid,cursor:idx===0?'not-allowed':'pointer'}}>↑</button>
-                    <button onClick={()=>moveStageDown(idx)} disabled={idx===stages.length-1} style={{fontSize:12,padding:'3px 7px',borderRadius:6,border:'1px solid #dce8ff',background:'transparent',color:idx===stages.length-1?'#e5e7eb':B.mid,cursor:idx===stages.length-1?'not-allowed':'pointer'}}>↓</button>
+                    <button onClick={()=>moveStageUp(idx)} disabled={idx===0} style={{fontSize:12,padding:'3px 7px',borderRadius:6,border:'1px solid #E2E8F0',background:'transparent',color:idx===0?'#e5e7eb':B.mid,cursor:idx===0?'not-allowed':'pointer'}}>↑</button>
+                    <button onClick={()=>moveStageDown(idx)} disabled={idx===stages.length-1} style={{fontSize:12,padding:'3px 7px',borderRadius:6,border:'1px solid #E2E8F0',background:'transparent',color:idx===stages.length-1?'#e5e7eb':B.mid,cursor:idx===stages.length-1?'not-allowed':'pointer'}}>↓</button>
                     <button onClick={()=>deleteStage(st.id)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>Eliminar</button>
                   </div>
                 </div>
@@ -1537,7 +1543,7 @@ export default function App() {
             </div>
 
             {/* Add new stage */}
-            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
               <p style={{margin:'0 0 10px',fontSize:13,fontWeight:600,color:B.primary}}>+ Nueva etapa</p>
               <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end'}}>
                 <div style={{flex:1,minWidth:160}}>
@@ -1677,7 +1683,7 @@ export default function App() {
           return (
             <div>
               {/* Date range filter bar */}
-              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap',padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:12}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap',padding:'10px 14px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:12}}>
                 <span style={{fontSize:12,fontWeight:700,color:B.primary,flexShrink:0}}>Período:</span>
                 <div style={{display:'flex',gap:6,flexWrap:'wrap',flex:1}}>
                   {RANGE_OPTS.filter(o=>o.v!=='custom').map(o=>(
@@ -1725,7 +1731,7 @@ export default function App() {
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginBottom:16}}>
 
                 {/* Pipeline por etapa */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Pipeline por etapa</p>
                   {byStage.map(st => (
                     <div key={st.id} style={{marginBottom:10}}>
@@ -1733,7 +1739,7 @@ export default function App() {
                         <span style={{fontSize:12,color:'#374151',fontWeight:500}}>{st.label}</span>
                         <span style={{fontSize:12,fontWeight:700,color:st.col}}>{st.count} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>({st.pct}%)</span></span>
                       </div>
-                      <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                      <div style={{height:6,background:'#F8FAFC',borderRadius:99,overflow:'hidden'}}>
                         <div style={{height:'100%',width:st.pct+'%',background:st.col,borderRadius:99,transition:'width .4s ease',minWidth:st.count>0?8:0}}/>
                       </div>
                     </div>
@@ -1741,20 +1747,20 @@ export default function App() {
                 </div>
 
                 {/* Rendimiento por agente */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Rendimiento por agente</p>
                   {byAgent.length === 0 && <p style={{fontSize:12,color:'#9ca3af'}}>Sin agentes registrados</p>}
                   {byAgent.map(ag => (
                     <div key={ag.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
                       <AV name={ag.name} size={34}/>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
+                        <div style={{fontSize:13,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
                         <div style={{display:'flex',gap:10,marginTop:3}}>
                           <span style={{fontSize:11,color:'#6b7280'}}>{ag.total} leads</span>
                           <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} en cierre</span>
                           <span style={{fontSize:11,color:'#991b1b'}}>{ag.perdidos} perdidos</span>
                         </div>
-                        <div style={{height:4,background:'#f0f4ff',borderRadius:99,marginTop:5,overflow:'hidden'}}>
+                        <div style={{height:4,background:'#F8FAFC',borderRadius:99,marginTop:5,overflow:'hidden'}}>
                           <div style={{height:'100%',width:(leads.length>0?Math.round((ag.total/leads.length)*100):0)+'%',background:B.primary,borderRadius:99}}/>
                         </div>
                       </div>
@@ -1770,7 +1776,7 @@ export default function App() {
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
 
                 {/* Por etiqueta */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Distribución por etiqueta</p>
                   {byTag.map(({tag,count}) => {
                     const t = TAG_ST[tag]||TAG_ST.lead
@@ -1781,7 +1787,7 @@ export default function App() {
                           <Tag tag={tag}/>
                           <span style={{fontSize:12,fontWeight:700,color:t.col}}>{count} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>({pct}%)</span></span>
                         </div>
-                        <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                        <div style={{height:6,background:'#F8FAFC',borderRadius:99,overflow:'hidden'}}>
                           <div style={{height:'100%',width:pct+'%',background:t.col,borderRadius:99,opacity:.7}}/>
                         </div>
                       </div>
@@ -1790,7 +1796,7 @@ export default function App() {
                 </div>
 
                 {/* Leads estancados */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Leads estancados {stancados>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontWeight:600,marginLeft:4}}>+7 días</span>}</p>
                   {leads.filter(l=>!['firma','escritura','perdido'].includes(l.stage)&&daysIn(l)>7).length===0
                     ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads estancados. ¡Todo fluye bien!</p>
@@ -1803,7 +1809,7 @@ export default function App() {
                           return (
                             <div key={l.id} onClick={()=>{setSel(l);setModal('lead')}} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'6px 8px',borderRadius:8,background:'#FFF7ED',border:'1px solid #fdba74',cursor:'pointer'}}>
                               <div style={{flex:1,minWidth:0}}>
-                                <div style={{fontSize:12,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.nombre}</div>
+                                <div style={{fontSize:12,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.nombre}</div>
                                 <div style={{fontSize:11,color:'#9ca3af'}}>{st.label} {ag?'· '+ag.name.split(' ')[0]:''}</div>
                               </div>
                               <Days d={daysIn(l)}/>
@@ -1904,7 +1910,7 @@ export default function App() {
                   {v:'last_month',l:'Mes anterior'},{v:'last_3m',l:'3 meses'},{v:'last_6m',l:'6 meses'},{v:'this_year',l:'Este año'},{v:'custom',l:'Personalizado'}
                 ]
                 return (
-                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,flexWrap:'wrap',padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:12}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,flexWrap:'wrap',padding:'10px 14px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:12}}>
                     <span style={{fontSize:12,fontWeight:700,color:B.primary,flexShrink:0}}>Período:</span>
                     <div style={{display:'flex',gap:5,flexWrap:'wrap',flex:1}}>
                       {ROPTS.filter(o=>o.v!=='custom').map(o=>(
@@ -1918,9 +1924,9 @@ export default function App() {
                     </div>
                     {dateRange==='custom' && (
                       <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                        <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#111827'}}/>
+                        <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#0F172A'}}/>
                         <span style={{fontSize:11,color:'#9ca3af'}}>→</span>
-                        <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#111827'}}/>
+                        <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#0F172A'}}/>
                       </div>
                     )}
                     <span style={{marginLeft:'auto',fontSize:12,color:B.mid,fontWeight:600,flexShrink:0}}>{poolLeads.length} leads pool</span>
@@ -1953,7 +1959,7 @@ export default function App() {
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginBottom:16}}>
 
                 {/* Pipeline pool por etapa */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Pipeline pool por etapa</p>
                   {byStage.length === 0
                     ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads pool aún</p>
@@ -1963,7 +1969,7 @@ export default function App() {
                           <span style={{fontSize:12,color:'#374151',fontWeight:500}}>{st.label}</span>
                           <span style={{fontSize:12,fontWeight:700,color:st.col}}>{st.count} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>({st.pct}%)</span></span>
                         </div>
-                        <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                        <div style={{height:6,background:'#F8FAFC',borderRadius:99,overflow:'hidden'}}>
                           <div style={{height:'100%',width:st.pct+'%',background:st.col,borderRadius:99,minWidth:st.count>0?8:0}}/>
                         </div>
                       </div>
@@ -1972,7 +1978,7 @@ export default function App() {
                 </div>
 
                 {/* Calificación */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Calificación de pool</p>
                   {byCal.map(({cal,count,pct}) => {
                     const c = CAL[cal] || {bg:'#F9FAFB',col:'#374151'}
@@ -1982,7 +1988,7 @@ export default function App() {
                           <span style={{fontSize:12,padding:'2px 10px',borderRadius:99,background:c.bg,color:c.col,fontWeight:600}}>{cal}</span>
                           <span style={{fontSize:12,fontWeight:700,color:c.col}}>{count} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>({pct}%)</span></span>
                         </div>
-                        <div style={{height:6,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                        <div style={{height:6,background:'#F8FAFC',borderRadius:99,overflow:'hidden'}}>
                           <div style={{height:'100%',width:pct+'%',background:c.col,borderRadius:99,opacity:.7}}/>
                         </div>
                       </div>
@@ -1994,7 +2000,7 @@ export default function App() {
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
 
                 {/* Brokers asignados */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Brokers asignados</p>
                   {byAgent.length === 0
                     ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads asignados a brokers</p>
@@ -2002,13 +2008,13 @@ export default function App() {
                       <div key={ag.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
                         <AV name={ag.name} size={34}/>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
+                          <div style={{fontSize:13,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
                           <div style={{display:'flex',gap:8,marginTop:2}}>
                             <span style={{fontSize:11,color:'#6b7280'}}>{ag.total} leads</span>
                             <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} en cierre</span>
                             <span style={{fontSize:11,color:'#92400e'}}>{ag.enProceso} en proceso</span>
                           </div>
-                          <div style={{height:4,background:'#f0f4ff',borderRadius:99,marginTop:5,overflow:'hidden'}}>
+                          <div style={{height:4,background:'#F8FAFC',borderRadius:99,marginTop:5,overflow:'hidden'}}>
                             <div style={{height:'100%',width:(poolLeads.length>0?Math.round((ag.total/poolLeads.length)*100):0)+'%',background:B.primary,borderRadius:99}}/>
                           </div>
                         </div>
@@ -2022,7 +2028,7 @@ export default function App() {
                 </div>
 
                 {/* Pool recientes */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Últimos leads pool</p>
                   {poolLeads.length === 0
                     ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads pool registrados</p>
@@ -2031,9 +2037,9 @@ export default function App() {
                         const ag = (users||[]).find(u=>u.id===l.assigned_to)
                         const cal = CAL[l.calificacion]
                         return (
-                          <div key={l.id} onClick={()=>{setSel(l);setModal('lead')}} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'7px 10px',borderRadius:8,background:'#f9fbff',border:'1px solid #dce8ff',cursor:'pointer'}}>
+                          <div key={l.id} onClick={()=>{setSel(l);setModal('lead')}} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'7px 10px',borderRadius:8,background:'#f9fbff',border:'1px solid #E2E8F0',cursor:'pointer'}}>
                             <div style={{flex:1,minWidth:0}}>
-                              <div style={{fontSize:12,fontWeight:600,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.nombre}</div>
+                              <div style={{fontSize:12,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.nombre}</div>
                               <div style={{display:'flex',gap:6,alignItems:'center',marginTop:2}}>
                                 <span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:st.bg,color:st.col,fontWeight:600}}>{st.label}</span>
                                 {ag && <span style={{fontSize:10,color:'#9ca3af'}}>{ag.name.split(' ')[0]}</span>}
@@ -2117,7 +2123,7 @@ export default function App() {
                   </div>
 
                   {/* Table preview */}
-                  <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,overflow:'auto',maxHeight:280,marginBottom:12}}>
+                  <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,overflow:'auto',maxHeight:280,marginBottom:12}}>
                     <table className='rcrm-table' style={{width:'100%',borderCollapse:'collapse',fontSize:isMobile?11:12}}>
                       <thead>
                         <tr style={{background:B.light,position:'sticky',top:0}}>
@@ -2128,7 +2134,7 @@ export default function App() {
                         {importRows.map((r,i)=>(
                           <tr key={i} style={{borderBottom:'1px solid #f0f4ff'}}>
                             <td style={{padding:'6px 10px',color:'#9ca3af'}}>{r._row}</td>
-                            <td style={{padding:'6px 10px',fontWeight:600,color:'#111827'}}>{r.nombre}</td>
+                            <td style={{padding:'6px 10px',fontWeight:600,color:'#0F172A'}}>{r.nombre}</td>
                             <td style={{padding:'6px 10px',color:'#6b7280'}}>{r.telefono}</td>
                             <td style={{padding:'6px 10px',color:'#6b7280'}}>{r.email}</td>
                             <td style={{padding:'6px 10px',color:'#6b7280'}}>{r.renta}</td>
@@ -2240,7 +2246,7 @@ export default function App() {
               </div>
 
               {/* Period filter */}
-              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:12,flexWrap:'wrap'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,padding:'10px 14px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,flexWrap:'wrap'}}>
                 <span style={{fontSize:12,fontWeight:700,color:B.primary,flexShrink:0}}>Período:</span>
                 <div style={{display:'flex',gap:5,flexWrap:'wrap',flex:1}}>
                   {RANK_OPTS.filter(o=>o.v!=='custom').map(o=>(
@@ -2252,9 +2258,9 @@ export default function App() {
                 </div>
                 {dateRange==='custom' && (
                   <div style={{display:'flex',alignItems:'center',gap:6}}>
-                    <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#111827'}}/>
+                    <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#0F172A'}}/>
                     <span style={{fontSize:11,color:'#9ca3af'}}>→</span>
-                    <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#111827'}}/>
+                    <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{fontSize:11,padding:'4px 7px',borderRadius:6,border:'1px solid #c5d5f5',background:'#fff',color:'#0F172A'}}/>
                   </div>
                 )}
               </div>
@@ -2288,7 +2294,7 @@ export default function App() {
                       </div>
                       <AV name={ag.name} size={44}/>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:15,fontWeight:700,color:'#111827',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
+                        <div style={{fontSize:15,fontWeight:700,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
                         <div style={{fontSize:11,color:'#6b7280',marginTop:2,display:'flex',gap:10,flexWrap:'wrap'}}>
                           <span>{ag.leadsCount} leads</span>
                           <span>{ag.propCount} propiedades</span>
@@ -2297,7 +2303,7 @@ export default function App() {
                         </div>
                         {ranked[0]?.totalUF > 0 && (
                           <div style={{marginTop:6}}>
-                            <div style={{height:7,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                            <div style={{height:7,background:'#F8FAFC',borderRadius:99,overflow:'hidden'}}>
                               <div style={{height:'100%',width:(ag.totalUF/ranked[0].totalUF*100)+'%',background:isTop3?B.primary:'#93c5fd',borderRadius:99,transition:'width .5s ease'}}/>
                             </div>
                           </div>
@@ -2482,7 +2488,7 @@ export default function App() {
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginBottom:16}}>
 
                 {/* Monthly flow */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Flujo de cobros pendientes por mes</p>
                   {sortedMonths.length === 0
                     ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin cobros pendientes</p>
@@ -2501,7 +2507,7 @@ export default function App() {
                                 <span style={{fontSize:10,color:'#9ca3af',marginLeft:6}}>{v.count} ops</span>
                               </div>
                             </div>
-                            <div style={{height:8,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                            <div style={{height:8,background:'#F8FAFC',borderRadius:99,overflow:'hidden'}}>
                               <div style={{height:'100%',width:pct+'%',background:isPast?'#ef4444':B.primary,borderRadius:99}}/>
                             </div>
                           </div>
@@ -2511,12 +2517,12 @@ export default function App() {
                 </div>
 
                 {/* By inmobiliaria */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Estado cobros por inmobiliaria</p>
                   {Object.entries(byInmob).sort((a,b)=>(b[1].pendienteUF+b[1].pendienteUSD)-(a[1].pendienteUF+a[1].pendienteUSD)).map(([inmob, d]) => (
                     <div key={inmob} style={{marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
-                        <span style={{fontWeight:700,fontSize:13,color:'#111827'}}>{inmob}</span>
+                        <span style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{inmob}</span>
                         {d.vencido>0&&<span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:600}}>⚠ UF {fmt2(d.vencido)} vencido</span>}
                       </div>
                       {d.totalUF>0&&(
@@ -2526,7 +2532,7 @@ export default function App() {
                             <span style={{color:'#166534',fontWeight:600}}>✅ {fmt2(d.cobradoUF)}</span>
                             <span style={{color:'#92400e',fontWeight:600}}>⏳ {fmt2(d.pendienteUF)}</span>
                           </div>
-                          <div style={{height:5,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                          <div style={{height:5,background:'#F8FAFC',borderRadius:99,overflow:'hidden'}}>
                             <div style={{height:'100%',width:d.totalUF>0?(d.cobradoUF/d.totalUF*100)+'%':'0%',background:'#22c55e',borderRadius:99}}/>
                           </div>
                         </div>
@@ -2538,7 +2544,7 @@ export default function App() {
                             <span style={{color:'#166534',fontWeight:600}}>✅ {fmt2(d.cobradoUSD)}</span>
                             <span style={{color:'#92400e',fontWeight:600}}>⏳ {fmt2(d.pendienteUSD)}</span>
                           </div>
-                          <div style={{height:5,background:'#f0f4ff',borderRadius:99,overflow:'hidden'}}>
+                          <div style={{height:5,background:'#F8FAFC',borderRadius:99,overflow:'hidden'}}>
                             <div style={{height:'100%',width:d.totalUSD>0?(d.cobradoUSD/d.totalUSD*100)+'%':'0%',background:'#3b82f6',borderRadius:99}}/>
                           </div>
                         </div>
@@ -2551,13 +2557,13 @@ export default function App() {
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
 
                 {/* By broker - what we owe */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Pago pendiente a brokers</p>
                   {Object.entries(byBroker).sort((a,b)=>(b[1].pendienteUF+b[1].pendienteUSD)-(a[1].pendienteUF+a[1].pendienteUSD)).map(([agName, d]) => (
                     <div key={agName} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,paddingBottom:10,borderBottom:'1px solid #f0f4ff'}}>
                       <AV name={agName} size={32}/>
                       <div style={{flex:1}}>
-                        <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{agName}</div>
+                        <div style={{fontSize:13,fontWeight:600,color:'#0F172A'}}>{agName}</div>
                         {d.totalUF>0&&<div style={{fontSize:11,color:'#6b7280'}}>UF: Total {fmt2(d.totalUF)} · ✅ {fmt2(d.cobradoUF)}</div>}
                         {d.totalUSD>0&&<div style={{fontSize:11,color:'#6b7280'}}>USD: Total {fmt2(d.totalUSD)} · ✅ {fmt2(d.cobradoUSD)}</div>}
                       </div>
@@ -2571,7 +2577,7 @@ export default function App() {
                 </div>
 
                 {/* Vencidos alert */}
-                <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>
                     Cobros vencidos {allProps.filter(p=>p.isVencido).length>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:600,marginLeft:4}}>⚠ {allProps.filter(p=>p.isVencido).length} pagos</span>}
                   </p>
@@ -2692,13 +2698,13 @@ export default function App() {
           </div>
           <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:12}}>
             {[['Teléfono',sel.telefono],['Email',sel.email],['Renta',sel.renta],['Origen',sel.origen||'—'],['Creado',fmt(sel.fecha)],['Agente',((users||[]).find(u=>u.id===sel.assigned_to)||{}).name||'Sin asignar']].map(([k,v])=>(
-              <div key={k} style={{background:B.light,padding:'8px 10px',borderRadius:8,border:'1px solid #dce8ff'}}>
+              <div key={k} style={{background:B.light,padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0'}}>
                 <div style={{fontSize:11,color:B.mid,marginBottom:2}}>{k}</div>
-                <div style={{fontSize:13,color:'#111827'}}>{v}</div>
+                <div style={{fontSize:13,color:'#0F172A'}}>{v}</div>
               </div>
             ))}
           </div>
-          <div style={{background:B.light,padding:'10px 12px',borderRadius:8,fontSize:13,color:'#374151',lineHeight:1.6,marginBottom:12,border:'1px solid #dce8ff'}}>{sel.resumen}</div>
+          <div style={{background:B.light,padding:'10px 12px',borderRadius:8,fontSize:13,color:'#374151',lineHeight:1.6,marginBottom:12,border:'1px solid #E2E8F0'}}>{sel.resumen}</div>
           {(sel.stage_history||[]).length>1&&(
             <div style={{marginBottom:12}}>
               <div style={{fontSize:12,fontWeight:600,color:B.mid,marginBottom:6}}>Historial de etapas</div>
@@ -2785,7 +2791,7 @@ export default function App() {
             <div key={c.id} style={{marginBottom:10,paddingBottom:10,borderBottom:'1px solid #f0f4ff'}}>
               <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
                 <AV name={c.author_name} size={22}/>
-                <span style={{fontSize:12,fontWeight:600,color:'#111827'}}>{c.author_name}</span>
+                <span style={{fontSize:12,fontWeight:600,color:'#0F172A'}}>{c.author_name}</span>
                 <span style={{fontSize:11,color:'#9ca3af',marginLeft:'auto'}}>{fmt(c.date)}</span>
               </div>
               <div style={{fontSize:13,color:'#6b7280',lineHeight:1.5,paddingLeft:28}}>{c.text}</div>
@@ -2861,7 +2867,7 @@ export default function App() {
                       <input type="number" min="1" max="20" value={p.bono_pct} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,bono_pct:Math.min(20,Math.max(1,parseInt(e.target.value)||1))}:x))} style={sty.inp}/>
                     </Fld>
                     <Fld label={'Precio sin bono pie ('+p.moneda+')'}>
-                      <div style={{...sty.inp,background:'#f0f4ff',color:B.primary,fontWeight:700,display:'flex',alignItems:'center'}}>
+                      <div style={{...sty.inp,background:'#F8FAFC',color:B.primary,fontWeight:700,display:'flex',alignItems:'center'}}>
                         {calculated.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}
                       </div>
                     </Fld>
@@ -3014,7 +3020,7 @@ export default function App() {
       {modal==='profile' && (
         <Modal title="Mi perfil" onClose={()=>setModal(null)}>
           {/* Avatar upload */}
-          <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:16,padding:'12px',background:'#f9fbff',borderRadius:10,border:'1px solid #dce8ff'}}>
+          <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:16,padding:'12px',background:'#f9fbff',borderRadius:10,border:'1px solid #E2E8F0'}}>
             <div style={{position:'relative',flexShrink:0}}>
               {editP.avatar_url
                 ? <img src={editP.avatar_url} alt="avatar" style={{width:64,height:64,borderRadius:'50%',objectFit:'cover',border:'2px solid '+B.border}}/>
@@ -3034,7 +3040,7 @@ export default function App() {
                 }}/>
             </div>
             <div>
-              <div style={{fontWeight:700,fontSize:14,color:'#111827'}}>{me.name}</div>
+              <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{me.name}</div>
               <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>{me.role}</div>
               <div style={{fontSize:11,color:B.mid,marginTop:4}}>Toca el lápiz para cambiar tu foto</div>
             </div>
@@ -3060,7 +3066,7 @@ export default function App() {
 
 // ─── Lead Form ────────────────────────────────────────────────────────────────
 function LeadForm({data, onChange, onSubmit}) {
-  const sI = {width:'100%',padding:'8px 12px',borderRadius:8,border:'1px solid #c5d5f5',background:'#fff',color:'#111827',fontSize:13}
+  const sI = {width:'100%',padding:'8px 12px',borderRadius:8,border:'1px solid #c5d5f5',background:'#fff',color:'#0F172A',fontSize:13}
   return (
     <div>
       <Fld label="Nombre completo *"><input value={data.nombre} onChange={e=>onChange(p=>({...p,nombre:e.target.value}))} placeholder="María González" style={sI}/></Fld>
@@ -3201,21 +3207,21 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
       </div>
 
       {/* Filters */}
-      <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',padding:'10px 12px',background:'#fff',border:'1px solid #dce8ff',borderRadius:10}}>
+      <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',padding:'10px 12px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:10}}>
         <span style={{fontSize:12,fontWeight:600,color:B.primary,alignSelf:'center'}}>Filtrar:</span>
-        <select value={filterAgent} onChange={e=>setFilterAgent(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+        <select value={filterAgent} onChange={e=>setFilterAgent(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
           <option value="all">Todos los brokers</option>
           {allAgents.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
-        <select value={filterInmob} onChange={e=>setFilterInmob(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+        <select value={filterInmob} onChange={e=>setFilterInmob(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
           <option value="all">Todas las inmobiliarias</option>
           {allInmobs.map(im=><option key={im} value={im}>{im}</option>)}
         </select>
-        <select value={filterOC} onChange={e=>setFilterOC(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+        <select value={filterOC} onChange={e=>setFilterOC(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
           <option value="all">Todos los estados OC</option>
           {OC_ESTADOS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
-        <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+        <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
           <option value="all">Todos</option>
           <option value="pendiente">⏳ Pago pendiente</option>
           <option value="cobrado">✅ Cobrado</option>
@@ -3232,7 +3238,7 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
         const agTotUSD = props.filter(p=>p.moneda==='USD').reduce((s,p)=>s+calc(p.bono_pie?p.precio_sin_bono:p.precio,getComm(p._key).pctComision,getComm(p._key).pctBroker,'USD',null).montoAsesor,0)
 
         return (
-          <div key={agId} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:14,marginBottom:16,overflow:'hidden'}}>
+          <div key={agId} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,marginBottom:16,overflow:'hidden'}}>
             {/* Broker header */}
             <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 16px',background:B.light,borderBottom:'1px solid #dce8ff',flexWrap:'wrap'}}>
               <AV name={ag.name} size={40}/>
@@ -3276,7 +3282,7 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
                     <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 16px',flexWrap:'wrap',background:comm.cobrado?'#f0fdf4':'#fff'}}>
                       {/* Property info */}
                       <div style={{minWidth:160,flex:2}}>
-                        <div style={{fontWeight:600,fontSize:13,color:'#111827'}}>{p.inmobiliaria} — {p.proyecto}{p.depto?' · '+p.depto:''}</div>
+                        <div style={{fontWeight:600,fontSize:13,color:'#0F172A'}}>{p.inmobiliaria} — {p.proyecto}{p.depto?' · '+p.depto:''}</div>
                         <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>
                           <strong>{p._leadNombre}</strong>
                           <span style={{marginLeft:5,padding:'1px 5px',borderRadius:99,background:tBg,color:tCol,fontSize:10,fontWeight:600}}>{p._leadTag}</span>
@@ -3292,12 +3298,12 @@ function ComisionesView({leads, users, stages, indicators, commissions, setCommi
                         <input type="number" min="0" max="100" step="0.1" value={comm.pctComision}
                           onChange={e=>setComm(p._key,'pctComision',e.target.value)}
                           placeholder="% c" title="% Comisión inmobiliaria"
-                          style={{width:52,fontSize:11,padding:'4px 6px',border:'1px solid #dce8ff',borderRadius:5,background:'#f9fbff'}}/>
+                          style={{width:52,fontSize:11,padding:'4px 6px',border:'1px solid #E2E8F0',borderRadius:5,background:'#f9fbff'}}/>
                         <span style={{fontSize:10,color:'#9ca3af'}}>/</span>
                         <input type="number" min="0" max="100" step="0.1" value={comm.pctBroker}
                           onChange={e=>setComm(p._key,'pctBroker',e.target.value)}
                           placeholder="% b" title="% Para el broker"
-                          style={{width:52,fontSize:11,padding:'4px 6px',border:'1px solid #dce8ff',borderRadius:5,background:'#f9fbff'}}/>
+                          style={{width:52,fontSize:11,padding:'4px 6px',border:'1px solid #E2E8F0',borderRadius:5,background:'#f9fbff'}}/>
                       </div>
 
                       {/* Result */}
@@ -3625,12 +3631,12 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
 
       {/* Progress bar cobrado vs pendiente */}
       {totalMiComisionUF > 0 && (
-        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px',marginBottom:16}}>
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:16}}>
           <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
             <span style={{fontSize:13,fontWeight:700,color:B.primary}}>Progreso de cobros</span>
             <span style={{fontSize:12,color:'#6b7280'}}>{Math.round(cobradoUF/totalMiComisionUF*100)}% cobrado</span>
           </div>
-          <div style={{height:12,background:'#f0f4ff',borderRadius:99,overflow:'hidden',marginBottom:8}}>
+          <div style={{height:12,background:'#F8FAFC',borderRadius:99,overflow:'hidden',marginBottom:8}}>
             <div style={{height:'100%',width:(cobradoUF/totalMiComisionUF*100)+'%',background:'linear-gradient(90deg,#22c55e,#16a34a)',borderRadius:99,transition:'width .5s ease'}}/>
           </div>
           <div style={{display:'flex',gap:16,fontSize:11,flexWrap:'wrap'}}>
@@ -3644,18 +3650,18 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
 
       {/* Filter bar */}
       {myProps.length > 0 && (
-        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'10px 14px',marginBottom:14,display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 14px',marginBottom:14,display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
           <span style={{fontSize:12,fontWeight:700,color:B.primary}}>🔍 Filtrar:</span>
-          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
             <option value="all">Todos los estados</option>
             <option value="pendiente">⏳ Pendiente de cobro</option>
             <option value="cobrado">✅ Cobrado</option>
           </select>
-          <select value={fInmob} onChange={e=>setFInmob(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+          <select value={fInmob} onChange={e=>setFInmob(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
             <option value="all">Todas las inmobiliarias</option>
             {allInmobsAgent.map(im=><option key={im} value={im}>{im}</option>)}
           </select>
-          <select value={fPeriod} onChange={e=>setFPeriod(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+          <select value={fPeriod} onChange={e=>setFPeriod(e.target.value)} style={{fontSize:12,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
             <option value="all">Todo el tiempo</option>
             <option value="this_month">Este mes</option>
             <option value="q1">Q1 (Ene-Mar)</option>
@@ -3676,7 +3682,7 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
       )}
 
       {myProps.length === 0 ? (
-        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'40px',textAlign:'center'}}>
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'40px',textAlign:'center'}}>
           <div style={{fontSize:40,marginBottom:12}}>🚀</div>
           <div style={{fontSize:15,fontWeight:700,color:B.primary,marginBottom:6}}>¡A cerrar negocios!</div>
           <div style={{fontSize:13,color:'#6b7280'}}>Cuando tengas propiedades en Firma Promesa o Firma Escritura aparecerán aquí con el detalle de tus comisiones.</div>
@@ -3688,14 +3694,14 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
               💼 {filteredProps.length===myProps.length?'Mis negocios en curso':'Resultados filtrados'} — {filteredProps.length} {filteredProps.length===1?'propiedad':'propiedades'}
             </span>
           </div>
-          {filteredProps.length===0 && <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:13,background:'#fff',borderRadius:10,border:'1px solid #dce8ff'}}>Sin propiedades con estos filtros</div>}
+          {filteredProps.length===0 && <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:13,background:'#fff',borderRadius:10,border:'1px solid #E2E8F0'}}>Sin propiedades con estos filtros</div>}
           {filteredProps.map((p,i) => {
             const ocInfo = OC_LABEL[p.oc_estado||'pendiente_oc']||OC_LABEL.pendiente_oc
             const stLab = (stages||[]).find(s=>s&&s.id===p.stage)?.label||(p.stage||'—')
             const needsBrokerInvoice = p.oc_estado==='broker_factura'
 
             return (
-              <div key={p.key} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,marginBottom:10,overflow:'hidden'}}>
+              <div key={p.key} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,marginBottom:10,overflow:'hidden'}}>
                 <div style={{display:'flex',alignItems:'stretch',gap:0}}>
                   {/* Left accent bar based on OC state */}
                   <div style={{width:5,flexShrink:0,background:ocInfo.col,borderRadius:'12px 0 0 12px'}}/>
@@ -3704,7 +3710,7 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
                     <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
                       {/* Deal info */}
                       <div style={{flex:1,minWidth:180}}>
-                        <div style={{fontWeight:700,fontSize:14,color:'#111827'}}>{p.inmobiliaria} — {p.proyecto}{p.depto?' · '+p.depto:''}</div>
+                        <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{p.inmobiliaria} — {p.proyecto}{p.depto?' · '+p.depto:''}</div>
                         <div style={{fontSize:12,color:'#6b7280',marginTop:2}}>
                           <strong>{p.leadNombre}</strong>
                           <span style={{marginLeft:8,padding:'1px 7px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontSize:11,fontWeight:600}}>{stLab}</span>
@@ -3728,7 +3734,7 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
                           </div>
                         </div>
                       ) : (
-                        <div style={{background:'#f9fbff',border:'1px solid #dce8ff',borderRadius:10,padding:'10px 14px',textAlign:'center',flexShrink:0}}>
+                        <div style={{background:'#f9fbff',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 14px',textAlign:'center',flexShrink:0}}>
                           <div style={{fontSize:11,color:'#9ca3af'}}>Finanzas está<br/>configurando %</div>
                         </div>
                       )}
@@ -3790,7 +3796,7 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
 
       {/* Monthly earnings if any paid */}
       {Object.keys(byMonth).length > 0 && (
-        <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px',marginTop:16}}>
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginTop:16}}>
           <div style={{fontSize:13,fontWeight:700,color:B.primary,marginBottom:10}}>📈 Historial de cobros</div>
           {Object.entries(byMonth).sort((a,b)=>b[0].localeCompare(a[0])).map(([mk,uf])=>{
             const [y,m] = mk.split('-')
@@ -3902,7 +3908,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
       {/* TAB: CONFIG */}
       {tab==='config' && (
         <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🤖 Identidad del bot</p>
             <Fld label="Nombre del bot"><input value={iaConfig.nombre} onChange={e=>upd(['nombre'],e.target.value)} style={sty.inp} placeholder="Ej: RabbittsBot"/></Fld>
             <div style={{marginTop:10}}>
@@ -3921,7 +3927,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
             </div>
           </div>
 
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>⏰ Horario de envío</p>
             <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:10}}>
               <Fld label="Desde"><input type="time" value={iaConfig.horarioDesde} onChange={e=>upd(['horarioDesde'],e.target.value)} style={sty.inp}/></Fld>
@@ -3939,7 +3945,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
             </div>
           </div>
 
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>📱 Integración WhatsApp</p>
             <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10}}>
               <Fld label="Proveedor">
@@ -3958,7 +3964,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Calificacion y Calendly */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🎯 Criterios de calificación</p>
             <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10}}>
               <Fld label="Renta mínima individual ($)">
@@ -3974,7 +3980,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Personalidad completa */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <p style={{margin:'0 0 6px',fontSize:13,fontWeight:700,color:B.primary}}>🧬 Personalidad del agente (system prompt)</p>
             <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Define quién es Rabito, su tono y sus reglas inamovibles.</p>
             <textarea value={iaConfig.personalidad||''} onChange={e=>upd(['personalidad'],e.target.value)}
@@ -3982,7 +3988,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Guion de ventas */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <p style={{margin:'0 0 6px',fontSize:13,fontWeight:700,color:B.primary}}>📋 Guion de ventas (flujo de conversación)</p>
             <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>El paso a paso que sigue Rabito: saludo, diagnóstico, calificación y cierre.</p>
             <textarea value={iaConfig.guion||''} onChange={e=>upd(['guion'],e.target.value)}
@@ -3990,14 +3996,14 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Ajustes de comportamiento */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>⚙️ Ajustes de comportamiento</p>
             <div style={{display:'flex',flexDirection:'column',gap:0}}>
 
               {/* Pausar al intervenir */}
               <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',padding:'14px 0',borderBottom:'1px solid #f0f4ff'}}>
                 <div style={{flex:1,paddingRight:16}}>
-                  <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>Pausar respuestas de Rabito al intervenir</div>
+                  <div style={{fontSize:13,fontWeight:600,color:'#0F172A'}}>Pausar respuestas de Rabito al intervenir</div>
                   <div style={{fontSize:11,color:'#6b7280',marginTop:3}}>Cuando un humano intervenga en la conversación, el contacto pasará a etapa humana y Rabito se detendrá. Si está desactivada, Rabito seguirá respondiendo aunque un humano intervenga.</div>
                 </div>
                 <button onClick={()=>upd(['pausarAlIntervenir'],!iaConfig.pausarAlIntervenir)}
@@ -4010,7 +4016,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
               {/* Rabito respondiendo global */}
               <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',padding:'14px 0',borderBottom:'1px solid #f0f4ff'}}>
                 <div style={{flex:1,paddingRight:16}}>
-                  <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>Rabito respondiendo</div>
+                  <div style={{fontSize:13,fontWeight:600,color:'#0F172A'}}>Rabito respondiendo</div>
                   <div style={{fontSize:11,color:'#6b7280',marginTop:3}}>Si está activada, Rabito responderá a todos los mensajes en tus canales conectados. Si está desactivada, Rabito no responderá ningún mensaje.</div>
                 </div>
                 <button onClick={()=>upd(['activo'],!iaConfig.activo)}
@@ -4024,7 +4030,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
               <div style={{padding:'14px 0',borderBottom:'1px solid #f0f4ff'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
                   <div>
-                    <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>Tiempo de espera de mensajes</div>
+                    <div style={{fontSize:13,fontWeight:600,color:'#0F172A'}}>Tiempo de espera de mensajes</div>
                     <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>El tiempo que Rabito esperará antes de responder, por si el cliente envía varios mensajes seguidos.</div>
                   </div>
                   <span style={{fontSize:13,fontWeight:700,color:B.primary,flexShrink:0,marginLeft:16}}>{iaConfig.tiempoEspera||7} segundos</span>
@@ -4040,7 +4046,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Notificaciones */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🔔 Canales de notificación</p>
             <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Elige dónde recibir notificaciones cuando un lead pasa a etapa humana</p>
             {[
@@ -4049,7 +4055,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
             ].map(({k,l,sub})=>(
               <div key={k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0',borderBottom:'1px solid #f0f4ff'}}>
                 <div>
-                  <div style={{fontSize:12,fontWeight:600,color:'#111827'}}>{l}</div>
+                  <div style={{fontSize:12,fontWeight:600,color:'#0F172A'}}>{l}</div>
                   <div style={{fontSize:11,color:'#6b7280'}}>{sub}</div>
                 </div>
                 <button onClick={()=>upd([k],!iaConfig[k])}
@@ -4062,7 +4068,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Tipos de notificación */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🔔 Tipos de notificación</p>
             <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Selecciona cuándo recibir notificaciones de etapa humana</p>
             {[
@@ -4071,7 +4077,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
             ].map(({k,l,sub})=>(
               <div key={k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0',borderBottom:'1px solid #f0f4ff'}}>
                 <div>
-                  <div style={{fontSize:12,fontWeight:600,color:'#111827'}}>{l}</div>
+                  <div style={{fontSize:12,fontWeight:600,color:'#0F172A'}}>{l}</div>
                   <div style={{fontSize:11,color:'#6b7280'}}>{sub}</div>
                 </div>
                 <button onClick={()=>upd([k],!iaConfig[k])}
@@ -4084,7 +4090,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Google Drive */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
               <img src="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" style={{width:24,height:24}} alt="Drive"/>
               <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>Google Drive — Base de conocimiento</p>
@@ -4139,19 +4145,19 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
       {tab==='eventos' && (
         <div>
           {/* Built-in events */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',marginBottom:12}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginBottom:12}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🔔 Eventos del sistema</p>
             <div style={{display:'flex',flexDirection:'column',gap:0}}>
               {EVENTOS_LIST.map((ev,i)=>(
                 <div key={ev.k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 0',borderBottom:i<EVENTOS_LIST.length-1?'1px solid #f0f4ff':'none'}}>
                   <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{ev.l}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:'#0F172A'}}>{ev.l}</div>
                     {ev.k==='inactividad' && iaConfig.eventos[ev.k] && (
                       <div style={{display:'flex',alignItems:'center',gap:8,marginTop:5}}>
                         <span style={{fontSize:11,color:'#6b7280'}}>Avisar después de</span>
                         <input type="number" min="1" max="30" value={iaConfig.eventos.diasInactividad||7}
                           onChange={e=>upd(['eventos','diasInactividad'],parseInt(e.target.value))}
-                          style={{width:50,fontSize:11,padding:'3px 6px',border:'1px solid #dce8ff',borderRadius:5}}/>
+                          style={{width:50,fontSize:11,padding:'3px 6px',border:'1px solid #E2E8F0',borderRadius:5}}/>
                         <span style={{fontSize:11,color:'#6b7280'}}>días sin actividad</span>
                       </div>
                     )}
@@ -4170,7 +4176,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Custom events */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',marginBottom:12}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginBottom:12}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>➕ Crear evento personalizado</p>
             <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:10,marginBottom:10}}>
               <Fld label="Nombre del evento">
@@ -4203,12 +4209,12 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
 
           {/* Custom events list */}
           {(iaConfig.customEventos||[]).length > 0 && (
-            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
               <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>📋 Eventos personalizados</p>
               {(iaConfig.customEventos||[]).map((ev,i)=>(
                 <div key={ev.k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 0',borderBottom:i<(iaConfig.customEventos||[]).length-1?'1px solid #f0f4ff':'none'}}>
                   <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{ev.l}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:'#0F172A'}}>{ev.l}</div>
                     {ev.desc&&<div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{ev.desc}</div>}
                     <div style={{fontSize:11,color:B.mid,marginTop:2,fontStyle:'italic'}}>{iaConfig.plantillas[ev.k]?.slice(0,60)}...</div>
                   </div>
@@ -4247,7 +4253,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
             {k:'brokerPagar', l:'Inmobiliaria pagó — broker debe facturar'},
             {k:'inactividad', l:'Recordatorio de inactividad'},
           ].map(({k,l})=>(
-            <div key={k} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px'}}>
+            <div key={k} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
                 <span style={{fontSize:12,fontWeight:700,color:B.primary}}>{l}</span>
                 <button onClick={()=>previewTemplate(k)}
@@ -4261,7 +4267,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
               {previewPlant?.key===k && (
                 <div style={{marginTop:8,padding:'10px 14px',background:'#F0FDF4',border:'1px solid #86efac',borderRadius:8}}>
                   <div style={{fontSize:10,color:'#166534',fontWeight:600,marginBottom:4}}>📱 Vista previa (datos de ejemplo):</div>
-                  <div style={{fontSize:12,color:'#111827',whiteSpace:'pre-wrap'}}>{previewPlant.filled}</div>
+                  <div style={{fontSize:12,color:'#0F172A',whiteSpace:'pre-wrap'}}>{previewPlant.filled}</div>
                 </div>
               )}
             </div>
@@ -4269,7 +4275,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
 
           {/* Custom plantillas */}
           {(iaConfig.customEventos||[]).map(ev=>(
-            <div key={ev.k} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px',position:'relative'}}>
+            <div key={ev.k} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',position:'relative'}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
                 <span style={{fontSize:12,fontWeight:700,color:B.primary}}>{ev.l} <span style={{fontSize:10,color:'#9ca3af',fontWeight:400}}>(personalizado)</span></span>
               </div>
@@ -4313,7 +4319,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           {/* Add new pair */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'14px 16px',marginBottom:14}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:14}}>
             <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:B.primary}}>➕ Agregar nueva pregunta</p>
             <Fld label="Pregunta del broker"><input value={newPair.pregunta} onChange={e=>setNewPair(p=>({...p,pregunta:e.target.value}))} placeholder="Ej: ¿Cuándo me pagan mi comisión?" style={sty.inp}/></Fld>
             <div style={{marginTop:8}}>
@@ -4332,7 +4338,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           {/* Existing pairs */}
           <div style={{display:'flex',flexDirection:'column',gap:8}}>
             {(iaConfig.entrenamiento||[]).map((par,idx)=>(
-              <div key={idx} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'12px 14px'}}>
+              <div key={idx} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,padding:'12px 14px'}}>
                 {editIdx===idx ? (
                   <div>
                     <Fld label="Pregunta"><input value={par.pregunta} onChange={e=>{ const t=[...iaConfig.entrenamiento]; t[idx]={...t[idx],pregunta:e.target.value}; upd(['entrenamiento'],t) }} style={sty.inp}/></Fld>
@@ -4344,11 +4350,11 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
                 ) : (
                   <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:12,fontWeight:700,color:'#111827',marginBottom:3}}>❓ {par.pregunta}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:'#0F172A',marginBottom:3}}>❓ {par.pregunta}</div>
                       <div style={{fontSize:12,color:'#6b7280'}}>💬 {par.respuesta}</div>
                     </div>
                     <div style={{display:'flex',gap:4,flexShrink:0}}>
-                      <button onClick={()=>setEditIdx(idx)} style={{fontSize:11,padding:'3px 8px',borderRadius:5,border:'1px solid #dce8ff',background:'#f9fbff',cursor:'pointer',color:B.primary}}>Editar</button>
+                      <button onClick={()=>setEditIdx(idx)} style={{fontSize:11,padding:'3px 8px',borderRadius:5,border:'1px solid #E2E8F0',background:'#f9fbff',cursor:'pointer',color:B.primary}}>Editar</button>
                       <button onClick={()=>{ const t=[...iaConfig.entrenamiento]; t.splice(idx,1); upd(['entrenamiento'],t) }} style={{fontSize:11,padding:'3px 8px',borderRadius:5,border:'1px solid #fca5a5',background:'#FEF2F2',cursor:'pointer',color:'#991b1b'}}>Eliminar</button>
                     </div>
                   </div>
@@ -4396,13 +4402,13 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           )}
 
           {/* Live test chat */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
             <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:B.primary}}>💬 Probar a Rabito en vivo</p>
             <RabitoChat iaConfig={iaConfig}/>
           </div>
 
           {/* Message log placeholder */}
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px',marginTop:12}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginTop:12}}>
             <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:B.primary}}>📨 Log de mensajes WhatsApp</p>
             <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:12,background:'#f9fbff',borderRadius:8}}>
               <div style={{fontSize:28,marginBottom:6}}>📱</div>
@@ -4480,7 +4486,7 @@ function RabitoChat({iaConfig}) {
         </div>
       )}
       {/* Chat */}
-      <div style={{height:280,overflowY:'auto',display:'flex',flexDirection:'column',gap:8,padding:'8px',background:'#f9fbff',borderRadius:8,marginBottom:10,border:'1px solid #dce8ff'}}>
+      <div style={{height:280,overflowY:'auto',display:'flex',flexDirection:'column',gap:8,padding:'8px',background:'#f9fbff',borderRadius:8,marginBottom:10,border:'1px solid #E2E8F0'}}>
         {msgs.map((m,i)=>(
           <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
             <div style={{maxWidth:'75%',padding:'8px 12px',borderRadius:m.role==='user'?'12px 12px 2px 12px':'12px 12px 12px 2px',background:m.role==='user'?B.primary:'#fff',color:m.role==='user'?'#fff':'#111827',fontSize:12,border:m.role==='assistant'?'1px solid #dce8ff':'none',lineHeight:1.5}}>
@@ -4490,7 +4496,7 @@ function RabitoChat({iaConfig}) {
         ))}
         {loading && (
           <div style={{display:'flex',justifyContent:'flex-start'}}>
-            <div style={{padding:'8px 14px',borderRadius:'12px 12px 12px 2px',background:'#fff',border:'1px solid #dce8ff',fontSize:12,color:'#9ca3af'}}>
+            <div style={{padding:'8px 14px',borderRadius:'12px 12px 12px 2px',background:'#fff',border:'1px solid #E2E8F0',fontSize:12,color:'#9ca3af'}}>
               Rabito esta escribiendo...
             </div>
           </div>
@@ -4693,7 +4699,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
       {/* TAB: BANDEJA */}
       {tab==='bandeja' && (
-        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'320px 1fr',gap:0,height:isMobile?'calc(100vh - 120px)':'calc(100vh - 200px)',border:'1px solid #dce8ff',borderRadius:12,overflow:'hidden'}}>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'320px 1fr',gap:0,height:isMobile?'calc(100vh - 120px)':'calc(100vh - 200px)',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
           {/* Left: conversation list */}
           <div style={{borderRight:'1px solid #dce8ff',display:'flex',flexDirection:'column',background:'#fff'}}>
             {/* Filters */}
@@ -4720,7 +4726,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                   <div key={conv.id} onClick={()=>setActiveConv(conv)}
                     style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:isActive?B.light:'#fff',transition:'background .15s'}}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:3}}>
-                      <div style={{fontWeight:600,fontSize:13,color:'#111827'}}>{conv.nombre||conv.telefono}</div>
+                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A'}}>{conv.nombre||conv.telefono}</div>
                       <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
                         <span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:conv.mode==='ia'?'#E8EFFE':'#FEF9C3',color:conv.mode==='ia'?B.primary:'#713f12',fontWeight:700}}>
                           {conv.mode==='ia'?'🤖':'👤'}
@@ -4743,7 +4749,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
               <div style={{padding:'10px 16px',borderBottom:'1px solid #dce8ff',background:'#fff',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
                 <AV name={activeConv.nombre||activeConv.telefono} size={36}/>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:14,color:'#111827'}}>{activeConv.nombre||activeConv.telefono}</div>
+                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{activeConv.nombre||activeConv.telefono}</div>
                   <div style={{fontSize:11,color:'#6b7280'}}>{activeConv.telefono}{activeConv.renta?' · Renta: '+activeConv.renta:''}{activeConv.modelo?' · '+activeConv.modelo:''}</div>
                 </div>
                 <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap'}}>
@@ -4764,7 +4770,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                   {activeConv.lead_id && <span style={{fontSize:11,padding:'5px 10px',borderRadius:8,background:'#DCFCE7',color:'#14532d',fontWeight:600}}>✅ Lead en CRM</span>}
                   {/* Status */}
                   <select value={activeConv.status||'activo'} onChange={e=>upsertConversation({...activeConv,status:e.target.value,updated_at:new Date().toISOString()})}
-                    style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',cursor:'pointer'}}>
+                    style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
                     <option value="activo">Activo</option>
                     <option value="calificado">Calificado</option>
                     <option value="no_interesado">No interesado</option>
@@ -4835,7 +4841,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
       {tab==='masivo' && (
           <div>
           {/* Target toggle */}
-          <div style={{display:'flex',gap:8,marginBottom:16,padding:'10px 14px',background:'#fff',border:'1px solid #dce8ff',borderRadius:10}}>
+          <div style={{display:'flex',gap:8,marginBottom:16,padding:'10px 14px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:10}}>
             <span style={{fontSize:12,fontWeight:600,color:B.primary,alignSelf:'center'}}>Enviar a:</span>
             <button onClick={()=>setMasivoTarget('leads')}
               style={{fontSize:12,padding:'6px 16px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,
@@ -4851,7 +4857,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
           <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?10:16}}>
             {/* Message composer */}
-            <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
               <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>
                 {masivoTarget==='leads'?'📣 Mensaje masivo a leads':'📧 Mensaje al equipo'}
               </p>
@@ -4898,12 +4904,12 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
             {/* Selector panel */}
             {masivoTarget==='leads' ? (
-              <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+              <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                   <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>📱 Contactos WhatsApp</p>
                   <div style={{display:'flex',gap:6}}>
                     <button onClick={()=>setSelectedConvs(conversations.map(c=>c.id))} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:`1px solid ${B.primary}`,background:B.light,color:B.primary,cursor:'pointer'}}>Todos</button>
-                    <button onClick={()=>setSelectedConvs([])} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',color:'#6b7280',cursor:'pointer'}}>Ninguno</button>
+                    <button onClick={()=>setSelectedConvs([])} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',color:'#6b7280',cursor:'pointer'}}>Ninguno</button>
                   </div>
                 </div>
                 <div style={{display:'flex',gap:4,marginBottom:8,flexWrap:'wrap'}}>
@@ -4913,7 +4919,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                     {l:'Sin respuesta 24h',f:()=>setSelectedConvs(conversations.filter(c=>(Date.now()-new Date(c.updated_at||0).getTime())>86400000).map(c=>c.id))},
                     {l:'Fríos',f:()=>setSelectedConvs(conversations.filter(c=>c.status==='frio').map(c=>c.id))},
                   ].map(({l,f})=>(
-                    <button key={l} onClick={f} style={{fontSize:10,padding:'3px 8px',borderRadius:6,border:'1px solid #dce8ff',background:'#f9fbff',color:B.mid,cursor:'pointer'}}>{l}</button>
+                    <button key={l} onClick={f} style={{fontSize:10,padding:'3px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#f9fbff',color:B.mid,cursor:'pointer'}}>{l}</button>
                   ))}
                 </div>
                 <div style={{maxHeight:280,overflowY:'auto',border:'1px solid #f0f4ff',borderRadius:8}}>
@@ -4934,12 +4940,12 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                 <div style={{marginTop:6,fontSize:11,color:B.mid,textAlign:'right'}}>{selectedConvs.length} seleccionados</div>
               </div>
             ) : (
-              <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+              <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                   <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>👥 Equipo interno</p>
                   <div style={{display:'flex',gap:6}}>
                     <button onClick={()=>setSelectedUsers((users||[]).filter(u=>u.role!=='partner').map(u=>u.id))} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:`1px solid ${B.primary}`,background:B.light,color:B.primary,cursor:'pointer'}}>Todos</button>
-                    <button onClick={()=>setSelectedUsers([])} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#fff',color:'#6b7280',cursor:'pointer'}}>Ninguno</button>
+                    <button onClick={()=>setSelectedUsers([])} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',color:'#6b7280',cursor:'pointer'}}>Ninguno</button>
                   </div>
                 </div>
                 <div style={{display:'flex',gap:4,marginBottom:8,flexWrap:'wrap'}}>
@@ -4951,7 +4957,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                       <button key={role} onClick={()=>{
                         const ids=ru.map(u=>u.id)
                         setSelectedUsers(prev=>ids.every(id=>prev.includes(id))?prev.filter(id=>!ids.includes(id)):[...new Set([...prev,...ids])])
-                      }} style={{fontSize:10,padding:'3px 10px',borderRadius:6,border:'1px solid #dce8ff',background:'#f9fbff',color:B.mid,cursor:'pointer'}}>
+                      }} style={{fontSize:10,padding:'3px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#f9fbff',color:B.mid,cursor:'pointer'}}>
                         {label} ({ru.length})
                       </button>
                     )
@@ -4984,7 +4990,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
       {/* TAB: NUEVA */}
       {tab==='nuevo' && (
         <div style={{maxWidth:400}}>
-          <div style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:12,padding:'16px'}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>➕ Iniciar nueva conversación</p>
             <Fld label="Teléfono (con código país)">
               <input value={newConvPhone} onChange={e=>setNewConvPhone(e.target.value)} placeholder="+56912345678" style={sty.inp}/>
@@ -5013,9 +5019,9 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
   const ag = (users||[]).find(u=>u.id===lead.assigned_to)
   const cal = CAL[lead.calificacion]
   return (
-    <div onClick={onOpen} style={{background:'#fff',border:'1px solid #dce8ff',borderRadius:10,padding:'10px 10px',cursor:'pointer',marginBottom:8,boxShadow:'0 1px 4px rgba(27,79,200,0.05)',wordBreak:'break-word'}}>
+    <div onClick={onOpen} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 10px',cursor:'pointer',marginBottom:8,boxShadow:'0 1px 4px rgba(27,79,200,0.05)',wordBreak:'break-word'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
-        <div style={{fontWeight:600,fontSize:13,color:'#111827',lineHeight:1.3,flex:1,marginRight:6}}>{lead.nombre}</div>
+        <div style={{fontWeight:600,fontSize:13,color:'#0F172A',lineHeight:1.3,flex:1,marginRight:6}}>{lead.nombre}</div>
         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3,flexShrink:0}}>
           <Days d={daysIn(lead)}/>
           {cal&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:cal.bg,color:cal.col,fontWeight:600}}>{lead.calificacion}</span>}
@@ -5040,7 +5046,7 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
         }
         return (
           <div style={{display:'flex',gap:4,marginTop:8}} onClick={e=>e.stopPropagation()}>
-            {si>0&&!RESTRICTED_STAGES.includes(stages[si-1]?.id)&&<button onClick={()=>onMove(lead.id,stages[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #dce8ff',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
+            {si>0&&!RESTRICTED_STAGES.includes(stages[si-1]?.id)&&<button onClick={()=>onMove(lead.id,stages[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #E2E8F0',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
             {si<stages.length-1&&(()=>{
               const nextStage = stages[si+1]
               const isRestricted = RESTRICTED_STAGES.includes(nextStage?.id)
