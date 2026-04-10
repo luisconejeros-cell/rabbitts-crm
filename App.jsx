@@ -1073,7 +1073,7 @@ export default function App() {
       <div style={{padding:16}}>
 
         {/* KANBAN */}
-        {(nav==='kanban'||nav==='pool') && (
+        {(nav==='kanban'||nav==='pool') && !isFinanzas && (
           <div>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8}}>
               <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
