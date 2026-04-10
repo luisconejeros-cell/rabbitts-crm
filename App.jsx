@@ -3216,8 +3216,11 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
   const pendienteUF  = myProps.filter(p=>p.moneda==='UF' && !isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
   const cobradoUSD   = myProps.filter(p=>p.moneda==='USD'&&  isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
   const pendienteUSD = myProps.filter(p=>p.moneda==='USD'&& !isCobrado(p) && p.miComision>0).reduce((s,p)=>s+p.miComision,0)
-  const cobradoCLP   = myProps.filter(p=>isCobrado(p)  && p.clp).reduce((s,p)=>s+(p.clp||0),0)
-  const pendienteCLP = myProps.filter(p=>!isCobrado(p) && p.clp).reduce((s,p)=>s+(p.clp||0),0)
+  // CLP separated by currency to avoid mixing UF and USD under same box
+  const cobradoCLP   = myProps.filter(p=>p.moneda==='UF' && isCobrado(p)  && p.clp).reduce((s,p)=>s+(p.clp||0),0)
+  const pendienteCLP = myProps.filter(p=>p.moneda==='UF' && !isCobrado(p) && p.clp).reduce((s,p)=>s+(p.clp||0),0)
+  const cobradoUSDclp   = myProps.filter(p=>p.moneda==='USD'&&  isCobrado(p) && p.clp).reduce((s,p)=>s+(p.clp||0),0)
+  const pendienteUSDclp = myProps.filter(p=>p.moneda==='USD'&& !isCobrado(p) && p.clp).reduce((s,p)=>s+(p.clp||0),0)
 
   // Ranking vs all agents
   const allAgents = (users||[]).filter(u=>u.role==='agent')
@@ -3271,8 +3274,8 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
             {l:'✅ Ya cobrado (UF)',    v:'UF '+fmt2(cobradoUF),          sub:cobradoCLP>0?'$'+cobradoCLP.toLocaleString('es-CL')+' CLP':null},
             {l:'⏳ Pendiente (UF)',     v:'UF '+fmt2(pendienteUF),        sub:pendienteCLP>0?'$'+pendienteCLP.toLocaleString('es-CL')+' CLP':null},
             ...(totalMiComisionUSD>0?[
-              {l:'✅ Cobrado (USD)',    v:'USD '+fmt2(cobradoUSD),         sub:null},
-              {l:'⏳ Pendiente (USD)',  v:'USD '+fmt2(pendienteUSD),       sub:null},
+              {l:'✅ Cobrado (USD)',    v:'USD '+fmt2(cobradoUSD),   sub:cobradoUSDclp>0?'$'+cobradoUSDclp.toLocaleString('es-CL')+' CLP':null},
+              {l:'⏳ Pendiente (USD)',  v:'USD '+fmt2(pendienteUSD), sub:pendienteUSDclp>0?'$'+pendienteUSDclp.toLocaleString('es-CL')+' CLP':null},
             ]:[]),
           ].map((k,i) => (
             <div key={i} style={{background:'rgba(255,255,255,0.13)',borderRadius:10,padding:'10px 12px',backdropFilter:'blur(4px)'}}>
@@ -3297,8 +3300,8 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
           <div style={{display:'flex',gap:16,fontSize:11,flexWrap:'wrap'}}>
             <span style={{color:'#166534'}}>✅ Cobrado: UF {fmt2(cobradoUF)}{cobradoCLP>0?' ($'+cobradoCLP.toLocaleString('es-CL')+')':''}</span>
             <span style={{color:'#9a3412'}}>⏳ Pendiente: UF {fmt2(pendienteUF)}{pendienteCLP>0?' ($'+pendienteCLP.toLocaleString('es-CL')+')':''}</span>
-            {cobradoUSD>0&&<span style={{color:'#166534'}}>✅ USD {fmt2(cobradoUSD)}</span>}
-            {pendienteUSD>0&&<span style={{color:'#9a3412'}}>⏳ USD {fmt2(pendienteUSD)}</span>}
+            {cobradoUSD>0&&<span style={{color:'#166534'}}>✅ USD {fmt2(cobradoUSD)}{cobradoUSDclp>0?' ($'+cobradoUSDclp.toLocaleString('es-CL')+')':''}</span>}
+            {pendienteUSD>0&&<span style={{color:'#9a3412'}}>⏳ USD {fmt2(pendienteUSD)}{pendienteUSDclp>0?' ($'+pendienteUSDclp.toLocaleString('es-CL')+')':''}</span>}
           </div>
         </div>
       )}
