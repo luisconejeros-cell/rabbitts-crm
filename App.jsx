@@ -4392,6 +4392,8 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   const [masivo, setMasivo] = useState({msg:'', plantilla:'asignacion'})
   const [masivoSending, setMasivoSending] = useState(false)
   const [masivoResult, setMasivoResult] = useState(null)
+  const [masivoTarget, setMasivoTarget] = useState('leads')
+  const [selectedUsers, setSelectedUsers] = useState([])
   const messagesEndRef = useRef(null)
   const agents = (users||[]).filter(u=>u.role==='agent')
 
@@ -4666,8 +4668,6 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
       {/* TAB: MASIVO */}
       {tab==='masivo' && (() => {
-        const [masivoTarget, setMasivoTarget] = useState('leads') // leads | equipo
-        const [selectedUsers, setSelectedUsers] = useState([])
         const teamUsers = (users||[]).filter(u=>u.role!=='partner')
         const roleLabel = r => ({admin:'Admin',agent:'Asesor',operaciones:'Operaciones',finanzas:'Finanzas'}[r]||r)
 
