@@ -1153,7 +1153,7 @@ export default function App() {
     : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','ia','conversaciones','etapas','importar','extraer']
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','ia','conversaciones','agenda','etapas','importar','extraer']
             : isPartner  ? ['dashboard','pool']
             : isOps      ? ['kanban','lista']
             : isFinanzas ? ['dashboard_finanzas','comisiones']
@@ -2885,6 +2885,11 @@ export default function App() {
           />
         )}
 
+        {/* AGENDA EQUIPO — admin config */}
+        {nav==='agenda' && isAdmin && (
+          <AgendaEquipoView users={users} setUsers={setUsers} saveUsers={saveUsers}/>
+        )}
+
         {/* MI AGENDA — broker availability config */}
         {nav==='mi agenda' && isAgent && (
           <MiAgendaView me={me} users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady}/>
@@ -3202,70 +3207,6 @@ export default function App() {
             </select>
           </Fld>
 
-          {/* Agenda config — solo para agentes */}
-          {editUser.role==='agent' && (
-            <div style={{marginTop:10,padding:'12px 14px',background:'#f8fafc',border:'1px solid #E2E8F0',borderRadius:10}}>
-              <div style={{fontWeight:700,fontSize:12,color:B.primary,marginBottom:10}}>📅 Configuración de agenda (admin)</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-                <Fld label="Prioridad (1-10)">
-                  <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <input type="range" min={1} max={10}
-                      value={editUser.agenda_config?.peso||5}
-                      onChange={e=>setEditUser(p=>({...p,agenda_config:{...(p.agenda_config||{}),peso:parseInt(e.target.value)}}))}
-                      style={{flex:1,accentColor:B.primary}}/>
-                    <span style={{fontWeight:700,color:B.primary,minWidth:20}}>{editUser.agenda_config?.peso||5}</span>
-                  </div>
-                </Fld>
-                <Fld label="Duración reunión">
-                  <select value={editUser.agenda_config?.duracion||60}
-                    onChange={e=>setEditUser(p=>({...p,agenda_config:{...(p.agenda_config||{}),duracion:parseInt(e.target.value)}}))}
-                    style={sty.sel}>
-                    <option value={30}>30 min</option>
-                    <option value={45}>45 min</option>
-                    <option value={60}>1 hora</option>
-                    <option value={90}>1.5 horas</option>
-                  </select>
-                </Fld>
-              </div>
-              <Fld label="Anticipación mínima">
-                <select value={editUser.agenda_config?.anticipacion||12}
-                  onChange={e=>setEditUser(p=>({...p,agenda_config:{...(p.agenda_config||{}),anticipacion:parseInt(e.target.value)}}))}
-                  style={sty.sel}>
-                  <option value={6}>6 horas antes</option>
-                  <option value={12}>12 horas antes</option>
-                  <option value={24}>24 horas antes</option>
-                  <option value={48}>48 horas antes</option>
-                </select>
-              </Fld>
-              <div style={{marginTop:8}}>
-                <div style={{fontSize:11,fontWeight:600,color:'#374151',marginBottom:6}}>Ingresos que atiende</div>
-                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                  {[
-                    {k:'cualquiera',l:'Cualquier ingreso'},
-                    {k:'bajo',l:'$1.5M–$2.5M'},
-                    {k:'medio',l:'$2.5M–$5M'},
-                    {k:'alto',l:'$5M+'},
-                  ].map(({k,l})=>{
-                    const cats = editUser.agenda_config?.ingresos_categorias||['cualquiera']
-                    const sel = cats.includes(k)
-                    return (
-                      <button key={k} onClick={()=>{
-                        let next
-                        if (k==='cualquiera') { next=['cualquiera'] }
-                        else { next = cats.includes('cualquiera') ? [k] : sel ? (cats.filter(c=>c!==k)||['cualquiera']) : [...cats.filter(c=>c!=='cualquiera'),k] }
-                        if (!next.length) next=['cualquiera']
-                        setEditUser(p=>({...p,agenda_config:{...(p.agenda_config||{}),ingresos_categorias:next}}))
-                      }} style={{fontSize:11,padding:'4px 10px',borderRadius:99,cursor:'pointer',fontWeight:600,
-                        border:sel?`2px solid ${B.primary}`:'1px solid #E2E8F0',
-                        background:sel?B.light:'#fff',color:sel?B.primary:'#6b7280'}}>
-                        {l}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
           <div style={{display:'flex',gap:8,marginTop:4}}>
             <button
               onClick={()=>{
@@ -5345,6 +5286,190 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
+function AgendaEquipoView({users, setUsers, saveUsers}) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+  const agentes = (users||[]).filter(u => u.role === 'agent')
+  const [editingId, setEditingId] = React.useState(null)
+  const [saving, setSaving] = React.useState(false)
+  const [localConfigs, setLocalConfigs] = React.useState(() => {
+    const map = {}
+    agentes.forEach(u => { map[u.id] = u.agenda_config || {activa:false,peso:5,duracion:60,anticipacion:12,ingresos_categorias:['cualquiera'],dias:{}} })
+    return map
+  })
+
+  const updConfig = (userId, field, val) => {
+    setLocalConfigs(prev => ({...prev, [userId]: {...prev[userId], [field]: val}}))
+  }
+
+  const saveAll = async () => {
+    setSaving(true)
+    const updated = (users||[]).map(u => {
+      if (u.role !== 'agent') return u
+      return {...u, agenda_config: {...(u.agenda_config||{}), ...localConfigs[u.id]}}
+    })
+    await saveUsers(updated)
+    setSaving(false)
+  }
+
+  const agendaLink = 'https://crm.rabbittscapital.com/agenda'
+
+  const ingresosOptions = [
+    {k:'cualquiera', l:'Cualquier ingreso', col:'#6b7280'},
+    {k:'bajo',       l:'$1.5M – $2.5M',    col:'#0891b2'},
+    {k:'medio',      l:'$2.5M – $5M',      col:'#7c3aed'},
+    {k:'alto',       l:'$5M+',             col:'#059669'},
+  ]
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E2E8F0',flexWrap:'wrap'}}>
+        <div style={{fontSize:28}}>📅</div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Agenda del Equipo</div>
+          <div style={{fontSize:12,color:B.mid}}>Configura quién recibe reuniones, con qué prioridad y qué tipo de clientes</div>
+        </div>
+        <button onClick={saveAll} disabled={saving}
+          style={{...sty.btnP,minWidth:120,flexShrink:0}}>
+          {saving?'Guardando...':'💾 Guardar todo'}
+        </button>
+      </div>
+
+      {/* Link público */}
+      <div style={{background:B.light,border:'1px solid #BFDBFE',borderRadius:12,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:11,fontWeight:700,color:B.primary,marginBottom:2}}>🔗 Link público de agenda para clientes</div>
+          <div style={{fontSize:12,color:'#0F172A',wordBreak:'break-all'}}>{agendaLink}</div>
+        </div>
+        <button onClick={()=>navigator.clipboard?.writeText(agendaLink).then(()=>alert('Copiado'))}
+          style={{...sty.btn,fontSize:12,flexShrink:0}}>Copiar link</button>
+      </div>
+
+      {/* Broker cards */}
+      {agentes.length === 0 && (
+        <div style={{textAlign:'center',padding:'40px',color:'#9ca3af',fontSize:14}}>
+          No hay asesores registrados aún
+        </div>
+      )}
+
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        {agentes.map(u => {
+          const cfg = localConfigs[u.id] || {}
+          const isOpen = editingId === u.id
+          const cats = cfg.ingresos_categorias || ['cualquiera']
+          const diasActivos = Object.entries(cfg.dias||{}).filter(([,d])=>d.activo).length
+
+          return (
+            <div key={u.id} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden',
+              boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
+              {/* Broker header row */}
+              <div style={{display:'flex',alignItems:'center',gap:12,padding:'14px 16px',cursor:'pointer'}}
+                onClick={()=>setEditingId(isOpen?null:u.id)}>
+                <AV name={u.name} size={38} src={u.avatar_url||null}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{u.name}</div>
+                  <div style={{fontSize:11,color:'#9ca3af',marginTop:2,display:'flex',gap:8,flexWrap:'wrap'}}>
+                    {u.google_tokens ? <span style={{color:'#14532d',fontWeight:600}}>✅ Google Calendar</span> : <span>❌ Sin Calendar</span>}
+                    <span>·</span>
+                    <span>{diasActivos > 0 ? `${diasActivos} días configurados` : 'Sin horario'}</span>
+                    <span>·</span>
+                    <span>Prioridad {cfg.peso||5}</span>
+                  </div>
+                </div>
+                {/* Recibe reuniones toggle */}
+                <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                  <span style={{fontSize:11,color:B.mid,display:isMobile?'none':'block'}}>Recibe reuniones</span>
+                  <button onClick={e=>{e.stopPropagation();updConfig(u.id,'activa',!cfg.activa)}}
+                    style={{width:44,height:24,borderRadius:99,border:'none',cursor:'pointer',position:'relative',
+                      background:cfg.activa?B.primary:'#CBD5E1',transition:'background .2s',flexShrink:0}}>
+                    <div style={{position:'absolute',top:2,left:cfg.activa?22:2,width:20,height:20,borderRadius:'50%',
+                      background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+                  </button>
+                  <span style={{fontSize:14,color:'#9ca3af',marginLeft:4}}>{isOpen?'▲':'▼'}</span>
+                </div>
+              </div>
+
+              {/* Expanded config */}
+              {isOpen && (
+                <div style={{borderTop:'1px solid #f0f4ff',padding:'16px',background:'#f9fbff'}}>
+                  <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:12,marginBottom:14}}>
+                    {/* Prioridad */}
+                    <div>
+                      <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>Prioridad (1=baja · 10=alta)</div>
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <input type="range" min={1} max={10} value={cfg.peso||5}
+                          onChange={e=>updConfig(u.id,'peso',parseInt(e.target.value))}
+                          style={{flex:1,accentColor:B.primary}}/>
+                        <span style={{fontWeight:800,fontSize:16,color:B.primary,minWidth:24,textAlign:'center'}}>{cfg.peso||5}</span>
+                      </div>
+                      <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>Quien tiene 10 recibe más reuniones</div>
+                    </div>
+
+                    {/* Duración */}
+                    <div>
+                      <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>Duración de reunión</div>
+                      <select value={cfg.duracion||60} onChange={e=>updConfig(u.id,'duracion',parseInt(e.target.value))} style={sty.sel}>
+                        <option value={30}>30 minutos</option>
+                        <option value={45}>45 minutos</option>
+                        <option value={60}>1 hora</option>
+                        <option value={90}>1.5 horas</option>
+                      </select>
+                    </div>
+
+                    {/* Anticipación */}
+                    <div>
+                      <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>Anticipación mínima</div>
+                      <select value={cfg.anticipacion||12} onChange={e=>updConfig(u.id,'anticipacion',parseInt(e.target.value))} style={sty.sel}>
+                        <option value={6}>6 horas antes</option>
+                        <option value={12}>12 horas antes</option>
+                        <option value={24}>24 horas antes</option>
+                        <option value={48}>48 horas antes</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Ingresos */}
+                  <div style={{marginBottom:14}}>
+                    <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:8}}>💰 Ingresos de clientes que atiende</div>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                      {ingresosOptions.map(({k,l,col})=>{
+                        const sel = cats.includes(k)
+                        return (
+                          <button key={k} onClick={()=>{
+                            let next
+                            if (k==='cualquiera') { next=['cualquiera'] }
+                            else { next = cats.includes('cualquiera') ? [k] : sel ? (cats.filter(c=>c!==k)||['cualquiera']) : [...cats.filter(c=>c!=='cualquiera'),k] }
+                            if (!next.length) next=['cualquiera']
+                            updConfig(u.id,'ingresos_categorias',next)
+                          }} style={{fontSize:12,padding:'6px 14px',borderRadius:99,cursor:'pointer',fontWeight:600,
+                            border:sel?`2px solid ${col}`:'1px solid #E2E8F0',
+                            background:sel?col+'15':'#fff',color:sel?col:'#6b7280'}}>
+                            {l}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Horario del broker (read-only summary) */}
+                  <div style={{padding:'10px 14px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:8,fontSize:12,color:'#6b7280'}}>
+                    <span style={{fontWeight:600,color:'#374151'}}>🕐 Horario configurado por el broker: </span>
+                    {diasActivos > 0 
+                      ? Object.entries(cfg.dias||{}).filter(([,d])=>d.activo).map(([dk,d])=>`${dk} ${d.desde}-${d.hasta}`).join(' · ')
+                      : 'No ha configurado su horario aún'
+                    }
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
