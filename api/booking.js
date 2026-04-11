@@ -20,7 +20,10 @@ export default async function handler(req, res) {
   const sbPost = async (table, data) => {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
       method: 'POST',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+      headers: {
+        'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json', 'Prefer': 'return=representation'
+      },
       body: JSON.stringify(data)
     })
     const text = await r.text()
@@ -28,59 +31,54 @@ export default async function handler(req, res) {
     catch(e) { return { ok: r.ok, status: r.status, data: text } }
   }
 
-  // Santiago timezone offset (dynamic — handles summer/winter automatically)
-  const getSantiagoISO = (dateStr, timeStr) => {
-    // Calculate real offset for America/Santiago at this moment
-    const now = new Date()
-    const santiagoParts = new Intl.DateTimeFormat('en-US', {
+  /**
+   * Convert a local Santiago date+time string to UTC ISO string.
+   * Strategy: treat the date+time as UTC, find how much Santiago differs
+   * at that moment, then adjust to get the correct UTC equivalent.
+   */
+  const santiagoToUTC = (dateStr, timeStr) => {
+    const [year, month, day] = dateStr.split('-').map(Number)
+    const [hour, minute] = timeStr.split(':').map(Number)
+
+    // First pass: treat as UTC to get approximate Santiago offset
+    const approx = new Date(Date.UTC(year, month - 1, day, hour, minute, 0))
+
+    // Get what Santiago time would show for this UTC moment
+    const fmt = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/Santiago',
-      year:'numeric', month:'2-digit', day:'2-digit',
-      hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
-    }).formatToParts(now)
-    const utcParts = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'UTC',
-      year:'numeric', month:'2-digit', day:'2-digit',
-      hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
-    }).formatToParts(now)
-    const toDate = parts => {
-      const p = Object.fromEntries(parts.map(x=>[x.type,x.value]))
-      return new Date(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}Z`)
-    }
-    const offsetMs = toDate(utcParts) - toDate(santiagoParts)
-    const offsetH = Math.round(offsetMs / 3600000)
-    const sign = offsetH >= 0 ? '+' : '-'
-    const abs = Math.abs(offsetH)
-    const offsetStr = `${sign}${String(abs).padStart(2,'0')}:00`
-    return `${dateStr}T${timeStr}:00${offsetStr}`
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    })
+    const parts = Object.fromEntries(fmt.formatToParts(approx).map(x => [x.type, x.value]))
+    const santiagoH = parseInt(parts.hour)
+    const santiagoM = parseInt(parts.minute)
+
+    // How many minutes does Santiago differ from the target time?
+    const diffMin = (hour * 60 + minute) - (santiagoH * 60 + santiagoM)
+
+    // Adjust UTC by that difference
+    return new Date(approx.getTime() + diffMin * 60000).toISOString()
   }
 
-  // Refresh Google token (always try if refresh_token present and token might be expired)
+  // Refresh token — proactively refresh if < 10 min left
   const getValidToken = async (tokens) => {
     if (!tokens) return null
-    // Always try to refresh if we have refresh_token and token is within 5 min of expiry
     const expiry = tokens.expiry || 0
-    const needsRefresh = !tokens.access_token || Date.now() > expiry - 300000
+    const needsRefresh = !tokens.access_token || Date.now() > expiry - 600000
     if (needsRefresh && tokens.refresh_token) {
       try {
         const r = await fetch('https://oauth2.googleapis.com/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({
-            client_id: GCLIENT_ID,
-            client_secret: GCLIENT_SEC,
-            refresh_token: tokens.refresh_token,
-            grant_type: 'refresh_token'
+            client_id: GCLIENT_ID, client_secret: GCLIENT_SEC,
+            refresh_token: tokens.refresh_token, grant_type: 'refresh_token'
           })
         })
         const d = await r.json()
-        if (d.access_token) {
-          console.log('Token refreshed OK')
-          return d.access_token
-        }
-        console.error('Token refresh failed:', JSON.stringify(d))
-      } catch(e) {
-        console.error('Token refresh exception:', e.message)
-      }
+        if (d.access_token) { console.log('Token refreshed'); return d.access_token }
+        console.error('Refresh failed:', JSON.stringify(d))
+      } catch(e) { console.error('Refresh exception:', e.message) }
     }
     return tokens.access_token || null
   }
@@ -99,9 +97,7 @@ export default async function handler(req, res) {
 
       // Day of week in Santiago
       const fechaSantiago = new Date(new Date(fecha + 'T12:00:00Z').toLocaleString('en-US', { timeZone: 'America/Santiago' }))
-      const diaSemana = fechaSantiago.getDay()
-      const DIAS_KEY = ['dom','lun','mar','mie','jue','vie','sab']
-      const diaKey = DIAS_KEY[diaSemana]
+      const diaKey = ['dom','lun','mar','mie','jue','vie','sab'][fechaSantiago.getDay()]
 
       const brokersAptos = users.filter(u => {
         const ag = u.agenda_config
@@ -113,7 +109,7 @@ export default async function handler(req, res) {
       }).sort((a,b) => (b.agenda_config?.peso||5) - (a.agenda_config?.peso||5))
 
       if (!brokersAptos.length) {
-        return res.status(200).json({ slots: [], brokers: 0, debug: `day=${diaKey} agents=${users.length} active=${users.filter(u=>u.agenda_config?.activa).length}` })
+        return res.status(200).json({ slots: [], brokers: 0, debug: `day=${diaKey} agents=${users.length}` })
       }
 
       const slotMap = {}
@@ -125,29 +121,30 @@ export default async function handler(req, res) {
         const durMin = ag.duracion || 60
         const anticipMs = (ag.anticipacion || 12) * 3600000
 
-        const startISO = getSantiagoISO(fecha, diaConfig.desde)
-        const endISO   = getSantiagoISO(fecha, diaConfig.hasta)
-        let slot = new Date(startISO)
-        const endTime = new Date(endISO)
+        // Convert broker's availability window to UTC
+        const startUTC = santiagoToUTC(fecha, diaConfig.desde)
+        const endUTC   = santiagoToUTC(fecha, diaConfig.hasta)
+        let slot = new Date(startUTC)
+        const endTime = new Date(endUTC)
 
-        // Get busy times from Google Calendar
+        // Get busy times
         let busyTimes = []
         const accessToken = await getValidToken(broker.google_tokens)
         if (accessToken) {
           try {
+            const dayStartUTC = santiagoToUTC(fecha, '00:00')
+            const dayEndUTC   = santiagoToUTC(fecha, '23:59')
             const fb = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
               method: 'POST',
               headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                timeMin: new Date(getSantiagoISO(fecha, '00:00')).toISOString(),
-                timeMax: new Date(getSantiagoISO(fecha, '23:59')).toISOString(),
-                timeZone: 'America/Santiago',
-                items: [{ id: 'primary' }]
+                timeMin: dayStartUTC, timeMax: dayEndUTC,
+                timeZone: 'America/Santiago', items: [{ id: 'primary' }]
               })
             })
             const fd = await fb.json()
             busyTimes = fd.calendars?.primary?.busy || []
-          } catch(e) { console.warn('freeBusy failed:', e.message) }
+          } catch(e) { console.warn('freeBusy error:', e.message) }
         }
 
         while (slot < endTime) {
@@ -155,8 +152,16 @@ export default async function handler(req, res) {
           if (slotEnd > endTime) break
           if (slot.getTime() - ahora < anticipMs) { slot = slotEnd; continue }
 
-          const timeStr = slot.toLocaleTimeString('es-CL', { hour:'2-digit', minute:'2-digit', hour12:false, timeZone:'America/Santiago' })
-          const busy = busyTimes.some(b => slot.getTime() < new Date(b.end).getTime() && slotEnd.getTime() > new Date(b.start).getTime())
+          // Show time in Santiago timezone
+          const timeStr = slot.toLocaleTimeString('es-CL', {
+            hour: '2-digit', minute: '2-digit', hour12: false,
+            timeZone: 'America/Santiago'
+          })
+
+          const busy = busyTimes.some(b =>
+            slot.getTime() < new Date(b.end).getTime() &&
+            slotEnd.getTime() > new Date(b.start).getTime()
+          )
 
           if (!busy && !slotMap[timeStr]) {
             slotMap[timeStr] = { time: timeStr, broker: { id: broker.id, name: broker.name }, timestamp: slot.getTime() }
@@ -167,6 +172,7 @@ export default async function handler(req, res) {
 
       const slots = Object.values(slotMap).sort((a,b) => a.timestamp - b.timestamp)
       return res.status(200).json({ slots, brokers: brokersAptos.length })
+
     } catch(err) {
       console.error('GET error:', err)
       return res.status(500).json({ error: err.message, slots: [] })
@@ -181,7 +187,6 @@ export default async function handler(req, res) {
     }
 
     try {
-      // Get broker with all fields
       const bArr = await sbGet(`crm_users?id=eq.${brokerId}&select=*`)
       const broker = Array.isArray(bArr) ? bArr[0] : null
       if (!broker) return res.status(404).json({ error: 'Broker no encontrado' })
@@ -191,27 +196,28 @@ export default async function handler(req, res) {
       const clientePhone = telefono.replace(/\s/g,'').startsWith('+') ? telefono : `+56${telefono.replace(/\s/g,'')}`
       const clienteEmail = (email || '').trim()
 
-      // ── Create Google Calendar event ────────────────────────────────────
+      // ── Google Calendar event ──────────────────────────────────────────
       let eventId = null, eventLink = null, meetLink = null
-      const calendarError = { msg: null }
 
       if (!broker.google_tokens) {
-        calendarError.msg = 'Broker sin Google Calendar conectado'
+        console.warn('Broker sin Google Calendar')
       } else {
         const accessToken = await getValidToken(broker.google_tokens)
         if (!accessToken) {
-          calendarError.msg = 'No se pudo obtener token de acceso'
+          console.error('No se pudo obtener access token')
         } else {
-          const startISO = getSantiagoISO(fecha, hora)
-          const startDT  = new Date(startISO)
-          const endDT    = new Date(startDT.getTime() + durMin * 60000)
+          // Convert Santiago booking time to UTC correctly
+          const startUTCiso = santiagoToUTC(fecha, hora)
+          const startDT = new Date(startUTCiso)
+          const endDT   = new Date(startDT.getTime() + durMin * 60000)
 
-          // Build attendees — client first (so they get the invite email), broker is the organizer
+          console.log(`Booking: ${fecha} ${hora} Santiago → ${startDT.toISOString()} UTC`)
+
+          // Only add client as attendee (broker is calendar owner = organizer automatically)
           const attendees = []
           if (clienteEmail) {
             attendees.push({ email: clienteEmail, displayName: nombre })
           }
-          // Don't add broker as attendee when creating on their calendar — they're the organizer automatically
 
           const calEvent = {
             summary: `Reunión Rabbitts Capital — ${nombre}`,
@@ -221,17 +227,14 @@ export default async function handler(req, res) {
               clienteEmail ? `Email: ${clienteEmail}` : '',
               `Renta declarada: ${rentaFmt}`,
               '',
-              'Agendado desde rabbittscapital.com/agenda'
+              'Agendado desde crm.rabbittscapital.com/agenda'
             ].filter(Boolean).join('\n'),
             start: { dateTime: startDT.toISOString(), timeZone: 'America/Santiago' },
             end:   { dateTime: endDT.toISOString(),   timeZone: 'America/Santiago' },
             attendees,
             reminders: {
               useDefault: false,
-              overrides: [
-                { method: 'email',  minutes: 60 },
-                { method: 'popup',  minutes: 15 }
-              ]
+              overrides: [{ method:'email', minutes:60 }, { method:'popup', minutes:15 }]
             },
             conferenceData: {
               createRequest: {
@@ -256,27 +259,23 @@ export default async function handler(req, res) {
             eventId   = cd.id
             eventLink = cd.htmlLink
             meetLink  = cd.conferenceData?.entryPoints?.find(e => e.entryPointType === 'video')?.uri || null
-            console.log('Calendar event created:', eventId, 'Meet:', meetLink)
+            console.log('Calendar OK:', eventId, '| Meet:', meetLink)
           } else {
-            calendarError.msg = cd.error?.message || JSON.stringify(cd.error)
-            console.error('Calendar event failed:', JSON.stringify(cd))
+            console.error('Calendar failed:', JSON.stringify(cd.error || cd))
           }
         }
       }
 
-      // ── Create lead in CRM ───────────────────────────────────────────────
+      // ── Create lead ────────────────────────────────────────────────────
       const leadId = 'l-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)
       const leadData = {
-        id: leadId, nombre,
-        telefono: clientePhone,
-        email: clienteEmail || '—',
-        renta: rentaFmt,
+        id: leadId, nombre, telefono: clientePhone,
+        email: clienteEmail || '—', renta: rentaFmt,
         tag: 'lead', stage: 'agenda', assigned_to: brokerId,
         fecha: new Date().toISOString(), calificacion: '—',
         resumen: `Agendado online. Renta: ${rentaFmt}. Reunión: ${fecha} ${hora}.`
       }
 
-      // Try with optional columns, fallback to minimal
       let leadResult = await sbPost('crm_leads', {
         ...leadData,
         origen: 'agenda_publica',
@@ -285,38 +284,33 @@ export default async function handler(req, res) {
         ...((meetLink || eventLink) ? { meeting_link: meetLink || eventLink } : {})
       })
       if (!leadResult.ok) {
+        console.warn('Retry lead minimal:', leadResult.status)
         leadResult = await sbPost('crm_leads', leadData)
       }
-      console.log('Lead created:', leadResult.ok, leadResult.status)
+      console.log('Lead:', leadResult.ok, leadResult.status)
 
-      // ── Notify broker by email ───────────────────────────────────────────
+      // ── Notify broker by email ─────────────────────────────────────────
       try {
         await fetch('https://crm.rabbittscapital.com/api/notify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            type: 'nueva_reunion',
-            to: broker.email,
-            broker: broker.name,
+            type: 'nueva_reunion', to: broker.email, broker: broker.name,
             lead: { nombre, telefono: clientePhone, renta: rentaFmt, fecha, hora },
             meetLink
           })
         })
-      } catch(e) { console.warn('Email notify failed:', e.message) }
+      } catch(e) { console.warn('Email failed:', e.message) }
 
       return res.status(200).json({
-        success: true,
-        leadId,
-        meetLink,
-        eventLink,
+        success: true, leadId, meetLink, eventLink,
         brokerName: broker.name,
         calendarCreated: !!eventId,
-        calendarError: calendarError.msg,
         leadCreated: leadResult.ok
       })
 
     } catch(err) {
-      console.error('POST booking exception:', err)
+      console.error('POST exception:', err)
       return res.status(500).json({ error: err.message })
     }
   }
