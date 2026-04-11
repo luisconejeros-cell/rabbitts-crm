@@ -221,7 +221,15 @@ function AgendaPublicaView({settings={}}) {
     try {
       const res = await fetch('/api/booking', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ nombre:form.nombre, telefono:form.telefono, ingresos:form.ingresos, fecha:selDate, hora:selSlot.time, brokerId:selSlot.broker.id })
+        body: JSON.stringify({
+          nombre: form.nombre,
+          telefono: form.telefono,
+          email: form.email || '',
+          ingresos: form.ingresos,
+          fecha: selDate,
+          hora: selSlot.time,
+          brokerId: selSlot.broker.id
+        })
       })
       const data = await res.json()
       setResult(data); setStep(3)
