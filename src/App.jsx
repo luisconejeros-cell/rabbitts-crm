@@ -262,9 +262,15 @@ function AgendaPublicaView() {
 
         {/* LEFT PANEL */}
         <div style={leftPanel}>
-          <img src="/icon-192.png" alt="Rabbitts" style={{width:48,height:48,borderRadius:10,objectFit:'cover',marginBottom:16}}/>
-          <div style={{fontSize:12,fontWeight:600,color:'#64748B',marginBottom:4}}>Agenda Rabbitts</div>
-          <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:16,lineHeight:1.2}}>Reunión de Asesoría Inmobiliaria</div>
+          {/* Logo — Vambe style */}
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}>
+            <img src="/icon-192.png" alt="Rabbitts" style={{width:44,height:44,borderRadius:12,objectFit:'cover',flexShrink:0}}/>
+            <div>
+              <div style={{fontSize:15,fontWeight:800,color:'#0F172A',letterSpacing:'-0.3px'}}>Rabbitts Capital</div>
+              <div style={{fontSize:11,color:'#64748B',fontWeight:500}}>Agenda Rabbitts</div>
+            </div>
+          </div>
+          <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:16,lineHeight:1.25,letterSpacing:'-0.5px'}}>Reunión de Asesoría Inmobiliaria</div>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
             <span>🕐</span> 1 hora
           </div>
