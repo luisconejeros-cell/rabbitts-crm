@@ -181,6 +181,8 @@ export default function App() {
   const [me,     setMe]     = useState(null)
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [installPrompt, setInstallPrompt] = useState(null)
+  const [showInstallBanner, setShowInstallBanner] = useState(false)
   // Responsive helper
   const R = (desktop, mobile) => isMobile ? mobile : desktop
   const [nav,    setNav]    = useState('kanban')
@@ -350,6 +352,17 @@ export default function App() {
     const handle = () => setIsMobile(window.innerWidth < 768)
     window.addEventListener('resize', handle)
     return () => window.removeEventListener('resize', handle)
+  }, [])
+
+  // ── PWA Install prompt ────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault()
+      setInstallPrompt(e)
+      setShowInstallBanner(true)
+    }
+    window.addEventListener('beforeinstallprompt', handler)
+    return () => window.removeEventListener('beforeinstallprompt', handler)
   }, [])
 
   // ── Preload historical UF for closing leads ─────────────────────────────
@@ -1144,6 +1157,37 @@ export default function App() {
       `}</style>
       <Toast msg={toast}/>
 
+      {/* PWA Install Banner */}
+      {showInstallBanner && (
+        <div style={{position:'fixed',bottom:isMobile?80:20,left:'50%',transform:'translateX(-50%)',
+          background:'#0F172A',color:'#fff',borderRadius:14,padding:'12px 16px',
+          display:'flex',alignItems:'center',gap:12,zIndex:9999,
+          boxShadow:'0 8px 32px rgba(0,0,0,0.3)',maxWidth:340,width:'calc(100% - 32px)'}}>
+          <img src="/icon-72.png" style={{width:36,height:36,borderRadius:8,objectFit:'cover',flexShrink:0}} alt="logo"/>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:700,fontSize:13}}>Instalar Rabbitts CRM</div>
+            <div style={{fontSize:11,color:'#94a3b8',marginTop:1}}>Acceso rápido desde tu pantalla de inicio</div>
+          </div>
+          <div style={{display:'flex',gap:6,flexShrink:0}}>
+            <button onClick={async()=>{
+              if (!installPrompt) return
+              installPrompt.prompt()
+              const {outcome} = await installPrompt.userChoice
+              setInstallPrompt(null)
+              setShowInstallBanner(false)
+            }} style={{padding:'7px 14px',borderRadius:8,border:'none',background:'#2563EB',
+              color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer'}}>
+              Instalar
+            </button>
+            <button onClick={()=>setShowInstallBanner(false)}
+              style={{padding:'7px 10px',borderRadius:8,border:'none',background:'rgba(255,255,255,0.1)',
+                color:'#94a3b8',fontSize:12,cursor:'pointer'}}>
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Topbar */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:isMobile?'8px 12px':'10px 16px',borderBottom:'2px solid '+B.primary,background:'#fff',position:'sticky',top:0,zIndex:100,boxShadow:'0 2px 12px rgba(27,79,200,0.08)',gap:6,minHeight:isMobile?52:56}}>
         <div style={{display:'flex',alignItems:'center',gap:isMobile?8:12}}>
@@ -1267,6 +1311,20 @@ export default function App() {
             })}
             <div style={{marginTop:'auto',paddingTop:12,borderTop:'1px solid #f0f4ff',display:'flex',flexDirection:'column',gap:6}}>
               <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile');setMobileMenuOpen(false)}} style={{padding:'10px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'transparent',cursor:'pointer',color:B.mid,fontSize:13,textAlign:'left'}}>👤 Mi perfil</button>
+              {installPrompt && (
+                <button onClick={async()=>{
+                  installPrompt.prompt()
+                  const {outcome} = await installPrompt.userChoice
+                  setInstallPrompt(null); setShowInstallBanner(false); setMobileMenuOpen(false)
+                }} style={{padding:'10px 14px',borderRadius:8,border:'1px solid #2563EB',background:'#EFF6FF',cursor:'pointer',color:'#2563EB',fontSize:13,textAlign:'left',fontWeight:600}}>
+                  📲 Instalar app en celular
+                </button>
+              )}
+              {!installPrompt && (
+                <div style={{padding:'10px 14px',borderRadius:8,background:'#f8fafc',fontSize:11,color:'#64748B'}}>
+                  📲 iOS: Safari → compartir ↑ → "Añadir a pantalla de inicio"
+                </div>
+              )}
               <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{padding:'10px 14px',borderRadius:8,border:'none',background:'#FEF2F2',cursor:'pointer',color:'#991b1b',fontSize:13,textAlign:'left',fontWeight:600}}>🚪 Cerrar sesión</button>
             </div>
           </div>
