@@ -171,6 +171,216 @@ const Modal = ({title, onClose, children, wide=false}) => {
   )
 }
 
+// ─── Agenda Pública (no requiere login) ──────────────────────────────────────
+function AgendaPublicaView() {
+  const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+  const DIAS_H = ['Lu','Ma','Mi','Ju','Vi','Sa','Do']
+
+  const [step, setStep] = React.useState(1)
+  const [form, setForm] = React.useState({nombre:'',telefono:'',ingresos:''})
+  const [curDate, setCurDate] = React.useState(new Date())
+  const [selDate, setSelDate] = React.useState(null)
+  const [selSlot, setSelSlot] = React.useState(null)
+  const [slots, setSlots] = React.useState([])
+  const [loadingSlots, setLoadingSlots] = React.useState(false)
+  const [confirming, setConfirming] = React.useState(false)
+  const [result, setResult] = React.useState(null)
+
+  const today = new Date(); today.setHours(0,0,0,0)
+
+  const loadSlots = async (dateStr) => {
+    setLoadingSlots(true)
+    setSlots([])
+    try {
+      const res = await fetch(`/api/booking?fecha=${dateStr}&ingresos=${form.ingresos}`)
+      const data = await res.json()
+      setSlots(data.slots || [])
+    } catch(e) { setSlots([]) }
+    setLoadingSlots(false)
+  }
+
+  const selectDate = (dateStr) => {
+    setSelDate(dateStr)
+    setSelSlot(null)
+    setStep(3)
+    loadSlots(dateStr)
+  }
+
+  const confirmar = async () => {
+    if (!selSlot) return
+    setConfirming(true)
+    try {
+      const res = await fetch('/api/booking', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          nombre: form.nombre,
+          telefono: form.telefono,
+          ingresos: form.ingresos,
+          fecha: selDate,
+          hora: selSlot.time,
+          brokerId: selSlot.broker.id
+        })
+      })
+      const data = await res.json()
+      setResult(data)
+      setStep(4)
+    } catch(e) { alert('Error al confirmar. Intenta de nuevo.') }
+    setConfirming(false)
+  }
+
+  const renderCalendar = () => {
+    const year = curDate.getFullYear()
+    const month = curDate.getMonth()
+    const firstDow = new Date(year,month,1).getDay()
+    const startDow = firstDow===0 ? 6 : firstDow-1
+    const daysInMonth = new Date(year,month+1,0).getDate()
+    const days = []
+    for (let i=0;i<startDow;i++) days.push(<div key={'e'+i}/>)
+    for (let d=1;d<=daysInMonth;d++) {
+      const date = new Date(year,month,d)
+      const ds = date.toISOString().split('T')[0]
+      const isPast = date < today
+      const isSel = selDate===ds
+      const isToday = date.getTime()===today.getTime()
+      days.push(
+        <button key={d} disabled={isPast} onClick={()=>selectDate(ds)}
+          style={{aspectRatio:'1',borderRadius:8,border:isToday&&!isSel?`2px solid ${B.primary}`:'none',
+            cursor:isPast?'not-allowed':'pointer',fontFamily:'inherit',fontSize:13,fontWeight:isSel||isToday?700:400,
+            background:isSel?B.primary:'transparent',color:isPast?'#D1D5DB':isSel?'#fff':isToday?B.primary:'#0F172A',
+            transition:'all .1s'}}>
+          {d}
+        </button>
+      )
+    }
+    return days
+  }
+
+  const cStyle = {fontFamily:"'Inter',sans-serif",minHeight:'100vh',background:'#F8FAFC',padding:'24px 16px 80px',WebkitFontSmoothing:'antialiased'}
+  const cardStyle = {background:'#fff',borderRadius:16,border:'1px solid #E2E8F0',padding:'24px',maxWidth:520,margin:'0 auto 16px',boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}
+  const inp = {width:'100%',padding:'11px 14px',borderRadius:10,border:'1.5px solid #E2E8F0',fontSize:15,fontFamily:'inherit',color:'#0F172A',outline:'none',WebkitAppearance:'none',boxSizing:'border-box'}
+  const btnP = {width:'100%',padding:14,borderRadius:12,border:'none',fontSize:15,fontWeight:700,cursor:'pointer',background:B.primary,color:'#fff',fontFamily:'inherit',marginTop:14}
+
+  return (
+    <div style={cStyle}>
+      {/* Logo */}
+      <div style={{maxWidth:520,margin:'0 auto 24px',display:'flex',alignItems:'center',gap:10}}>
+        <img src="/icon-72.png" alt="Rabbitts" style={{width:40,height:40,borderRadius:10}}/>
+        <div>
+          <div style={{fontWeight:800,fontSize:18,color:'#0F172A'}}>Rabbitts Capital</div>
+          <div style={{fontSize:11,color:'#64748B',fontWeight:500}}>Agenda tu reunión de asesoría</div>
+        </div>
+      </div>
+
+      {/* Step 1 — Info */}
+      {step===1 && (
+        <div style={cardStyle}>
+          <div style={{fontSize:11,fontWeight:700,color:B.primary,letterSpacing:'0.5px',marginBottom:6}}>PASO 1 DE 3</div>
+          <div style={{fontSize:18,fontWeight:800,color:'#0F172A',marginBottom:4}}>Cuéntanos sobre ti</div>
+          <div style={{fontSize:13,color:'#64748B',marginBottom:20}}>La asesoría es gratuita. Nuestros honorarios los pagan las inmobiliarias.</div>
+          <div style={{marginBottom:12}}>
+            <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:5}}>Nombre completo *</label>
+            <input style={inp} value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} placeholder="Juan Pérez"/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:5}}>Teléfono WhatsApp *</label>
+            <input style={inp} type="tel" value={form.telefono} onChange={e=>setForm(f=>({...f,telefono:e.target.value}))} placeholder="+56 9 XXXX XXXX"/>
+          </div>
+          <div style={{marginBottom:4}}>
+            <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:5}}>Ingresos líquidos mensuales *</label>
+            <select style={inp} value={form.ingresos} onChange={e=>setForm(f=>({...f,ingresos:e.target.value}))}>
+              <option value="">Selecciona tu rango</option>
+              <option value="1500000">$1.500.000 – $2.500.000</option>
+              <option value="2500000">$2.500.000 – $5.000.000</option>
+              <option value="5000000">$5.000.000 o más</option>
+            </select>
+          </div>
+          <button style={{...btnP,opacity:!form.nombre||!form.telefono||!form.ingresos?0.5:1}}
+            disabled={!form.nombre||!form.telefono||!form.ingresos}
+            onClick={()=>setStep(2)}>Elegir fecha y hora →</button>
+        </div>
+      )}
+
+      {/* Step 2 — Calendar */}
+      {step===2 && (
+        <div style={cardStyle}>
+          <button onClick={()=>setStep(1)} style={{background:'none',border:'none',color:B.primary,fontSize:13,fontWeight:600,cursor:'pointer',padding:0,marginBottom:14,fontFamily:'inherit'}}>← Volver</button>
+          <div style={{fontSize:11,fontWeight:700,color:B.primary,letterSpacing:'0.5px',marginBottom:6}}>PASO 2 DE 3</div>
+          <div style={{fontSize:18,fontWeight:800,color:'#0F172A',marginBottom:20}}>Elige una fecha</div>
+          {/* Month nav */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+            <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))}
+              style={{background:'none',border:'1px solid #E2E8F0',borderRadius:8,width:32,height:32,cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>‹</button>
+            <span style={{fontWeight:700,fontSize:15,color:'#0F172A'}}>{MESES[curDate.getMonth()]} {curDate.getFullYear()}</span>
+            <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()+1,1))}
+              style={{background:'none',border:'1px solid #E2E8F0',borderRadius:8,width:32,height:32,cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>›</button>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4,marginBottom:4}}>
+            {DIAS_H.map(d=><div key={d} style={{fontSize:10,fontWeight:700,color:'#9ca3af',textAlign:'center',padding:'4px 0'}}>{d}</div>)}
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4}}>{renderCalendar()}</div>
+        </div>
+      )}
+
+      {/* Step 3 — Slots */}
+      {step===3 && (
+        <div style={cardStyle}>
+          <button onClick={()=>setStep(2)} style={{background:'none',border:'none',color:B.primary,fontSize:13,fontWeight:600,cursor:'pointer',padding:0,marginBottom:14,fontFamily:'inherit'}}>← Volver</button>
+          <div style={{fontSize:11,fontWeight:700,color:B.primary,letterSpacing:'0.5px',marginBottom:6}}>PASO 3 DE 3</div>
+          <div style={{fontSize:18,fontWeight:800,color:'#0F172A',marginBottom:4}}>Elige un horario</div>
+          <div style={{fontSize:13,color:'#64748B',marginBottom:16}}>
+            {selDate && new Date(selDate+'T12:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'})}
+          </div>
+          {loadingSlots && <div style={{textAlign:'center',padding:24,color:'#9ca3af',fontSize:13}}>Cargando horarios...</div>}
+          {!loadingSlots && slots.length===0 && <div style={{textAlign:'center',padding:24,color:'#9ca3af',fontSize:13}}>No hay horarios disponibles este día.<br/>Prueba con otra fecha.</div>}
+          {!loadingSlots && slots.length>0 && (
+            <>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:16}}>
+                {slots.map((s,i)=>(
+                  <button key={i} onClick={()=>setSelSlot(s)}
+                    style={{padding:'10px 6px',borderRadius:10,border:`1.5px solid ${selSlot?.time===s.time?B.primary:'#E2E8F0'}`,
+                      background:selSlot?.time===s.time?B.primary:'#fff',
+                      color:selSlot?.time===s.time?'#fff':'#374151',
+                      cursor:'pointer',fontSize:13,fontWeight:600,fontFamily:'inherit',transition:'all .1s'}}>
+                    {s.time}
+                  </button>
+                ))}
+              </div>
+              <button style={{...btnP,opacity:!selSlot||confirming?0.5:1}}
+                disabled={!selSlot||confirming}
+                onClick={confirmar}>
+                {confirming?'Confirmando...':'✅ Confirmar reunión'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Step 4 — Success */}
+      {step===4 && result && (
+        <div style={{...cardStyle,textAlign:'center',padding:'40px 24px'}}>
+          <div style={{fontSize:56,marginBottom:16}}>🎉</div>
+          <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:8}}>¡Reunión confirmada!</div>
+          <div style={{fontSize:14,color:'#64748B',lineHeight:1.6,marginBottom:20}}>
+            Tu reunión con el equipo de <strong>Rabbitts Capital</strong> quedó agendada.<br/>
+            Recibirás confirmación por WhatsApp en <strong>{form.telefono}</strong>.
+          </div>
+          {result.meetLink && (
+            <a href={result.meetLink} target="_blank" rel="noopener noreferrer"
+              style={{display:'inline-flex',alignItems:'center',gap:8,padding:'12px 24px',borderRadius:12,
+                background:'#1a73e8',color:'#fff',textDecoration:'none',fontWeight:700,fontSize:14,fontFamily:'inherit'}}>
+              🎥 Unirse a Google Meet
+            </a>
+          )}
+          <div style={{marginTop:20,fontSize:12,color:'#9ca3af'}}>
+            ¿Tienes dudas? Escríbenos a info@rabbittscapital.com
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 const EU = {name:'',rut:'',phone:'',email:'',username:'',pin:'',role:'agent'}
 const EL = {nombre:'',telefono:'',email:'',renta:'',tag:'lead'}
@@ -1158,6 +1368,11 @@ export default function App() {
             : isOps      ? ['kanban','lista']
             : isFinanzas ? ['dashboard_finanzas','comisiones']
             : ['kanban','lista','mis comisiones','mi agenda','nuevo lead']
+
+  // ── AGENDA PÚBLICA — no requiere login ─────────────────────────────────────
+  if (typeof window !== 'undefined' && window.location.pathname === '/agenda') {
+    return <AgendaPublicaView/>
+  }
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
