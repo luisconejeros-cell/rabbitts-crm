@@ -32,6 +32,7 @@ export default async function handler(req, res) {
     const categoriaCliente = ingresosNum >= 5000000 ? 'alto' : ingresosNum >= 2500000 ? 'medio' : 'bajo'
     const brokersAptos = (users||[]).filter(u => {
       const ag = u.agenda_config
+      if (!ag?.enAgenda) return false  // must be explicitly added to agenda by admin
       if (!ag?.activa) return false
       const cats = ag.ingresos_categorias || ['cualquiera']
       if (!cats.includes('cualquiera') && !cats.includes(categoriaCliente)) return false
