@@ -183,6 +183,10 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [installPrompt, setInstallPrompt] = useState(null)
   const [showInstallBanner, setShowInstallBanner] = useState(false)
+  const [gcalModal, setGcalModal] = useState(null)   // lead to schedule meeting for
+  const [gcalForm, setGcalForm] = useState({fecha:'', hora:'09:00', duracion:60, notas:''})
+  const [gcalLoading, setGcalLoading] = useState(false)
+  const [gcalResult, setGcalResult] = useState(null)
   // Responsive helper
   const R = (desktop, mobile) => isMobile ? mobile : desktop
   const [nav,    setNav]    = useState('kanban')
@@ -363,6 +367,21 @@ export default function App() {
     }
     window.addEventListener('beforeinstallprompt', handler)
     return () => window.removeEventListener('beforeinstallprompt', handler)
+  }, [])
+
+  // ── Google Calendar OAuth callback ────────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('gcal_success')) {
+      const email = params.get('gcal_email') || ''
+      msg('Google Calendar conectado' + (email ? ' — ' + email : ''))
+      // Update me user with google connected status
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+    if (params.get('gcal_error')) {
+      msg('Error conectando Calendar: ' + params.get('gcal_error'))
+      window.history.replaceState({}, '', window.location.pathname)
+    }
   }, [])
 
   // ── Preload historical UF for closing leads ─────────────────────────────
@@ -565,6 +584,50 @@ export default function App() {
       for (const u of us) await supabase.from('crm_users').upsert(u)
     } else {
       localStorage.setItem('rcrm_users', JSON.stringify(us))
+    }
+  }
+
+  async function createCalendarEvent(lead, broker) {
+    if (!broker?.google_tokens) return null
+    setGcalLoading(true)
+    try {
+      const res = await fetch('/api/calendar', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          action: 'create',
+          tokens: broker.google_tokens,
+          event: {
+            titulo: `Reunión — ${lead.nombre}`,
+            fecha: gcalForm.fecha,
+            hora: gcalForm.hora,
+            duracion: gcalForm.duracion,
+            clienteEmail: lead.email !== '—' ? lead.email : '',
+            clienteNombre: lead.nombre,
+            brokerEmail: broker.email,
+            notas: gcalForm.notas
+          }
+        })
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setGcalResult(data)
+      // Update lead with meeting date
+      if (dbReady) {
+        await supabase.from('crm_leads').update({
+          meeting_date: gcalForm.fecha + 'T' + gcalForm.hora,
+          meeting_event_id: data.eventId,
+          meeting_link: data.meetLink || data.eventLink
+        }).eq('id', lead.id)
+        setLeads(prev => prev.map(l => l.id===lead.id ? {...l, meeting_date: gcalForm.fecha+'T'+gcalForm.hora, meeting_link: data.meetLink||data.eventLink} : l))
+      }
+      msg('Reunión creada en Google Calendar')
+      return data
+    } catch(e) {
+      msg('Error: ' + e.message)
+      return null
+    } finally {
+      setGcalLoading(false)
     }
   }
 
@@ -1156,6 +1219,91 @@ export default function App() {
         .rcrm-card { box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04) !important; }
       `}</style>
       <Toast msg={toast}/>
+
+      {/* Google Calendar Meeting Modal */}
+      {gcalModal && (
+        <Modal title="Agendar reunión en Google Calendar" onClose={()=>{setGcalModal(null);setGcalResult(null);setGcalForm({fecha:'',hora:'09:00',duracion:60,notas:''})}}>
+          {gcalResult ? (
+            <div>
+              <div style={{textAlign:'center',padding:'16px 0'}}>
+                <div style={{fontSize:40,marginBottom:8}}>📅</div>
+                <div style={{fontWeight:700,fontSize:16,color:'#14532d',marginBottom:4}}>¡Reunión agendada!</div>
+                <div style={{fontSize:13,color:'#6b7280',marginBottom:16}}>{gcalModal.nombre} recibirá la invitación por email</div>
+                {gcalResult.meetLink && (
+                  <a href={gcalResult.meetLink} target="_blank" rel="noopener noreferrer"
+                    style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',borderRadius:8,background:'#1a73e8',color:'#fff',textDecoration:'none',fontSize:13,fontWeight:600,marginBottom:8}}>
+                    🎥 Unirse a Google Meet
+                  </a>
+                )}
+                <br/>
+                <a href={gcalResult.eventLink} target="_blank" rel="noopener noreferrer"
+                  style={{fontSize:12,color:'#2563EB'}}>Ver en Google Calendar</a>
+              </div>
+              <button onClick={()=>{setGcalModal(null);setGcalResult(null)}} style={{...sty.btnP,width:'100%'}}>Cerrar</button>
+            </div>
+          ) : (
+            <div>
+              <div style={{padding:'10px 12px',background:'#EFF6FF',borderRadius:8,fontSize:12,color:'#1D4ED8',marginBottom:14}}>
+                📅 Agendando reunión para <strong>{gcalModal.nombre}</strong>
+                {gcalModal.email&&gcalModal.email!=='—'&&<span> · Se enviará invitación a <strong>{gcalModal.email}</strong></span>}
+              </div>
+              {/* Broker selector */}
+              {(() => {
+                const broker = (users||[]).find(u=>u.id===gcalModal.assigned_to)
+                const gcalBroker = broker?.google_tokens ? broker : (users||[]).find(u=>u.google_tokens)
+                return gcalBroker ? (
+                  <div style={{padding:'8px 10px',background:'#DCFCE7',borderRadius:8,fontSize:12,color:'#14532d',marginBottom:12}}>
+                    ✅ Usando calendario de <strong>{gcalBroker.name}</strong> ({gcalBroker.google_tokens.email})
+                  </div>
+                ) : (
+                  <div style={{padding:'8px 10px',background:'#FEF2F2',borderRadius:8,fontSize:12,color:'#991b1b',marginBottom:12}}>
+                    ⚠️ Ningún broker tiene Google Calendar conectado.
+                    <button onClick={()=>window.location.href=`/api/auth?action=login&userId=${me.id}`}
+                      style={{display:'block',marginTop:6,fontSize:12,padding:'5px 12px',borderRadius:6,border:'1px solid #dc2626',background:'#fff',color:'#dc2626',cursor:'pointer'}}>
+                      Conectar mi Google Calendar
+                    </button>
+                  </div>
+                )
+              })()}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+                <Fld label="Fecha">
+                  <input type="date" value={gcalForm.fecha} min={new Date().toISOString().split('T')[0]}
+                    onChange={e=>setGcalForm(f=>({...f,fecha:e.target.value}))} style={sty.inp}/>
+                </Fld>
+                <Fld label="Hora">
+                  <input type="time" value={gcalForm.hora}
+                    onChange={e=>setGcalForm(f=>({...f,hora:e.target.value}))} style={sty.inp}/>
+                </Fld>
+              </div>
+              <Fld label="Duración">
+                <select value={gcalForm.duracion} onChange={e=>setGcalForm(f=>({...f,duracion:parseInt(e.target.value)}))} style={sty.sel}>
+                  <option value={30}>30 minutos</option>
+                  <option value={60}>1 hora</option>
+                  <option value={90}>1.5 horas</option>
+                  <option value={120}>2 horas</option>
+                </select>
+              </Fld>
+              <div style={{marginTop:10}}>
+                <Fld label="Notas para la reunión (opcional)">
+                  <textarea value={gcalForm.notas} onChange={e=>setGcalForm(f=>({...f,notas:e.target.value}))}
+                    placeholder="Ej: Cliente interesado en Wynwood, renta $2.5M..."
+                    style={{...sty.inp,minHeight:60,resize:'none'}}/>
+                </Fld>
+              </div>
+              <button onClick={()=>{
+                const broker = (users||[]).find(u=>u.id===gcalModal.assigned_to)
+                const gcalBroker = broker?.google_tokens ? broker : (users||[]).find(u=>u.google_tokens)
+                if (!gcalBroker) return
+                if (!gcalForm.fecha) return msg('Selecciona una fecha')
+                createCalendarEvent(gcalModal, gcalBroker)
+              }} disabled={gcalLoading||!gcalForm.fecha}
+                style={{...sty.btnP,width:'100%',marginTop:14,opacity:gcalLoading||!gcalForm.fecha?0.5:1}}>
+                {gcalLoading ? 'Creando evento...' : '📅 Crear reunión en Google Calendar'}
+              </button>
+            </div>
+          )}
+        </Modal>
+      )}
 
       {/* PWA Install Banner */}
       {showInstallBanner && (
@@ -2824,11 +2972,24 @@ export default function App() {
               </select>
             </Fld>}
             {!isPartner && (
-              <div style={{display:'flex',gap:8,marginBottom:14}}>
+              <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
                 <button onClick={()=>setEditLead({nombre:sel.nombre,telefono:sel.telefono,email:sel.email,renta:sel.renta,resumen:sel.resumen})} style={{...sty.btnO,flex:1}}>Editar datos</button>
                 {isAdmin && <button onClick={()=>deleteLead(sel.id)} style={{...sty.btnD,flex:1}}>Eliminar lead</button>}
               </div>
             )}
+            {/* Google Calendar — agendar reunión */}
+            <div style={{marginBottom:14}}>
+              <button onClick={()=>{setGcalForm({fecha:'',hora:'09:00',duracion:60,notas:sel.resumen||''});setGcalModal(sel);setModal(null)}}
+                style={{width:'100%',padding:'9px 14px',borderRadius:8,border:'none',background:'#1a73e8',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
+                📅 Agendar reunión en Google Calendar
+              </button>
+              {sel.meeting_date && (
+                <div style={{marginTop:6,fontSize:11,padding:'6px 10px',borderRadius:6,background:'#DCFCE7',color:'#14532d',fontWeight:600,display:'flex',alignItems:'center',gap:6}}>
+                  📅 Reunión agendada: {new Date(sel.meeting_date).toLocaleDateString('es-CL',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}
+                  {sel.meeting_link&&<a href={sel.meeting_link} target="_blank" rel="noopener noreferrer" style={{color:'#1a73e8',fontSize:11,marginLeft:4}}>→ Meet</a>}
+                </div>
+              )}
+            </div>
           </>}
           {isPartner && <div style={{padding:'10px 12px',background:B.light,borderRadius:8,fontSize:12,color:B.primary,marginBottom:12}}>Vista de solo lectura — socio comercial</div>}
 
@@ -3132,6 +3293,29 @@ export default function App() {
           <Fld label="Email"><input value={editP.email} onChange={e=>setEditP(p=>({...p,email:e.target.value}))} placeholder="tu@email.com" style={sty.inp}/></Fld>
           {profErr&&<p style={{margin:'0 0 8px',fontSize:12,color:'#991b1b'}}>{profErr}</p>}
           <button onClick={saveProfile} style={{...sty.btnP,width:'100%',marginBottom:4}}>Guardar datos</button>
+          <HR/>
+          <HR/>
+          {/* Google Calendar */}
+          <div style={{fontSize:12,fontWeight:700,color:B.mid,marginBottom:10}}>Google Calendar</div>
+          {me.google_tokens ? (
+            <div style={{padding:'10px 12px',background:'#DCFCE7',borderRadius:8,fontSize:12,marginBottom:8}}>
+              <div style={{fontWeight:700,color:'#14532d',marginBottom:2}}>✅ Google Calendar conectado</div>
+              <div style={{color:'#166534'}}>{me.google_tokens.email}</div>
+              <button onClick={()=>window.location.href=`/api/auth?action=login&userId=${me.id}`}
+                style={{marginTop:6,fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #86efac',background:'#fff',color:'#14532d',cursor:'pointer'}}>
+                Reconectar
+              </button>
+            </div>
+          ) : (
+            <div style={{marginBottom:8}}>
+              <div style={{fontSize:11,color:'#6b7280',marginBottom:8}}>Conecta tu Google Calendar para agendar reuniones directamente desde el CRM y enviar invitaciones automáticas a los clientes.</div>
+              <button onClick={()=>window.location.href=`/api/auth?action=login&userId=${me.id}`}
+                style={{width:'100%',padding:'9px 14px',borderRadius:8,border:'none',background:'#1a73e8',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                Conectar Google Calendar
+              </button>
+            </div>
+          )}
           <HR/>
           <div style={{fontSize:12,fontWeight:700,color:B.mid,marginBottom:10}}>Cambiar PIN</div>
           <Fld label="PIN actual"><input type="password" value={pinF.cur} onChange={e=>setPinF(p=>({...p,cur:e.target.value}))} placeholder="••••" style={sty.inp}/></Fld>
