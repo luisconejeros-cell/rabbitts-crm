@@ -174,25 +174,25 @@ const Modal = ({title, onClose, children, wide=false}) => {
 // ─── Agenda Pública (no requiere login) ──────────────────────────────────────
 function AgendaPublicaView() {
   const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
-  const DIAS_H = ['Lu','Ma','Mi','Ju','Vi','Sa','Do']
+  const DIAS_H = ['DOM.','LUN.','MAR.','MIÉ.','JUE.','VIE.','SÁB.']
 
-  const [step, setStep] = React.useState(1)
-  const [form, setForm] = React.useState({nombre:'',telefono:'',ingresos:''})
+  const [step, setStep] = React.useState(1) // 1=cal+slots, 2=form, 3=success
   const [curDate, setCurDate] = React.useState(new Date())
   const [selDate, setSelDate] = React.useState(null)
   const [selSlot, setSelSlot] = React.useState(null)
   const [slots, setSlots] = React.useState([])
   const [loadingSlots, setLoadingSlots] = React.useState(false)
+  const [form, setForm] = React.useState({nombre:'',email:'',telefono:'',ingresos:'',notas:''})
   const [confirming, setConfirming] = React.useState(false)
   const [result, setResult] = React.useState(null)
 
   const today = new Date(); today.setHours(0,0,0,0)
+  const isMobile = window.innerWidth < 768
 
   const loadSlots = async (dateStr) => {
-    setLoadingSlots(true)
-    setSlots([])
+    setLoadingSlots(true); setSlots([])
     try {
-      const res = await fetch(`/api/booking?fecha=${dateStr}&ingresos=${form.ingresos}`)
+      const res = await fetch(`/api/booking?fecha=${dateStr}&ingresos=${form.ingresos||1500000}`)
       const data = await res.json()
       setSlots(data.slots || [])
     } catch(e) { setSlots([]) }
@@ -200,186 +200,218 @@ function AgendaPublicaView() {
   }
 
   const selectDate = (dateStr) => {
-    setSelDate(dateStr)
-    setSelSlot(null)
-    setStep(3)
+    setSelDate(dateStr); setSelSlot(null)
     loadSlots(dateStr)
   }
 
   const confirmar = async () => {
-    if (!selSlot) return
+    if (!selSlot || !form.nombre || !form.telefono || !form.ingresos) return
     setConfirming(true)
     try {
       const res = await fetch('/api/booking', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          nombre: form.nombre,
-          telefono: form.telefono,
-          ingresos: form.ingresos,
-          fecha: selDate,
-          hora: selSlot.time,
-          brokerId: selSlot.broker.id
-        })
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ nombre:form.nombre, telefono:form.telefono, ingresos:form.ingresos, fecha:selDate, hora:selSlot.time, brokerId:selSlot.broker.id })
       })
       const data = await res.json()
-      setResult(data)
-      setStep(4)
+      setResult(data); setStep(3)
     } catch(e) { alert('Error al confirmar. Intenta de nuevo.') }
     setConfirming(false)
   }
 
-  const renderCalendar = () => {
-    const year = curDate.getFullYear()
-    const month = curDate.getMonth()
+  const renderCalDays = () => {
+    const year = curDate.getFullYear(), month = curDate.getMonth()
     const firstDow = new Date(year,month,1).getDay()
-    const startDow = firstDow===0 ? 6 : firstDow-1
+    const startDow = firstDow===0?6:firstDow-1
     const daysInMonth = new Date(year,month+1,0).getDate()
-    const days = []
-    for (let i=0;i<startDow;i++) days.push(<div key={'e'+i}/>)
+    const cells = []
+    for (let i=0;i<startDow;i++) cells.push(<div key={'e'+i}/>)
     for (let d=1;d<=daysInMonth;d++) {
       const date = new Date(year,month,d)
       const ds = date.toISOString().split('T')[0]
       const isPast = date < today
       const isSel = selDate===ds
       const isToday = date.getTime()===today.getTime()
-      days.push(
+      cells.push(
         <button key={d} disabled={isPast} onClick={()=>selectDate(ds)}
-          style={{aspectRatio:'1',borderRadius:8,border:isToday&&!isSel?`2px solid ${B.primary}`:'none',
-            cursor:isPast?'not-allowed':'pointer',fontFamily:'inherit',fontSize:13,fontWeight:isSel||isToday?700:400,
-            background:isSel?B.primary:'transparent',color:isPast?'#D1D5DB':isSel?'#fff':isToday?B.primary:'#0F172A',
+          style={{display:'flex',alignItems:'center',justifyContent:'center',width:36,height:36,margin:'0 auto',
+            borderRadius:'50%',border:'none',cursor:isPast?'default':'pointer',
+            fontFamily:'inherit',fontSize:14,fontWeight:isSel?700:400,
+            background:isSel?B.primary:isToday?'#EFF6FF':'transparent',
+            color:isPast?'#D1D5DB':isSel?'#fff':isToday?B.primary:'#1a1a1a',
             transition:'all .1s'}}>
           {d}
+          {isToday&&!isSel&&<span style={{position:'absolute',bottom:2,left:'50%',transform:'translateX(-50%)',width:4,height:4,borderRadius:'50%',background:B.primary}}/>}
         </button>
       )
     }
-    return days
+    return cells
   }
 
-  const cStyle = {fontFamily:"'Inter',sans-serif",minHeight:'100vh',background:'#F8FAFC',padding:'24px 16px 80px',WebkitFontSmoothing:'antialiased'}
-  const cardStyle = {background:'#fff',borderRadius:16,border:'1px solid #E2E8F0',padding:'24px',maxWidth:520,margin:'0 auto 16px',boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}
-  const inp = {width:'100%',padding:'11px 14px',borderRadius:10,border:'1.5px solid #E2E8F0',fontSize:15,fontFamily:'inherit',color:'#0F172A',outline:'none',WebkitAppearance:'none',boxSizing:'border-box'}
-  const btnP = {width:'100%',padding:14,borderRadius:12,border:'none',fontSize:15,fontWeight:700,cursor:'pointer',background:B.primary,color:'#fff',fontFamily:'inherit',marginTop:14}
+  const selDateFmt = selDate ? new Date(selDate+'T12:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) : ''
+
+  // Styles
+  const page = {fontFamily:"'Inter',sans-serif",minHeight:'100vh',background:'#fff',WebkitFontSmoothing:'antialiased'}
+  const leftPanel = {width:isMobile?'100%':300,borderRight:isMobile?'none':'1px solid #e5e7eb',padding:'32px 24px',flexShrink:0}
+  const rightPanel = {flex:1,padding:isMobile?'16px':32}
+  const inp = {width:'100%',padding:'10px 14px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:14,fontFamily:'inherit',color:'#0F172A',outline:'none',WebkitAppearance:'none',boxSizing:'border-box',marginTop:6}
+  const btnBlue = {padding:'12px 24px',borderRadius:99,border:'none',fontSize:14,fontWeight:700,cursor:'pointer',background:B.primary,color:'#fff',fontFamily:'inherit'}
 
   return (
-    <div style={cStyle}>
-      {/* Logo */}
-      <div style={{maxWidth:520,margin:'0 auto 24px',display:'flex',alignItems:'center',gap:10}}>
-        <img src="/icon-72.png" alt="Rabbitts" style={{width:40,height:40,borderRadius:10}}/>
-        <div>
-          <div style={{fontWeight:800,fontSize:18,color:'#0F172A'}}>Rabbitts Capital</div>
-          <div style={{fontSize:11,color:'#64748B',fontWeight:500}}>Agenda tu reunión de asesoría</div>
+    <div style={page}>
+      <div style={{maxWidth:900,margin:'0 auto',display:'flex',flexDirection:isMobile?'column':'row',minHeight:'100vh',border:'1px solid #e5e7eb',borderRadius:isMobile?0:12,marginTop:isMobile?0:40,boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
+
+        {/* LEFT PANEL */}
+        <div style={leftPanel}>
+          <img src="/icon-192.png" alt="Rabbitts" style={{width:48,height:48,borderRadius:10,objectFit:'cover',marginBottom:16}}/>
+          <div style={{fontSize:12,fontWeight:600,color:'#64748B',marginBottom:4}}>Agenda Rabbitts</div>
+          <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:16,lineHeight:1.2}}>Reunión de Asesoría Inmobiliaria</div>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
+            <span>🕐</span> 1 hora
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
+            <span>🎥</span> Google Meet (se enviará al confirmar)
+          </div>
+          {step===2&&selDate&&selSlot&&(
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
+              <span>📅</span> {selSlot.time} · {selDateFmt}
+            </div>
+          )}
+          <div style={{fontSize:13,color:'#6b7280',lineHeight:1.6,marginTop:16}}>
+            Revisaremos tu situación financiera y objetivos para diseñar un plan de inversión inmobiliaria a tu medida: multicrédito, DFL2 y recuperación de IVA.
+          </div>
+          <div style={{marginTop:24,fontSize:11,color:'#9ca3af'}}>🌍 Zona horaria: Santiago, Chile</div>
+        </div>
+
+        {/* RIGHT PANEL */}
+        <div style={rightPanel}>
+
+          {/* STEP 1 — Calendar + Slots */}
+          {step===1&&(
+            <div>
+              <div style={{fontSize:18,fontWeight:700,color:'#0F172A',marginBottom:20}}>Selecciona una fecha y hora</div>
+              <div style={{display:'flex',flexDirection:isMobile?'column':'row',gap:24}}>
+                {/* Calendar */}
+                <div style={{flex:1}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+                    <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))}
+                      style={{background:'none',border:'none',cursor:'pointer',fontSize:18,padding:'4px 8px',color:'#374151'}}>‹</button>
+                    <span style={{fontWeight:600,fontSize:15,color:'#0F172A'}}>{MESES[curDate.getMonth()].toLowerCase()} {curDate.getFullYear()}</span>
+                    <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()+1,1))}
+                      style={{background:'none',border:'none',cursor:'pointer',fontSize:18,padding:'4px 8px',color:'#374151'}}>›</button>
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,marginBottom:8}}>
+                    {DIAS_H.map(d=><div key={d} style={{fontSize:10,fontWeight:700,color:'#9ca3af',textAlign:'center',padding:'4px 0'}}>{d}</div>)}
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2}}>{renderCalDays()}</div>
+                </div>
+
+                {/* Slots */}
+                {selDate&&(
+                  <div style={{width:isMobile?'100%':200,flexShrink:0}}>
+                    <div style={{fontWeight:600,fontSize:14,color:'#0F172A',marginBottom:12,textTransform:'capitalize'}}>{selDateFmt}</div>
+                    {loadingSlots&&<div style={{color:'#9ca3af',fontSize:13,textAlign:'center',padding:16}}>Cargando...</div>}
+                    {!loadingSlots&&slots.length===0&&<div style={{color:'#9ca3af',fontSize:13,textAlign:'center',padding:'16px 0'}}>Sin horarios disponibles este día</div>}
+                    <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:400,overflowY:'auto'}}>
+                      {slots.map((s,i)=>(
+                        selSlot?.time===s.time ? (
+                          <div key={i} style={{display:'flex',gap:6}}>
+                            <button style={{flex:1,padding:'10px',borderRadius:8,border:`2px solid ${B.primary}`,
+                              background:'#6b7280',color:'#fff',cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit'}}>
+                              {s.time}
+                            </button>
+                            <button onClick={()=>setStep(2)}
+                              style={{padding:'10px 16px',borderRadius:8,border:'none',background:B.primary,color:'#fff',
+                                cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',whiteSpace:'nowrap'}}>
+                              Siguiente
+                            </button>
+                          </div>
+                        ) : (
+                          <button key={i} onClick={()=>setSelSlot(s)}
+                            style={{width:'100%',padding:'10px',borderRadius:8,
+                              border:`2px solid ${B.primary}`,background:'#fff',
+                              color:B.primary,cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',transition:'all .1s'}}>
+                            {s.time}
+                          </button>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2 — Form */}
+          {step===2&&(
+            <div style={{maxWidth:480}}>
+              <button onClick={()=>setStep(1)} style={{background:'none',border:'none',cursor:'pointer',color:B.primary,fontSize:14,fontWeight:600,marginBottom:20,fontFamily:'inherit',display:'flex',alignItems:'center',gap:4,padding:0}}>
+                ← Volver
+              </button>
+              <div style={{fontSize:18,fontWeight:700,color:'#0F172A',marginBottom:24}}>Introduzca los detalles</div>
+              <div style={{marginBottom:16}}>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Nombre completo *</label>
+                <input style={inp} value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} placeholder=""/>
+              </div>
+              <div style={{marginBottom:16}}>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Correo electrónico</label>
+                <input style={inp} type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder=""/>
+              </div>
+              <div style={{marginBottom:16}}>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Teléfono WhatsApp *</label>
+                <div style={{display:'flex',gap:0,marginTop:6}}>
+                  <div style={{padding:'10px 12px',border:'1.5px solid #e5e7eb',borderRight:'none',borderRadius:'8px 0 0 8px',fontSize:14,background:'#f9fafb',display:'flex',alignItems:'center',gap:4}}>
+                    🇨🇱 +56
+                  </div>
+                  <input style={{...inp,marginTop:0,borderRadius:'0 8px 8px 0',flex:1}} value={form.telefono} onChange={e=>setForm(f=>({...f,telefono:e.target.value}))} placeholder="9 XXXX XXXX"/>
+                </div>
+              </div>
+              <div style={{marginBottom:16}}>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Ingresos líquidos mensuales *</label>
+                <select style={inp} value={form.ingresos} onChange={e=>setForm(f=>({...f,ingresos:e.target.value}))}>
+                  <option value="">Selecciona tu rango</option>
+                  <option value="1500000">$1.500.000 – $2.500.000</option>
+                  <option value="2500000">$2.500.000 – $5.000.000</option>
+                  <option value="5000000">$5.000.000 o más</option>
+                </select>
+              </div>
+              <div style={{marginBottom:24}}>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Cuéntanos algo para preparar mejor la reunión</label>
+                <textarea style={{...inp,minHeight:80,resize:'none'}} value={form.notas} onChange={e=>setForm(f=>({...f,notas:e.target.value}))}/>
+              </div>
+              <div style={{fontSize:11,color:'#9ca3af',marginBottom:16}}>
+                Al continuar, aceptas nuestra política de privacidad y términos de servicio.
+              </div>
+              <button onClick={confirmar} disabled={confirming||!form.nombre||!form.telefono||!form.ingresos}
+                style={{...btnBlue,width:'100%',opacity:confirming||!form.nombre||!form.telefono||!form.ingresos?0.5:1}}>
+                {confirming?'Confirmando...':'Programar reunión'}
+              </button>
+            </div>
+          )}
+
+          {/* STEP 3 — Success */}
+          {step===3&&(
+            <div style={{textAlign:'center',padding:'40px 24px'}}>
+              <div style={{fontSize:56,marginBottom:16}}>🎉</div>
+              <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:8}}>¡Reunión confirmada!</div>
+              <div style={{fontSize:14,color:'#64748B',lineHeight:1.6,marginBottom:20}}>
+                Tu reunión fue agendada para el <strong style={{textTransform:'capitalize'}}>{selDateFmt}</strong> a las <strong>{selSlot?.time}</strong>.<br/>
+                Recibirás confirmación por WhatsApp.
+              </div>
+              {result?.meetLink&&(
+                <a href={result.meetLink} target="_blank" rel="noopener noreferrer"
+                  style={{display:'inline-flex',alignItems:'center',gap:8,padding:'12px 24px',borderRadius:99,
+                    background:'#1a73e8',color:'#fff',textDecoration:'none',fontWeight:700,fontSize:14}}>
+                  🎥 Unirse a Google Meet
+                </a>
+              )}
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Step 1 — Info */}
-      {step===1 && (
-        <div style={cardStyle}>
-          <div style={{fontSize:11,fontWeight:700,color:B.primary,letterSpacing:'0.5px',marginBottom:6}}>PASO 1 DE 3</div>
-          <div style={{fontSize:18,fontWeight:800,color:'#0F172A',marginBottom:4}}>Cuéntanos sobre ti</div>
-          <div style={{fontSize:13,color:'#64748B',marginBottom:20}}>La asesoría es gratuita. Nuestros honorarios los pagan las inmobiliarias.</div>
-          <div style={{marginBottom:12}}>
-            <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:5}}>Nombre completo *</label>
-            <input style={inp} value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} placeholder="Juan Pérez"/>
-          </div>
-          <div style={{marginBottom:12}}>
-            <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:5}}>Teléfono WhatsApp *</label>
-            <input style={inp} type="tel" value={form.telefono} onChange={e=>setForm(f=>({...f,telefono:e.target.value}))} placeholder="+56 9 XXXX XXXX"/>
-          </div>
-          <div style={{marginBottom:4}}>
-            <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:5}}>Ingresos líquidos mensuales *</label>
-            <select style={inp} value={form.ingresos} onChange={e=>setForm(f=>({...f,ingresos:e.target.value}))}>
-              <option value="">Selecciona tu rango</option>
-              <option value="1500000">$1.500.000 – $2.500.000</option>
-              <option value="2500000">$2.500.000 – $5.000.000</option>
-              <option value="5000000">$5.000.000 o más</option>
-            </select>
-          </div>
-          <button style={{...btnP,opacity:!form.nombre||!form.telefono||!form.ingresos?0.5:1}}
-            disabled={!form.nombre||!form.telefono||!form.ingresos}
-            onClick={()=>setStep(2)}>Elegir fecha y hora →</button>
-        </div>
-      )}
-
-      {/* Step 2 — Calendar */}
-      {step===2 && (
-        <div style={cardStyle}>
-          <button onClick={()=>setStep(1)} style={{background:'none',border:'none',color:B.primary,fontSize:13,fontWeight:600,cursor:'pointer',padding:0,marginBottom:14,fontFamily:'inherit'}}>← Volver</button>
-          <div style={{fontSize:11,fontWeight:700,color:B.primary,letterSpacing:'0.5px',marginBottom:6}}>PASO 2 DE 3</div>
-          <div style={{fontSize:18,fontWeight:800,color:'#0F172A',marginBottom:20}}>Elige una fecha</div>
-          {/* Month nav */}
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
-            <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))}
-              style={{background:'none',border:'1px solid #E2E8F0',borderRadius:8,width:32,height:32,cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>‹</button>
-            <span style={{fontWeight:700,fontSize:15,color:'#0F172A'}}>{MESES[curDate.getMonth()]} {curDate.getFullYear()}</span>
-            <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()+1,1))}
-              style={{background:'none',border:'1px solid #E2E8F0',borderRadius:8,width:32,height:32,cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>›</button>
-          </div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4,marginBottom:4}}>
-            {DIAS_H.map(d=><div key={d} style={{fontSize:10,fontWeight:700,color:'#9ca3af',textAlign:'center',padding:'4px 0'}}>{d}</div>)}
-          </div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4}}>{renderCalendar()}</div>
-        </div>
-      )}
-
-      {/* Step 3 — Slots */}
-      {step===3 && (
-        <div style={cardStyle}>
-          <button onClick={()=>setStep(2)} style={{background:'none',border:'none',color:B.primary,fontSize:13,fontWeight:600,cursor:'pointer',padding:0,marginBottom:14,fontFamily:'inherit'}}>← Volver</button>
-          <div style={{fontSize:11,fontWeight:700,color:B.primary,letterSpacing:'0.5px',marginBottom:6}}>PASO 3 DE 3</div>
-          <div style={{fontSize:18,fontWeight:800,color:'#0F172A',marginBottom:4}}>Elige un horario</div>
-          <div style={{fontSize:13,color:'#64748B',marginBottom:16}}>
-            {selDate && new Date(selDate+'T12:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'})}
-          </div>
-          {loadingSlots && <div style={{textAlign:'center',padding:24,color:'#9ca3af',fontSize:13}}>Cargando horarios...</div>}
-          {!loadingSlots && slots.length===0 && <div style={{textAlign:'center',padding:24,color:'#9ca3af',fontSize:13}}>No hay horarios disponibles este día.<br/>Prueba con otra fecha.</div>}
-          {!loadingSlots && slots.length>0 && (
-            <>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:16}}>
-                {slots.map((s,i)=>(
-                  <button key={i} onClick={()=>setSelSlot(s)}
-                    style={{padding:'10px 6px',borderRadius:10,border:`1.5px solid ${selSlot?.time===s.time?B.primary:'#E2E8F0'}`,
-                      background:selSlot?.time===s.time?B.primary:'#fff',
-                      color:selSlot?.time===s.time?'#fff':'#374151',
-                      cursor:'pointer',fontSize:13,fontWeight:600,fontFamily:'inherit',transition:'all .1s'}}>
-                    {s.time}
-                  </button>
-                ))}
-              </div>
-              <button style={{...btnP,opacity:!selSlot||confirming?0.5:1}}
-                disabled={!selSlot||confirming}
-                onClick={confirmar}>
-                {confirming?'Confirmando...':'✅ Confirmar reunión'}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Step 4 — Success */}
-      {step===4 && result && (
-        <div style={{...cardStyle,textAlign:'center',padding:'40px 24px'}}>
-          <div style={{fontSize:56,marginBottom:16}}>🎉</div>
-          <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:8}}>¡Reunión confirmada!</div>
-          <div style={{fontSize:14,color:'#64748B',lineHeight:1.6,marginBottom:20}}>
-            Tu reunión con el equipo de <strong>Rabbitts Capital</strong> quedó agendada.<br/>
-            Recibirás confirmación por WhatsApp en <strong>{form.telefono}</strong>.
-          </div>
-          {result.meetLink && (
-            <a href={result.meetLink} target="_blank" rel="noopener noreferrer"
-              style={{display:'inline-flex',alignItems:'center',gap:8,padding:'12px 24px',borderRadius:12,
-                background:'#1a73e8',color:'#fff',textDecoration:'none',fontWeight:700,fontSize:14,fontFamily:'inherit'}}>
-              🎥 Unirse a Google Meet
-            </a>
-          )}
-          <div style={{marginTop:20,fontSize:12,color:'#9ca3af'}}>
-            ¿Tienes dudas? Escríbenos a info@rabbittscapital.com
-          </div>
-        </div>
-      )}
     </div>
   )
 }
+
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 const EU = {name:'',rut:'',phone:'',email:'',username:'',pin:'',role:'agent'}
