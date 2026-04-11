@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Agenda tu reunión — Rabbitts Capital</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    body { background: #F8FAFC; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+    .container { max-width: 560px; margin: 0 auto; padding: 24px 16px 80px; }
+    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+    .logo img { width: 40px; height: 40px; border-radius: 10px; }
+    .logo-text { font-weight: 800; font-size: 18px; color: #0F172A; }
+    .card { background: #fff; border-radius: 16px; border: 1px solid #E2E8F0; padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .step-label { font-size: 11px; font-weight: 700; color: #2563EB; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .card-title { font-size: 18px; font-weight: 800; color: #0F172A; margin-bottom: 4px; }
+    .card-sub { font-size: 13px; color: #64748B; margin-bottom: 20px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 5px; }
+    input, select { width: 100%; padding: 11px 14px; border-radius: 10px; border: 1.5px solid #E2E8F0; font-size: 15px; font-family: inherit; color: #0F172A; background: #fff; outline: none; transition: border-color .15s; -webkit-appearance: none; }
+    input:focus, select:focus { border-color: #2563EB; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+    .form-group { margin-bottom: 14px; }
+    .btn { width: 100%; padding: 14px; border-radius: 12px; border: none; font-size: 15px; font-weight: 700; cursor: pointer; transition: opacity .15s, transform .1s; font-family: inherit; }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: #2563EB; color: #fff; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 16px; }
+    .cal-header { font-size: 10px; font-weight: 700; color: #9ca3af; text-align: center; padding: 4px 0; }
+    .cal-day { aspect-ratio: 1; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; background: transparent; font-family: inherit; transition: all .15s; }
+    .cal-day:hover:not(:disabled) { background: #EFF6FF; color: #2563EB; }
+    .cal-day.selected { background: #2563EB; color: #fff; font-weight: 700; }
+    .cal-day.today { border: 2px solid #2563EB; color: #2563EB; font-weight: 700; }
+    .cal-day:disabled { color: #D1D5DB; cursor: not-allowed; }
+    .cal-day.empty { cursor: default; }
+    .slots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .slot { padding: 10px 6px; border-radius: 10px; border: 1.5px solid #E2E8F0; background: #fff; cursor: pointer; font-size: 13px; font-weight: 600; color: #374151; text-align: center; font-family: inherit; transition: all .15s; }
+    .slot:hover { border-color: #2563EB; color: #2563EB; background: #EFF6FF; }
+    .slot.selected { border-color: #2563EB; background: #2563EB; color: #fff; }
+    .slot.loading { color: #9ca3af; cursor: default; }
+    .month-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .month-nav button { background: none; border: 1px solid #E2E8F0; border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+    .month-title { font-weight: 700; font-size: 15px; color: #0F172A; }
+    .success-card { text-align: center; padding: 32px 24px; }
+    .success-icon { font-size: 56px; margin-bottom: 16px; }
+    .success-title { font-size: 22px; font-weight: 800; color: #0F172A; margin-bottom: 8px; }
+    .success-sub { font-size: 14px; color: #64748B; line-height: 1.6; }
+    .info-pill { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 99px; background: #EFF6FF; color: #2563EB; font-size: 13px; font-weight: 600; margin-top: 12px; }
+    .meet-btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; border-radius: 12px; background: #1a73e8; color: #fff; text-decoration: none; font-weight: 700; font-size: 14px; margin-top: 16px; }
+    .no-slots { text-align: center; padding: 24px; color: #9ca3af; font-size: 13px; }
+    .back-btn { background: none; border: none; color: #2563EB; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap-4px; padding: 0; margin-bottom: 16px; font-family: inherit; }
+    @media(max-width:400px){ .slots-grid{ grid-template-columns: repeat(2,1fr); } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">
+    <img src="/icon-72.png" alt="Rabbitts"/>
+    <div>
+      <div class="logo-text">Rabbitts Capital</div>
+      <div style="font-size:11px;color:#64748B;font-weight:500">Agenda tu reunión de asesoría</div>
+    </div>
+  </div>
+
+  <!-- Step 1: Lead info -->
+  <div id="step1" class="card">
+    <div class="step-label">Paso 1 de 3</div>
+    <div class="card-title">Cuéntanos sobre ti</div>
+    <div class="card-sub">La reunión es gratuita. Nuestros honorarios los pagan las inmobiliarias.</div>
+    <div class="form-group">
+      <label>Nombre completo *</label>
+      <input id="nombre" type="text" placeholder="Juan Pérez" autocomplete="name"/>
+    </div>
+    <div class="form-group">
+      <label>Teléfono WhatsApp *</label>
+      <input id="telefono" type="tel" placeholder="+56 9 XXXX XXXX" autocomplete="tel"/>
+    </div>
+    <div class="form-group">
+      <label>Ingresos líquidos mensuales *</label>
+      <select id="ingresos">
+        <option value="">Selecciona tu rango</option>
+        <option value="1500000">$1.500.000 – $2.500.000</option>
+        <option value="2500000">$2.500.000 – $5.000.000</option>
+        <option value="5000000">$5.000.000 o más</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="goStep2()" id="btn1">Elegir fecha y hora →</button>
+  </div>
+
+  <!-- Step 2: Calendar -->
+  <div id="step2" class="card" style="display:none">
+    <button class="back-btn" onclick="showStep(1)">← Volver</button>
+    <div class="step-label">Paso 2 de 3</div>
+    <div class="card-title">Elige una fecha</div>
+    <div class="card-sub" id="duracion-label">Reunión de 60 minutos · Video llamada</div>
+
+    <div class="month-nav">
+      <button onclick="changeMonth(-1)">‹</button>
+      <div class="month-title" id="month-title"></div>
+      <button onclick="changeMonth(1)">›</button>
+    </div>
+    <div class="calendar-grid" id="cal-headers"></div>
+    <div class="calendar-grid" id="cal-days"></div>
+  </div>
+
+  <!-- Step 3: Time slots -->
+  <div id="step3" class="card" style="display:none">
+    <button class="back-btn" onclick="showStep(2)">← Volver</button>
+    <div class="step-label">Paso 3 de 3</div>
+    <div class="card-title" id="step3-title">Elige un horario</div>
+    <div class="card-sub" id="step3-sub"></div>
+    <div class="slots-grid" id="slots-container"></div>
+    <button class="btn btn-primary" onclick="confirmar()" id="btn-confirm" disabled style="margin-top:16px">Confirmar reunión</button>
+  </div>
+
+  <!-- Success -->
+  <div id="success" class="card" style="display:none">
+    <div class="success-card">
+      <div class="success-icon">🎉</div>
+      <div class="success-title">¡Reunión confirmada!</div>
+      <div class="success-sub" id="success-msg"></div>
+      <div id="meet-link-container"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+const DIAS_HEADER = ['Lu','Ma','Mi','Ju','Vi','Sa','Do']
+
+let currentDate = new Date()
+let selectedDate = null
+let selectedSlot = null
+let selectedBrokerId = null
+let loadedSlots = []
+
+function showStep(n) {
+  [1,2,3].forEach(i => document.getElementById('step'+i).style.display = i===n?'block':'none')
+  document.getElementById('success').style.display = 'none'
+  window.scrollTo(0,0)
+}
+
+function goStep2() {
+  const nombre = document.getElementById('nombre').value.trim()
+  const telefono = document.getElementById('telefono').value.trim()
+  const ingresos = document.getElementById('ingresos').value
+  if (!nombre) return alert('Ingresa tu nombre completo')
+  if (!telefono) return alert('Ingresa tu teléfono')
+  if (!ingresos) return alert('Selecciona tu rango de ingresos')
+  showStep(2)
+  renderCalendar()
+}
+
+function changeMonth(dir) {
+  currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + dir, 1)
+  renderCalendar()
+}
+
+function renderCalendar() {
+  const year = currentDate.getFullYear()
+  const month = currentDate.getMonth()
+  document.getElementById('month-title').textContent = MESES[month] + ' ' + year
+
+  // Headers
+  const hCont = document.getElementById('cal-headers')
+  hCont.innerHTML = DIAS_HEADER.map(d => `<div class="cal-header">${d}</div>`).join('')
+
+  // Days
+  const firstDay = new Date(year, month, 1)
+  let startDow = firstDay.getDay() // 0=Sun
+  startDow = startDow === 0 ? 6 : startDow - 1 // Mon=0
+
+  const daysInMonth = new Date(year, month+1, 0).getDate()
+  const today = new Date(); today.setHours(0,0,0,0)
+
+  let html = ''
+  for (let i=0; i<startDow; i++) html += `<div class="cal-day empty"></div>`
+  for (let d=1; d<=daysInMonth; d++) {
+    const date = new Date(year, month, d)
+    const isPast = date < today
+    const dateStr = date.toISOString().split('T')[0]
+    const isSelected = selectedDate === dateStr
+    const isToday = date.getTime() === today.getTime()
+    const dow = date.getDay()
+    const isWeekend = dow === 0 || dow === 6
+    html += `<button class="cal-day${isSelected?' selected':''}${isToday&&!isSelected?' today':''}" 
+      ${isPast?'disabled':''} 
+      onclick="selectDate('${dateStr}')">${d}</button>`
+  }
+  document.getElementById('cal-days').innerHTML = html
+}
+
+async function selectDate(dateStr) {
+  selectedDate = dateStr
+  selectedSlot = null
+  selectedBrokerId = null
+  renderCalendar()
+
+  const ingresos = document.getElementById('ingresos').value
+  showStep(3)
+
+  const fecha = new Date(dateStr)
+  const opts = {weekday:'long',day:'numeric',month:'long'}
+  document.getElementById('step3-title').textContent = 'Horarios disponibles'
+  document.getElementById('step3-sub').textContent = fecha.toLocaleDateString('es-CL', opts)
+
+  const container = document.getElementById('slots-container')
+  container.innerHTML = '<div class="no-slots" style="grid-column:1/-1">Cargando horarios...</div>'
+  document.getElementById('btn-confirm').disabled = true
+
+  try {
+    const res = await fetch(`/api/booking?fecha=${dateStr}&ingresos=${ingresos}`)
+    const data = await res.json()
+    loadedSlots = data.slots || []
+
+    if (!loadedSlots.length) {
+      container.innerHTML = '<div class="no-slots" style="grid-column:1/-1">No hay horarios disponibles para este día.<br/>Prueba con otra fecha.</div>'
+      return
+    }
+
+    container.innerHTML = loadedSlots.map((s,i) =>
+      `<button class="slot" onclick="selectSlot(${i})">${s.time}</button>`
+    ).join('')
+  } catch(e) {
+    container.innerHTML = '<div class="no-slots" style="grid-column:1/-1">Error cargando horarios. Intenta de nuevo.</div>'
+  }
+}
+
+function selectSlot(idx) {
+  selectedSlot = loadedSlots[idx]
+  selectedBrokerId = selectedSlot.broker.id
+  document.querySelectorAll('.slot').forEach((el,i) => el.classList.toggle('selected', i===idx))
+  document.getElementById('btn-confirm').disabled = false
+}
+
+async function confirmar() {
+  if (!selectedSlot || !selectedBrokerId) return
+  const nombre = document.getElementById('nombre').value.trim()
+  const telefono = document.getElementById('telefono').value.trim()
+  const ingresos = document.getElementById('ingresos').value
+
+  document.getElementById('btn-confirm').disabled = true
+  document.getElementById('btn-confirm').textContent = 'Confirmando...'
+
+  try {
+    const res = await fetch('/api/booking', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ nombre, telefono, ingresos, fecha: selectedDate, hora: selectedSlot.time, brokerId: selectedBrokerId })
+    })
+    const data = await res.json()
+
+    if (!data.success) throw new Error(data.error || 'Error al confirmar')
+
+    // Show success
+    document.getElementById('step1').style.display='none'
+    document.getElementById('step2').style.display='none'
+    document.getElementById('step3').style.display='none'
+    document.getElementById('success').style.display='block'
+
+    const fechaFmt = new Date(selectedDate).toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'})
+    document.getElementById('success-msg').innerHTML =
+      `Tu reunión con el equipo de Rabbitts Capital quedó agendada para el <strong>${fechaFmt} a las ${selectedSlot.time}</strong>.<br/><br/>Recibirás una confirmación por WhatsApp en ${telefono}.`
+
+    if (data.meetLink) {
+      document.getElementById('meet-link-container').innerHTML =
+        `<a href="${data.meetLink}" target="_blank" class="meet-btn">🎥 Unirse a Google Meet</a>`
+    }
+
+    // Open WhatsApp for broker if available (handled server-side)
+    window.scrollTo(0,0)
+  } catch(e) {
+    document.getElementById('btn-confirm').disabled = false
+    document.getElementById('btn-confirm').textContent = 'Confirmar reunión'
+    alert('Error: ' + e.message)
+  }
+}
+
+// Init
+renderCalendar()
+</script>
+</body>
+</html>
