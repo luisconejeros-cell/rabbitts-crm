@@ -1,6 +1,13 @@
 {
   "rewrites": [
     { "source": "/auth/callback", "destination": "/api/auth" },
-    { "source": "/agenda", "destination": "/agenda.html" }
+    { "source": "/agenda", "destination": "/agenda.html" },
+    { "source": "/agenda/", "destination": "/agenda.html" }
+  ],
+  "headers": [
+    {
+      "source": "/agenda.html",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    }
   ]
 }
