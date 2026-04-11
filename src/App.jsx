@@ -173,8 +173,10 @@ const Modal = ({title, onClose, children, wide=false}) => {
 
 // ─── Agenda Pública (no requiere login) ──────────────────────────────────────
 function AgendaPublicaView({settings={}}) {
+  const LOGO_SIZES = {pequeno: 36, mediano: 56, grande: 88}
   const S = {
     logo: settings.logo || null,
+    logoSize: LOGO_SIZES[settings.logoSize] || 56,
     titulo: settings.titulo || 'Reunión de Asesoría Inmobiliaria',
     subtitulo: settings.subtitulo || 'Agenda Rabbitts',
     descripcion: settings.descripcion || 'Revisaremos tu situación financiera y objetivos para diseñar un plan de inversión inmobiliaria a tu medida.',
@@ -266,12 +268,13 @@ function AgendaPublicaView({settings={}}) {
     letterSpacing:'-0.01em'
   }
   const leftPanel = {
-    width:isMobile?'100%':320,
-    borderRight:isMobile?'none':'1px solid #e5e7eb',
-    padding:isMobile?'28px 20px':'40px 32px',
-    flexShrink:0,background:'#fff'
+    width:isMobile?'100%':300,
+    borderRight:isMobile?'none':'1px solid #eff0f3',
+    padding:isMobile?'24px 20px':'36px 28px',
+    flexShrink:0,
+    background:'#FAFAFA'
   }
-  const rightPanel = {flex:1,padding:isMobile?'20px 16px':40}
+  const rightPanel = {flex:1,padding:isMobile?'20px 16px':'36px 40px',background:'#fff'}
   const inp = {
     width:'100%',padding:'11px 14px',borderRadius:10,
     border:'1.5px solid #e5e7eb',fontSize:15,fontFamily:'inherit',
@@ -289,31 +292,36 @@ function AgendaPublicaView({settings={}}) {
   return (
     <div style={page}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');`}</style>
-      <div style={{maxWidth:960,margin:'0 auto',display:'flex',flexDirection:isMobile?'column':'row',minHeight:'100vh',border:'1px solid #e5e7eb',borderRadius:isMobile?0:16,marginTop:isMobile?0:48,boxShadow:'0 8px 40px rgba(0,0,0,0.10)'}}>
+      <div style={{maxWidth:900,margin:'0 auto',display:'flex',flexDirection:isMobile?'column':'row',minHeight:isMobile?'100vh':'auto',border:'1px solid #E2E8F0',borderRadius:isMobile?0:16,marginTop:isMobile?0:40,marginBottom:isMobile?0:40,boxShadow:'0 4px 32px rgba(0,0,0,0.08)',overflow:'hidden'}}>
 
         {/* LEFT PANEL — Calendly style */}
         <div style={leftPanel}>
 
-          {/* Logo — grande y prominente como Calendly */}
-          <div style={{marginBottom:28}}>
+          {/* Logo */}
+          <div style={{marginBottom:24}}>
             {S.logo ? (
               <img
                 src={S.logo}
                 alt={S.empresa}
                 style={{
-                  height:56, maxWidth:200,
-                  objectFit:'contain', objectPosition:'left center',
-                  display:'block', marginBottom:16
+                  height:S.logoSize,
+                  maxWidth:'100%',
+                  objectFit:'contain',
+                  objectPosition:'left center',
+                  display:'block',
+                  marginBottom:14
                 }}
               />
             ) : (
-              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
-                <img src="/icon-192.png" alt={S.empresa}
-                  style={{width:52,height:52,borderRadius:14,objectFit:'cover',flexShrink:0,
-                    boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}/>
-              </div>
+              <img src="/icon-192.png" alt={S.empresa}
+                style={{
+                  width:S.logoSize, height:S.logoSize,
+                  borderRadius:Math.round(S.logoSize*0.22),
+                  objectFit:'cover', display:'block', marginBottom:14,
+                  boxShadow:'0 2px 8px rgba(0,0,0,0.10)'
+                }}/>
             )}
-            <div style={{fontSize:13,fontWeight:600,color:'#64748B',letterSpacing:'0.02em',textTransform:'uppercase'}}>
+            <div style={{fontSize:12,fontWeight:600,color:'#94a3b8',letterSpacing:'0.06em',textTransform:'uppercase'}}>
               {S.empresa}
             </div>
           </div>
@@ -367,10 +375,10 @@ function AgendaPublicaView({settings={}}) {
                 <div style={{flex:1}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
                     <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))}
-                      style={{background:'none',border:'none',cursor:'pointer',fontSize:18,padding:'4px 8px',color:'#374151'}}>‹</button>
-                    <span style={{fontWeight:600,fontSize:15,color:'#0F172A'}}>{MESES[curDate.getMonth()].toLowerCase()} {curDate.getFullYear()}</span>
+                      style={{width:32,height:32,borderRadius:8,border:'1px solid #E2E8F0',cursor:'pointer',fontSize:16,background:'#fff',color:'#374151',display:'flex',alignItems:'center',justifyContent:'center'}}>‹</button>
+                    <span style={{fontWeight:700,fontSize:15,color:'#0F172A',letterSpacing:'-0.3px'}}>{MESES[curDate.getMonth()]} {curDate.getFullYear()}</span>
                     <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()+1,1))}
-                      style={{background:'none',border:'none',cursor:'pointer',fontSize:18,padding:'4px 8px',color:'#374151'}}>›</button>
+                      style={{width:32,height:32,borderRadius:8,border:'1px solid #E2E8F0',cursor:'pointer',fontSize:16,background:'#fff',color:'#374151',display:'flex',alignItems:'center',justifyContent:'center'}}>›</button>
                   </div>
                   <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,marginBottom:8}}>
                     {DIAS_H.map(d=><div key={d} style={{fontSize:10,fontWeight:700,color:'#9ca3af',textAlign:'center',padding:'4px 0'}}>{d}</div>)}
@@ -387,22 +395,25 @@ function AgendaPublicaView({settings={}}) {
                     <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:400,overflowY:'auto'}}>
                       {slots.map((s,i)=>(
                         selSlot?.time===s.time ? (
-                          <div key={i} style={{display:'flex',gap:6}}>
-                            <button style={{flex:1,padding:'10px',borderRadius:8,border:`2px solid ${S.colorPrimario}`,
-                              background:'#6b7280',color:'#fff',cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit'}}>
+                          <div key={i} style={{display:'flex',gap:8}}>
+                            <button style={{flex:1,padding:'11px 8px',borderRadius:10,
+                              border:`2px solid ${S.colorPrimario}`,
+                              background:S.colorPrimario+'18',color:S.colorPrimario,
+                              cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',letterSpacing:'-0.01em'}}>
                               {s.time}
                             </button>
                             <button onClick={()=>setStep(2)}
-                              style={{padding:'10px 16px',borderRadius:8,border:'none',background:S.colorPrimario,color:'#fff',
-                                cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',whiteSpace:'nowrap'}}>
-                              Siguiente
+                              style={{padding:'11px 18px',borderRadius:10,border:'none',background:S.colorPrimario,color:'#fff',
+                                cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',whiteSpace:'nowrap',letterSpacing:'-0.01em'}}>
+                              Siguiente →
                             </button>
                           </div>
                         ) : (
                           <button key={i} onClick={()=>setSelSlot(s)}
-                            style={{width:'100%',padding:'10px',borderRadius:8,
-                              border:`2px solid ${S.colorPrimario}`,background:'#fff',
-                              color:S.colorPrimario,cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',transition:'all .1s'}}>
+                            style={{width:'100%',padding:'11px 8px',borderRadius:10,
+                              border:`1.5px solid #E2E8F0`,background:'#fff',
+                              color:'#374151',cursor:'pointer',fontSize:14,fontWeight:600,
+                              fontFamily:'inherit',transition:'all .1s',letterSpacing:'-0.01em'}}>
                             {s.time}
                           </button>
                         )
@@ -539,6 +550,7 @@ export default function App() {
   const [convMessages, setConvMessages] = useState({})  // {convId: [messages]}
   const [agendaSettings, setAgendaSettings] = useState({
     logo: null,           // base64 or null (uses default)
+    logoSize: 'mediano',  // pequeno | mediano | grande
     titulo: 'Reunión de Asesoría Inmobiliaria',
     subtitulo: 'Agenda Rabbitts',
     descripcion: 'Revisaremos tu situación financiera y objetivos para diseñar un plan de inversión inmobiliaria a tu medida: multicrédito, DFL2 y recuperación de IVA.',
@@ -5863,25 +5875,66 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
         <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:12}}>🎨 Página de reservas — configuración</div>
         <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:12}}>
           {/* Logo */}
-          <div style={{gridColumn:'1/-1',display:'flex',alignItems:'center',gap:14}}>
-            <div style={{width:64,height:64,borderRadius:14,overflow:'hidden',border:'1px solid #E2E8F0',flexShrink:0,background:'#f8fafc',display:'flex',alignItems:'center',justifyContent:'center'}}>
-              {agendaSettings?.logo
-                ? <img src={agendaSettings.logo} style={{width:'100%',height:'100%',objectFit:'cover'}} alt="logo"/>
-                : <img src="/icon-192.png" style={{width:'100%',height:'100%',objectFit:'cover'}} alt="logo"/>}
-            </div>
-            <div>
-              <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:6}}>Logo de la empresa</div>
-              <label htmlFor="agenda-logo-up" style={{display:'inline-block',padding:'6px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#374151',marginRight:6}}>
-                Subir imagen
-              </label>
-              <input id="agenda-logo-up" type="file" accept="image/*" style={{display:'none'}}
-                onChange={e=>{
-                  const file=e.target.files[0]; if(!file) return
-                  if(file.size>2*1024*1024){alert('Máx 2MB');return}
-                  const r=new FileReader(); r.onload=ev=>setAgendaSettings(s=>({...s,logo:ev.target.result})); r.readAsDataURL(file)
-                }}/>
-              {agendaSettings?.logo && <button onClick={()=>setAgendaSettings(s=>({...s,logo:null}))} style={{fontSize:11,color:'#991b1b',background:'none',border:'none',cursor:'pointer',padding:0}}>Eliminar</button>}
-              <div style={{fontSize:10,color:'#9ca3af',marginTop:3}}>PNG, JPG o SVG · máx 2MB</div>
+          <div style={{gridColumn:'1/-1',background:'#f8fafc',borderRadius:10,padding:'14px',border:'1px solid #E2E8F0'}}>
+            <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:10}}>Logo de la empresa</div>
+            <div style={{display:'flex',alignItems:'flex-start',gap:16,flexWrap:'wrap'}}>
+              {/* Preview */}
+              <div style={{background:'#FAFAFA',border:'1px solid #E2E8F0',borderRadius:10,padding:'12px 16px',minWidth:140,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                {agendaSettings?.logo ? (
+                  <img src={agendaSettings.logo}
+                    style={{
+                      height: {pequeno:32,mediano:48,grande:72}[agendaSettings?.logoSize||'mediano'],
+                      maxWidth:140, objectFit:'contain'
+                    }} alt="preview"/>
+                ) : (
+                  <img src="/icon-192.png"
+                    style={{
+                      width:{pequeno:32,mediano:48,grande:72}[agendaSettings?.logoSize||'mediano'],
+                      height:{pequeno:32,mediano:48,grande:72}[agendaSettings?.logoSize||'mediano'],
+                      borderRadius:8, objectFit:'cover'
+                    }} alt="preview"/>
+                )}
+              </div>
+              {/* Controls */}
+              <div style={{flex:1}}>
+                <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+                  <label htmlFor="agenda-logo-up" style={{display:'inline-block',padding:'7px 16px',borderRadius:8,border:`1px solid ${B.primary}`,background:B.light,cursor:'pointer',fontSize:12,fontWeight:700,color:B.primary}}>
+                    📁 Subir logo
+                  </label>
+                  <input id="agenda-logo-up" type="file" accept="image/*" style={{display:'none'}}
+                    onChange={e=>{
+                      const file=e.target.files[0]; if(!file) return
+                      if(file.size>2*1024*1024){alert('Máx 2MB');return}
+                      const r=new FileReader(); r.onload=ev=>setAgendaSettings(s=>({...s,logo:ev.target.result})); r.readAsDataURL(file)
+                    }}/>
+                  {agendaSettings?.logo && (
+                    <button onClick={()=>setAgendaSettings(s=>({...s,logo:null}))}
+                      style={{padding:'7px 12px',borderRadius:8,border:'1px solid #fca5a5',background:'#FEF2F2',fontSize:12,color:'#991b1b',cursor:'pointer',fontWeight:600}}>
+                      Eliminar
+                    </button>
+                  )}
+                </div>
+                {/* Size selector */}
+                <div style={{marginBottom:6}}>
+                  <div style={{fontSize:11,color:'#6b7280',marginBottom:6,fontWeight:600}}>Tamaño del logo</div>
+                  <div style={{display:'flex',gap:6}}>
+                    {[{k:'pequeno',l:'Pequeño',h:32},{k:'mediano',l:'Mediano',h:48},{k:'grande',l:'Grande',h:72}].map(({k,l,h})=>{
+                      const sel = (agendaSettings?.logoSize||'mediano')===k
+                      return (
+                        <button key={k} onClick={()=>setAgendaSettings(s=>({...s,logoSize:k}))}
+                          style={{flex:1,padding:'6px 4px',borderRadius:8,cursor:'pointer',fontWeight:600,fontSize:11,
+                            border:sel?`2px solid ${B.primary}`:'1px solid #E2E8F0',
+                            background:sel?B.light:'#fff',color:sel?B.primary:'#6b7280',
+                            display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
+                          <div style={{width:h*0.6,height:h*0.35,borderRadius:3,background:sel?B.primary:'#CBD5E1',transition:'all .15s'}}/>
+                          {l}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div style={{fontSize:10,color:'#9ca3af'}}>PNG, SVG o JPG recomendado · máx 2MB · fondo transparente ideal</div>
+              </div>
             </div>
           </div>
           {/* Fields */}
