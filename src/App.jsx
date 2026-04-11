@@ -1290,7 +1290,7 @@ export default function App() {
       {/* Mobile slide menu */}
       {isMobile && mobileMenuOpen && (
         <div style={{position:'fixed',inset:0,zIndex:200}} onClick={()=>setMobileMenuOpen(false)}>
-          <div style={{position:'absolute',top:0,left:0,width:'75%',maxWidth:280,height:'100%',background:'#fff',boxShadow:'4px 0 24px rgba(0,0,0,0.15)',padding:'16px',display:'flex',flexDirection:'column',gap:4}}
+          <div style={{position:'absolute',top:0,left:0,width:'75%',maxWidth:280,height:'100%',background:'#fff',boxShadow:'4px 0 24px rgba(0,0,0,0.15)',padding:'16px',display:'flex',flexDirection:'column',gap:4,overflowY:'auto'}}
             onClick={e=>e.stopPropagation()}>
             <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
               <AV name={me.name} size={36} src={me.avatar_url||null}/>
@@ -1309,7 +1309,7 @@ export default function App() {
                 </button>
               )
             })}
-            <div style={{marginTop:'auto',paddingTop:12,borderTop:'1px solid #f0f4ff',display:'flex',flexDirection:'column',gap:6}}>
+            <div style={{marginTop:16,paddingTop:12,borderTop:'1px solid #f0f4ff',display:'flex',flexDirection:'column',gap:6}}>
               <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile');setMobileMenuOpen(false)}} style={{padding:'10px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'transparent',cursor:'pointer',color:B.mid,fontSize:13,textAlign:'left'}}>👤 Mi perfil</button>
               {installPrompt ? (
                 <button onClick={async()=>{
@@ -1320,14 +1320,12 @@ export default function App() {
                   📲 Instalar app en este celular
                 </button>
               ) : (
-                <div style={{padding:'10px 14px',borderRadius:8,background:'#f8fafc',border:'1px solid #E2E8F0',fontSize:12,color:'#374151'}}>
-                  <div style={{fontWeight:600,marginBottom:6}}>📲 Instalar app</div>
-                  <div style={{color:'#64748B',fontSize:11,marginBottom:4}}>
-                    <strong>iPhone/iPad:</strong> Safari → botón compartir ↑ → "Añadir a pantalla de inicio"
-                  </div>
-                  <div style={{color:'#64748B',fontSize:11}}>
-                    <strong>Android:</strong> Chrome → tres puntos ⋮ → "Añadir a pantalla de inicio"
-                  </div>
+                <div style={{borderRadius:10,background:'#EFF6FF',border:'1px solid #BFDBFE',padding:'10px 14px'}}>
+                  <div style={{fontWeight:700,fontSize:12,color:'#1D4ED8',marginBottom:8}}>📲 Instalar app</div>
+                  <div style={{fontSize:12,color:'#1D4ED8',fontWeight:600,marginBottom:2}}>🤖 Android Chrome:</div>
+                  <div style={{fontSize:12,color:'#475569',marginBottom:8}}>Tres puntos ⋮ → "Añadir a pantalla de inicio"</div>
+                  <div style={{fontSize:12,color:'#1D4ED8',fontWeight:600,marginBottom:2}}>🍎 iPhone Safari:</div>
+                  <div style={{fontSize:12,color:'#475569'}}>Botón compartir ↑ → "Añadir a pantalla de inicio"</div>
                 </div>
               )}
               <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{padding:'10px 14px',borderRadius:8,border:'none',background:'#FEF2F2',cursor:'pointer',color:'#991b1b',fontSize:13,textAlign:'left',fontWeight:600}}>🚪 Cerrar sesión</button>
