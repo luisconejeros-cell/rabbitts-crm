@@ -12,55 +12,57 @@ export default async function handler(req, res) {
     ...opts
   })
 
-  // ── GET: return available slots for a given date + income ─────────────────
+  // ── GET: return available slots ───────────────────────────────────────────
   if (req.method === 'GET') {
     const { fecha, ingresos } = req.query
     if (!fecha) return res.status(400).json({ error: 'fecha required' })
 
-    // Get all active brokers with agenda config
     const usersRes = await sb('crm_users?role=eq.agent&select=id,name,email,phone,agenda_config,google_tokens')
     const users = await usersRes.json()
 
     const ingresosNum = parseInt(ingresos) || 0
-    const ahora = Date.now()
-    const fechaDate = new Date(fecha + 'T00:00:00')
+    // Use Santiago time offset (-3 or -4) — approximate with -3
+    const ahoraSantiago = Date.now() - (0 * 60000) // server time is already close enough
+    
+    // Day of week for the requested date (in Santiago timezone)
+    const fechaDate = new Date(fecha + 'T12:00:00-03:00')
     const diaSemana = fechaDate.getDay() // 0=dom,1=lun,...6=sab
     const DIAS_KEY = ['dom','lun','mar','mie','jue','vie','sab']
     const diaKey = DIAS_KEY[diaSemana]
 
-    // Filter brokers by income category
     const categoriaCliente = ingresosNum >= 5000000 ? 'alto' : ingresosNum >= 2500000 ? 'medio' : 'bajo'
+
+    // Filter brokers: must be active and have the day configured
     const brokersAptos = (users||[]).filter(u => {
       const ag = u.agenda_config
-      if (!ag?.enAgenda) return false  // must be explicitly added to agenda by admin
-      if (!ag?.activa) return false
+      if (!ag) return false
+      if (!ag.activa) return false                          // broker must be active
+      if (!ag.dias?.[diaKey]?.activo) return false          // must have that day enabled
       const cats = ag.ingresos_categorias || ['cualquiera']
       if (!cats.includes('cualquiera') && !cats.includes(categoriaCliente)) return false
-      if (!ag.dias?.[diaKey]?.activo) return false
       return true
     }).sort((a,b) => (b.agenda_config?.peso||5) - (a.agenda_config?.peso||5))
 
-    if (!brokersAptos.length) return res.status(200).json({ slots: [], brokers: 0 })
+    if (!brokersAptos.length) {
+      return res.status(200).json({ slots: [], brokers: 0, debug: `No brokers for day ${diaKey}, total agents: ${users.length}` })
+    }
 
-    // Generate slots across all available brokers for that day
-    // Group by time slot, assign best broker
     const slotMap = {}
 
     for (const broker of brokersAptos) {
       const ag = broker.agenda_config
       const diaConfig = ag.dias[diaKey]
       const durMin = ag.duracion || 60
-      const anticipMin = (ag.anticipacion || 12) * 60 // in minutes
+      const anticipMin = (ag.anticipacion || 12) * 60 // minutes
 
       const [desdeH, desdeM] = diaConfig.desde.split(':').map(Number)
       const [hastaH, hastaM] = diaConfig.hasta.split(':').map(Number)
 
-      let slot = new Date(fecha + 'T00:00:00')
-      slot.setHours(desdeH, desdeM, 0, 0)
-      const end = new Date(fecha + 'T00:00:00')
-      end.setHours(hastaH, hastaM, 0, 0)
+      // Build slots in Santiago time
+      let slot = new Date(`${fecha}T${diaConfig.desde}:00-03:00`)
+      const endTime = new Date(`${fecha}T${diaConfig.hasta}:00-03:00`)
 
-      // Get broker's busy times from Google Calendar if connected
+      // Get busy times from Google Calendar
       let busyTimes = []
       if (broker.google_tokens?.access_token) {
         try {
@@ -68,8 +70,8 @@ export default async function handler(req, res) {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${broker.google_tokens.access_token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              timeMin: new Date(fecha + 'T00:00:00').toISOString(),
-              timeMax: new Date(fecha + 'T23:59:59').toISOString(),
+              timeMin: new Date(`${fecha}T00:00:00-03:00`).toISOString(),
+              timeMax: new Date(`${fecha}T23:59:59-03:00`).toISOString(),
               timeZone: 'America/Santiago',
               items: [{ id: 'primary' }]
             })
@@ -79,17 +81,17 @@ export default async function handler(req, res) {
         } catch(e) { /* ignore */ }
       }
 
-      while (slot < end) {
+      while (slot < endTime) {
         const slotEnd = new Date(slot.getTime() + durMin * 60000)
-        if (slotEnd > end) break
+        if (slotEnd > endTime) break
 
-        const slotKey = slot.toTimeString().slice(0,5) // "09:00"
+        const slotKey = slot.toLocaleTimeString('es-CL', { hour:'2-digit', minute:'2-digit', timeZone:'America/Santiago' })
         const slotTimestamp = slot.getTime()
 
         // Check minimum anticipation
-        if (slotTimestamp - ahora < anticipMin * 60000) { slot = slotEnd; continue }
+        if (slotTimestamp - Date.now() < anticipMin * 60000) { slot = slotEnd; continue }
 
-        // Check if busy
+        // Check if busy in Google Calendar
         const isBusy = busyTimes.some(b => {
           const bs = new Date(b.start).getTime()
           const be = new Date(b.end).getTime()
@@ -114,87 +116,76 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Faltan datos requeridos' })
     }
 
-    // Get broker
     const brokerRes = await sb(`crm_users?id=eq.${brokerId}&select=*`)
     const brokers = await brokerRes.json()
     const broker = brokers[0]
     if (!broker) return res.status(404).json({ error: 'Broker no encontrado' })
 
-    const ag = broker.agenda_config
-    const durMin = ag?.duracion || 60
+    const durMin = broker.agenda_config?.duracion || 60
 
-    // Create calendar event
+    // Create Google Calendar event
     let eventData = null
     if (broker.google_tokens) {
       try {
-        const calRes = await fetch(`${process.env.VITE_APP_URL || 'https://crm.rabbittscapital.com'}/api/calendar`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'create',
-            tokens: broker.google_tokens,
-            event: {
-              titulo: `Reunión Rabbitts — ${nombre}`,
-              fecha, hora, duracion: durMin,
-              clienteEmail: '',
-              clienteNombre: nombre,
-              brokerEmail: broker.email,
-              notas: `Renta declarada: $${parseInt(ingresos).toLocaleString('es-CL')}\nTeléfono: ${telefono}`
-            }
+        const startDT = new Date(`${fecha}T${hora}:00-03:00`)
+        const endDT = new Date(startDT.getTime() + durMin * 60000)
+        const calEvent = {
+          summary: `Reunión Rabbitts — ${nombre}`,
+          description: `Renta declarada: $${parseInt(ingresos).toLocaleString('es-CL')}\nTeléfono: ${telefono}`,
+          start: { dateTime: startDT.toISOString(), timeZone: 'America/Santiago' },
+          end: { dateTime: endDT.toISOString(), timeZone: 'America/Santiago' },
+          attendees: [{ email: broker.email }],
+          reminders: { useDefault: false, overrides: [{ method:'email', minutes:60 }, { method:'popup', minutes:15 }] },
+          conferenceData: { createRequest: { requestId:`rabbitts-${Date.now()}`, conferenceSolutionKey:{type:'hangoutsMeet'} } }
+        }
+        // Refresh token if needed
+        let accessToken = broker.google_tokens.access_token
+        if (Date.now() > broker.google_tokens.expiry - 60000) {
+          const refreshRes = await fetch('https://oauth2.googleapis.com/token', {
+            method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, refresh_token: broker.google_tokens.refresh_token, grant_type:'refresh_token' })
           })
+          const refreshData = await refreshRes.json()
+          if (refreshData.access_token) accessToken = refreshData.access_token
+        }
+        const calRes = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all', {
+          method:'POST', headers:{ 'Authorization':`Bearer ${accessToken}`, 'Content-Type':'application/json' },
+          body: JSON.stringify(calEvent)
         })
         eventData = await calRes.json()
+        if (eventData.error) { console.warn('Cal error:', eventData.error); eventData = null }
       } catch(e) { console.warn('Calendar error:', e.message) }
     }
 
     // Create lead in CRM
     const leadId = 'l-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)
-    const lead = {
-      id: leadId,
-      nombre, telefono,
-      email: '—',
-      renta: `$${parseInt(ingresos).toLocaleString('es-CL')}`,
-      tag: 'lead',
-      stage: 'agenda',
-      assigned_to: brokerId,
-      fecha: new Date().toISOString(),
-      origen: 'agenda_publica',
-      resumen: `Lead desde página de agenda pública. Renta: $${parseInt(ingresos).toLocaleString('es-CL')}`,
-      meeting_date: fecha + 'T' + hora,
-      meeting_event_id: eventData?.eventId || null,
-      meeting_link: eventData?.meetLink || eventData?.eventLink || null,
-      calificacion: '—',
-      propiedades: [], comentarios: []
-    }
-    await sb('crm_leads', { method: 'POST', headers: { 'Prefer': 'return=minimal' }, body: JSON.stringify(lead) })
-
-    // Send email to broker
-    const notifyUrl = `${process.env.VITE_APP_URL || 'https://crm.rabbittscapital.com'}/api/notify`
-    await fetch(notifyUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    await sb('crm_leads', {
+      method:'POST',
+      headers:{'Prefer':'return=minimal'},
       body: JSON.stringify({
-        type: 'nueva_reunion',
-        to: broker.email,
-        broker: broker.name,
-        lead: { nombre, telefono, renta: `$${parseInt(ingresos).toLocaleString('es-CL')}`, fecha, hora },
-        meetLink: eventData?.meetLink || null
+        id: leadId, nombre, telefono, email:'—',
+        renta: `$${parseInt(ingresos).toLocaleString('es-CL')}`,
+        tag:'lead', stage:'agenda', assigned_to: brokerId,
+        fecha: new Date().toISOString(), origen:'agenda_publica',
+        resumen: `Lead desde agenda pública. Renta: $${parseInt(ingresos).toLocaleString('es-CL')}`,
+        meeting_date: `${fecha}T${hora}`,
+        meeting_event_id: eventData?.id || null,
+        meeting_link: eventData?.conferenceData?.entryPoints?.[0]?.uri || eventData?.htmlLink || null,
+        calificacion:'—', propiedades:[], comentarios:[]
       })
-    }).catch(()=>{})
+    })
 
-    // Send WhatsApp to broker if has phone
-    let waLink = null
-    if (broker.phone) {
-      const waMsg = encodeURIComponent(`Nueva reunión agendada:\nCliente: ${nombre}\nTeléfono: ${telefono}\nRenta: $${parseInt(ingresos).toLocaleString('es-CL')}\nFecha: ${fecha} ${hora}${eventData?.meetLink ? '\nMeet: '+eventData.meetLink : ''}`)
-      waLink = `https://wa.me/${broker.phone.replace(/[^0-9]/g,'')}?text=${waMsg}`
-    }
+    // Notify broker by email
+    await fetch(`https://crm.rabbittscapital.com/api/notify`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ type:'nueva_reunion', to:broker.email, broker:broker.name, lead:{nombre,telefono,renta:`$${parseInt(ingresos).toLocaleString('es-CL')}`,fecha,hora}, meetLink:eventData?.conferenceData?.entryPoints?.[0]?.uri||null })
+    }).catch(()=>{})
 
     return res.status(200).json({
       success: true,
-      meetLink: eventData?.meetLink || null,
-      eventLink: eventData?.eventLink || null,
-      brokerName: broker.name,
-      waLink
+      meetLink: eventData?.conferenceData?.entryPoints?.[0]?.uri || null,
+      eventLink: eventData?.htmlLink || null,
+      brokerName: broker.name
     })
   }
 }
