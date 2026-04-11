@@ -829,7 +829,13 @@ export default function App() {
   async function saveUsers(us) {
     setUsers(us)
     if (dbReady) {
-      for (const u of us) await supabase.from('crm_users').upsert(u)
+      for (const u of us) {
+        try {
+          await supabase.from('crm_users').upsert(u, {onConflict:'id'})
+        } catch(e) {
+          console.warn('saveUsers error for', u.id, e)
+        }
+      }
     } else {
       localStorage.setItem('rcrm_users', JSON.stringify(us))
     }
@@ -3140,7 +3146,7 @@ export default function App() {
 
         {/* AGENDA EQUIPO — admin config */}
         {nav==='agenda' && isAdmin && (
-          <AgendaEquipoView users={users} setUsers={setUsers} saveUsers={saveUsers}/>
+          <AgendaEquipoView users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady}/>
         )}
 
         {/* MI AGENDA — broker availability config */}
@@ -5544,7 +5550,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 }
 
 // ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
-function AgendaEquipoView({users, setUsers, saveUsers}) {
+function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const todosAgentes = (users||[]).filter(u => u.role === 'agent')
   
@@ -5560,6 +5566,19 @@ function AgendaEquipoView({users, setUsers, saveUsers}) {
   })
   const [editingId, setEditingId] = React.useState(null)
 
+  // Sync localConfigs when users prop changes (e.g. on remount)
+  React.useEffect(() => {
+    setLocalConfigs(prev => {
+      const next = {...prev}
+      todosAgentes.forEach(u => {
+        if (u.agenda_config && !prev[u.id]?.enAgenda && u.agenda_config.enAgenda) {
+          next[u.id] = {...prev[u.id], ...u.agenda_config}
+        }
+      })
+      return next
+    })
+  }, [users])
+
   const brokersEnAgenda = todosAgentes.filter(u => localConfigs[u.id]?.enAgenda)
   const brokersDisponibles = todosAgentes.filter(u => !localConfigs[u.id]?.enAgenda)
 
@@ -5574,12 +5593,21 @@ function AgendaEquipoView({users, setUsers, saveUsers}) {
 
   const saveAll = async () => {
     setSaving(true)
+    // Update users with merged agenda_config
     const updated = (users||[]).map(u => {
       if (u.role !== 'agent') return u
       const cfg = {...(u.agenda_config||{}), ...localConfigs[u.id]}
       return {...u, agenda_config: cfg}
     })
     await saveUsers(updated)
+    // Also do individual PATCH for agenda_config to ensure it's saved
+    if (dbReady && supabase) {
+      for (const u of updated.filter(u=>u.role==='agent')) {
+        try {
+          await supabase.from('crm_users').update({ agenda_config: u.agenda_config }).eq('id', u.id)
+        } catch(e) { console.warn('agenda_config patch failed', u.id, e) }
+      }
+    }
     setSavedMsg('✅ Guardado')
     setTimeout(()=>setSavedMsg(''), 2000)
     setSaving(false)
