@@ -258,45 +258,101 @@ function AgendaPublicaView({settings={}}) {
 
   const selDateFmt = selDate ? new Date(selDate+'T12:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) : ''
 
-  // Styles
-  const page = {fontFamily:"'Inter',sans-serif",minHeight:'100vh',background:'#fff',WebkitFontSmoothing:'antialiased',MozOsxFontSmoothing:'grayscale',letterSpacing:'-0.01em'}
-  const leftPanel = {width:isMobile?'100%':300,borderRight:isMobile?'none':'1px solid #e5e7eb',padding:'32px 24px',flexShrink:0,background:'#fff'}
-  const rightPanel = {flex:1,padding:isMobile?'16px':32}
-  const inp = {width:'100%',padding:'10px 14px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:14,fontFamily:'inherit',color:'#0F172A',outline:'none',WebkitAppearance:'none',boxSizing:'border-box',marginTop:6}
-  const btnBlue = {padding:'12px 24px',borderRadius:99,border:'none',fontSize:14,fontWeight:700,cursor:'pointer',background:S.colorPrimario,color:'#fff',fontFamily:'inherit'}
+  // Styles — Vambe typography
+  const page = {
+    fontFamily:"'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+    minHeight:'100vh',background:'#fff',
+    WebkitFontSmoothing:'antialiased',MozOsxFontSmoothing:'grayscale',
+    letterSpacing:'-0.01em'
+  }
+  const leftPanel = {
+    width:isMobile?'100%':320,
+    borderRight:isMobile?'none':'1px solid #e5e7eb',
+    padding:isMobile?'28px 20px':'40px 32px',
+    flexShrink:0,background:'#fff'
+  }
+  const rightPanel = {flex:1,padding:isMobile?'20px 16px':40}
+  const inp = {
+    width:'100%',padding:'11px 14px',borderRadius:10,
+    border:'1.5px solid #e5e7eb',fontSize:15,fontFamily:'inherit',
+    color:'#0F172A',outline:'none',WebkitAppearance:'none',
+    boxSizing:'border-box',marginTop:6,
+    transition:'border-color .15s',letterSpacing:'-0.01em'
+  }
+  const btnBlue = {
+    padding:'13px 28px',borderRadius:99,border:'none',
+    fontSize:15,fontWeight:700,cursor:'pointer',
+    background:S.colorPrimario,color:'#fff',
+    fontFamily:'inherit',letterSpacing:'-0.01em'
+  }
 
   return (
     <div style={page}>
-      <div style={{maxWidth:900,margin:'0 auto',display:'flex',flexDirection:isMobile?'column':'row',minHeight:'100vh',border:'1px solid #e5e7eb',borderRadius:isMobile?0:12,marginTop:isMobile?0:40,boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');`}</style>
+      <div style={{maxWidth:960,margin:'0 auto',display:'flex',flexDirection:isMobile?'column':'row',minHeight:'100vh',border:'1px solid #e5e7eb',borderRadius:isMobile?0:16,marginTop:isMobile?0:48,boxShadow:'0 8px 40px rgba(0,0,0,0.10)'}}>
 
-        {/* LEFT PANEL */}
+        {/* LEFT PANEL — Calendly style */}
         <div style={leftPanel}>
-          {/* Logo — Vambe style */}
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}>
-            {S.logo
-            ? <img src={S.logo} alt={S.empresa} style={{width:44,height:44,borderRadius:12,objectFit:'cover',flexShrink:0}}/>
-            : <img src="/icon-192.png" alt={S.empresa} style={{width:44,height:44,borderRadius:12,objectFit:'cover',flexShrink:0}}/>}
-            <div>
-              <div style={{fontSize:15,fontWeight:800,color:'#0F172A',letterSpacing:'-0.3px'}}>{S.empresa}</div>
-              <div style={{fontSize:11,color:'#64748B',fontWeight:500}}>{S.subtitulo}</div>
+
+          {/* Logo — grande y prominente como Calendly */}
+          <div style={{marginBottom:28}}>
+            {S.logo ? (
+              <img
+                src={S.logo}
+                alt={S.empresa}
+                style={{
+                  height:56, maxWidth:200,
+                  objectFit:'contain', objectPosition:'left center',
+                  display:'block', marginBottom:16
+                }}
+              />
+            ) : (
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
+                <img src="/icon-192.png" alt={S.empresa}
+                  style={{width:52,height:52,borderRadius:14,objectFit:'cover',flexShrink:0,
+                    boxShadow:'0 2px 8px rgba(0,0,0,0.12)'}}/>
+              </div>
+            )}
+            <div style={{fontSize:13,fontWeight:600,color:'#64748B',letterSpacing:'0.02em',textTransform:'uppercase'}}>
+              {S.empresa}
             </div>
           </div>
-          <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:16,lineHeight:1.25,letterSpacing:'-0.5px'}}>{S.titulo}</div>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
-            <span>🕐</span> {S.duracionLabel}
+
+          {/* Título del evento */}
+          <div style={{fontSize:24,fontWeight:800,color:'#0F172A',marginBottom:20,lineHeight:1.2,letterSpacing:'-0.5px'}}>
+            {S.titulo}
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
-            <span>🎥</span> Google Meet (se enviará al confirmar)
-          </div>
-          {step===2&&selDate&&selSlot&&(
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
-              <span>📅</span> {selSlot.time} · {selDateFmt}
+
+          {/* Meta info */}
+          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:24}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:'#374151'}}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span style={{fontWeight:500}}>{S.duracionLabel}</span>
             </div>
-          )}
-          <div style={{fontSize:13,color:'#6b7280',lineHeight:1.6,marginTop:16}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:'#374151'}}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 10l-4 4l6 6l4-16-18 7l4 2l2 6z"/></svg>
+              <span style={{fontWeight:500}}>Google Meet</span>
+            </div>
+            {step===2&&selDate&&selSlot&&(
+              <div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:S.colorPrimario,fontWeight:600}}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={S.colorPrimario} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style={{textTransform:'capitalize'}}>{selSlot.time} · {selDateFmt}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Separador */}
+          <div style={{height:1,background:'#f1f5f9',marginBottom:20}}/>
+
+          {/* Descripción */}
+          <div style={{fontSize:13,color:'#64748B',lineHeight:1.7,fontWeight:400}}>
             {S.descripcion}
           </div>
-          <div style={{marginTop:24,fontSize:11,color:'#9ca3af'}}>🌍 Zona horaria: Santiago, Chile</div>
+
+          <div style={{marginTop:28,display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#94a3b8'}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Santiago, Chile
+          </div>
         </div>
 
         {/* RIGHT PANEL */}
@@ -305,7 +361,7 @@ function AgendaPublicaView({settings={}}) {
           {/* STEP 1 — Calendar + Slots */}
           {step===1&&(
             <div>
-              <div style={{fontSize:18,fontWeight:700,color:'#0F172A',marginBottom:20}}>Selecciona una fecha y hora</div>
+              <div style={{fontSize:20,fontWeight:700,color:'#0F172A',marginBottom:24,letterSpacing:'-0.3px'}}>Selecciona una fecha y hora</div>
               <div style={{display:'flex',flexDirection:isMobile?'column':'row',gap:24}}>
                 {/* Calendar */}
                 <div style={{flex:1}}>
@@ -361,20 +417,20 @@ function AgendaPublicaView({settings={}}) {
           {/* STEP 2 — Form */}
           {step===2&&(
             <div style={{maxWidth:480}}>
-              <button onClick={()=>setStep(1)} style={{background:'none',border:'none',cursor:'pointer',color:S.colorPrimario,fontSize:14,fontWeight:600,marginBottom:20,fontFamily:'inherit',display:'flex',alignItems:'center',gap:4,padding:0}}>
+              <button onClick={()=>setStep(1)} style={{background:'none',border:'none',cursor:'pointer',color:S.colorPrimario,fontSize:14,fontWeight:600,marginBottom:24,fontFamily:'inherit',display:'flex',alignItems:'center',gap:6,padding:0,letterSpacing:'-0.01em'}}>
                 ← Volver
               </button>
-              <div style={{fontSize:18,fontWeight:700,color:'#0F172A',marginBottom:24}}>Introduzca los detalles</div>
+              <div style={{fontSize:20,fontWeight:700,color:'#0F172A',marginBottom:24,letterSpacing:'-0.3px'}}>Introduzca los detalles</div>
               <div style={{marginBottom:16}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Nombre completo *</label>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>Nombre completo *</label>
                 <input style={inp} value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} placeholder=""/>
               </div>
               <div style={{marginBottom:16}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Correo electrónico</label>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>Correo electrónico</label>
                 <input style={inp} type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder=""/>
               </div>
               <div style={{marginBottom:16}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Teléfono WhatsApp *</label>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>Teléfono WhatsApp *</label>
                 <div style={{display:'flex',gap:0,marginTop:6}}>
                   <div style={{padding:'10px 12px',border:'1.5px solid #e5e7eb',borderRight:'none',borderRadius:'8px 0 0 8px',fontSize:14,background:'#f9fafb',display:'flex',alignItems:'center',gap:4}}>
                     🇨🇱 +56
@@ -383,7 +439,7 @@ function AgendaPublicaView({settings={}}) {
                 </div>
               </div>
               <div style={{marginBottom:16}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Ingresos líquidos mensuales *</label>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>Ingresos líquidos mensuales *</label>
                 <select style={inp} value={form.ingresos} onChange={e=>setForm(f=>({...f,ingresos:e.target.value}))}>
                   <option value="">Selecciona tu rango</option>
                   <option value="1500000">$1.500.000 – $2.500.000</option>
@@ -391,15 +447,15 @@ function AgendaPublicaView({settings={}}) {
                   <option value="5000000">$5.000.000 o más</option>
                 </select>
               </div>
-              <div style={{marginBottom:24}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151'}}>Cuéntanos algo para preparar mejor la reunión</label>
+              <div style={{marginBottom:28}}>
+                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>¿Algo que debamos saber antes de la reunión?</label>
                 <textarea style={{...inp,minHeight:80,resize:'none'}} value={form.notas} onChange={e=>setForm(f=>({...f,notas:e.target.value}))}/>
               </div>
-              <div style={{fontSize:11,color:'#9ca3af',marginBottom:16}}>
+              <div style={{fontSize:12,color:'#94a3b8',marginBottom:16}}>
                 Al continuar, aceptas nuestra política de privacidad y términos de servicio.
               </div>
               <button onClick={confirmar} disabled={confirming||!form.nombre||!form.telefono||!form.ingresos}
-                style={{...btnBlue,background:S.colorPrimario,width:'100%',opacity:confirming||!form.nombre||!form.telefono||!form.ingresos?0.5:1}}>
+                style={{...btnBlue,width:'100%',opacity:confirming||!form.nombre||!form.telefono||!form.ingresos?0.5:1}}>
                 {confirming?'Confirmando...':'Programar reunión'}
               </button>
             </div>
@@ -407,17 +463,17 @@ function AgendaPublicaView({settings={}}) {
 
           {/* STEP 3 — Success */}
           {step===3&&(
-            <div style={{textAlign:'center',padding:'40px 24px'}}>
-              <div style={{fontSize:56,marginBottom:16}}>🎉</div>
-              <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:8}}>¡Reunión confirmada!</div>
-              <div style={{fontSize:14,color:'#64748B',lineHeight:1.6,marginBottom:20}}>
-                Tu reunión fue agendada para el <strong style={{textTransform:'capitalize'}}>{selDateFmt}</strong> a las <strong>{selSlot?.time}</strong>.<br/>
+            <div style={{textAlign:'center',padding:'60px 24px'}}>
+              <div style={{width:72,height:72,borderRadius:'50%',background:'#DCFCE7',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 20px',fontSize:32}}>🎉</div>
+              <div style={{fontSize:24,fontWeight:800,color:'#0F172A',marginBottom:10,letterSpacing:'-0.5px'}}>¡Reunión confirmada!</div>
+              <div style={{fontSize:15,color:'#64748B',lineHeight:1.7,marginBottom:24,maxWidth:380,margin:'0 auto 24px'}}>
+                Tu reunión fue agendada para el <strong style={{color:'#0F172A',textTransform:'capitalize'}}>{selDateFmt}</strong> a las <strong style={{color:'#0F172A'}}>{selSlot?.time}</strong>.<br/>
                 Recibirás confirmación por WhatsApp.
               </div>
               {result?.meetLink&&(
                 <a href={result.meetLink} target="_blank" rel="noopener noreferrer"
-                  style={{display:'inline-flex',alignItems:'center',gap:8,padding:'12px 24px',borderRadius:99,
-                    background:'#1a73e8',color:'#fff',textDecoration:'none',fontWeight:700,fontSize:14}}>
+                  style={{display:'inline-flex',alignItems:'center',gap:8,padding:'13px 28px',borderRadius:99,
+                    background:'#1a73e8',color:'#fff',textDecoration:'none',fontWeight:700,fontSize:15,letterSpacing:'-0.01em'}}>
                   🎥 Unirse a Google Meet
                 </a>
               )}
