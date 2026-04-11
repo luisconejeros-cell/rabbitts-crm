@@ -1157,7 +1157,7 @@ export default function App() {
             : isPartner  ? ['dashboard','pool']
             : isOps      ? ['kanban','lista']
             : isFinanzas ? ['dashboard_finanzas','comisiones']
-            : ['kanban','lista','mis comisiones','nuevo lead']
+            : ['kanban','lista','mis comisiones','mi agenda','nuevo lead']
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
@@ -2883,6 +2883,11 @@ export default function App() {
             dbReady={dbReady}
             me={me}
           />
+        )}
+
+        {/* MI AGENDA — broker availability config */}
+        {nav==='mi agenda' && isAgent && (
+          <MiAgendaView me={me} users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady}/>
         )}
 
         {/* EXTRAER */}
@@ -5274,6 +5279,206 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Mi Agenda View (broker availability config) ─────────────────────────────
+function MiAgendaView({me, users, setUsers, saveUsers, supabase, dbReady}) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+  const DIAS = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo']
+  const DIAS_KEY = ['lun','mar','mie','jue','vie','sab','dom']
+
+  const myUser = (users||[]).find(u=>u.id===me.id) || me
+  const [agenda, setAgenda] = React.useState(() => {
+    const saved = myUser.agenda_config
+    return saved || {
+      activa: false,
+      duracion: 60,
+      anticipacion: 12,
+      dias: {
+        lun:{activo:true,  desde:'09:00',hasta:'18:00'},
+        mar:{activo:true,  desde:'09:00',hasta:'18:00'},
+        mie:{activo:true,  desde:'09:00',hasta:'18:00'},
+        jue:{activo:true,  desde:'09:00',hasta:'18:00'},
+        vie:{activo:true,  desde:'09:00',hasta:'18:00'},
+        sab:{activo:false, desde:'10:00',hasta:'14:00'},
+        dom:{activo:false, desde:'10:00',hasta:'14:00'},
+      },
+      rentas: {min: 1500000, max: 0}, // 0 = sin limite
+      peso: 5,
+      ingresos_categorias: ['cualquiera'], // cualquiera | bajo | medio | alto
+    }
+  })
+  const [saving, setSaving] = React.useState(false)
+  const [saved, setSaved] = React.useState(false)
+
+  const upd = (path, val) => setAgenda(prev => {
+    const next = JSON.parse(JSON.stringify(prev))
+    path.reduce((o,k,i) => i===path.length-1 ? (o[k]=val,o) : o[k], next)
+    return next
+  })
+
+  const save = async () => {
+    setSaving(true)
+    const updated = (users||[]).map(u => u.id===me.id ? {...u, agenda_config: agenda} : u)
+    await saveUsers(updated)
+    setSaved(true)
+    setTimeout(()=>setSaved(false), 2000)
+    setSaving(false)
+  }
+
+  const agendaLink = `https://crm.rabbittscapital.com/agenda`
+
+  return (
+    <div style={{maxWidth:680}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E2E8F0'}}>
+        <div style={{fontSize:28}}>📅</div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Mi disponibilidad de reuniones</div>
+          <div style={{fontSize:12,color:B.mid}}>Configura cuándo los clientes pueden agendar contigo</div>
+        </div>
+        <button onClick={save} disabled={saving}
+          style={{...sty.btnP,opacity:saving?0.6:1,minWidth:100}}>
+          {saved?'✅ Guardado':saving?'Guardando...':'Guardar'}
+        </button>
+      </div>
+
+      {/* Activa toggle */}
+      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:12,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>Recibir reuniones de clientes</div>
+          <div style={{fontSize:12,color:B.mid,marginTop:2}}>Cuando está activo, los clientes pueden agendar contigo</div>
+        </div>
+        <button onClick={()=>upd(['activa'],!agenda.activa)}
+          style={{width:48,height:26,borderRadius:99,border:'none',cursor:'pointer',position:'relative',
+            background:agenda.activa?B.primary:'#CBD5E1',transition:'background .2s',flexShrink:0}}>
+          <div style={{position:'absolute',top:3,left:agenda.activa?24:3,width:20,height:20,borderRadius:'50%',
+            background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+        </button>
+      </div>
+
+      {agenda.activa && (<>
+        {/* Link de agenda */}
+        <div style={{background:B.light,border:'1px solid #BFDBFE',borderRadius:10,padding:'12px 14px',marginBottom:12}}>
+          <div style={{fontSize:11,fontWeight:700,color:B.primary,marginBottom:4}}>🔗 Link de agenda para clientes</div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <div style={{flex:1,fontSize:12,color:'#0F172A',background:'#fff',padding:'6px 10px',borderRadius:6,border:'1px solid #E2E8F0',wordBreak:'break-all'}}>{agendaLink}</div>
+            <button onClick={()=>navigator.clipboard.writeText(agendaLink)}
+              style={{...sty.btn,fontSize:11,flexShrink:0}}>Copiar</button>
+          </div>
+          <div style={{fontSize:11,color:B.mid,marginTop:4}}>Rabito enviará este link cuando un cliente califique</div>
+        </div>
+
+        {/* Configuración básica */}
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:12}}>⚙️ Configuración general</div>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10}}>
+            <Fld label="Duración de reunión">
+              <select value={agenda.duracion} onChange={e=>upd(['duracion'],parseInt(e.target.value))} style={sty.sel}>
+                <option value={30}>30 minutos</option>
+                <option value={45}>45 minutos</option>
+                <option value={60}>1 hora</option>
+                <option value={90}>1.5 horas</option>
+              </select>
+            </Fld>
+            <Fld label="Anticipación mínima">
+              <select value={agenda.anticipacion} onChange={e=>upd(['anticipacion'],parseInt(e.target.value))} style={sty.sel}>
+                <option value={6}>6 horas antes</option>
+                <option value={12}>12 horas antes</option>
+                <option value={24}>24 horas antes</option>
+                <option value={48}>48 horas antes</option>
+              </select>
+            </Fld>
+            <Fld label="Prioridad (1=baja, 10=alta)">
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <input type="range" min={1} max={10} value={agenda.peso}
+                  onChange={e=>upd(['peso'],parseInt(e.target.value))}
+                  style={{flex:1,accentColor:B.primary}}/>
+                <span style={{fontWeight:700,color:B.primary,minWidth:20}}>{agenda.peso}</span>
+              </div>
+            </Fld>
+          </div>
+        </div>
+
+        {/* Rango de ingresos */}
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:10}}>💰 Ingresos de clientes que atiendo</div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
+            {[
+              {k:'cualquiera', l:'Cualquier ingreso'},
+              {k:'bajo',       l:'$1.5M – $2.5M'},
+              {k:'medio',      l:'$2.5M – $5M'},
+              {k:'alto',       l:'$5M+'},
+            ].map(({k,l})=>(
+              <button key={k} onClick={()=>{
+                const cats = agenda.ingresos_categorias||['cualquiera']
+                if (k==='cualquiera') { upd(['ingresos_categorias'],['cualquiera']); return }
+                const next = cats.includes('cualquiera') ? [k] : cats.includes(k) ? cats.filter(c=>c!==k)||['cualquiera'] : [...cats.filter(c=>c!=='cualquiera'),k]
+                upd(['ingresos_categorias'], next.length ? next : ['cualquiera'])
+              }} style={{fontSize:12,padding:'6px 14px',borderRadius:99,cursor:'pointer',fontWeight:600,
+                border:(agenda.ingresos_categorias||['cualquiera']).includes(k)?`2px solid ${B.primary}`:'1px solid #E2E8F0',
+                background:(agenda.ingresos_categorias||['cualquiera']).includes(k)?B.light:'#fff',
+                color:(agenda.ingresos_categorias||['cualquiera']).includes(k)?B.primary:'#6b7280'}}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <div style={{fontSize:11,color:B.mid}}>Selecciona los rangos de ingresos que atiendes. Puedes seleccionar varios.</div>
+        </div>
+
+        {/* Horario por día */}
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:12}}>🕐 Horario disponible por día</div>
+          <div style={{display:'flex',flexDirection:'column',gap:0}}>
+            {DIAS_KEY.map((dk,i)=>(
+              <div key={dk} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 0',borderBottom:i<6?'1px solid #f0f4ff':'none'}}>
+                <button onClick={()=>upd(['dias',dk,'activo'],!agenda.dias[dk].activo)}
+                  style={{width:40,height:22,borderRadius:99,border:'none',cursor:'pointer',position:'relative',flexShrink:0,
+                    background:agenda.dias[dk].activo?B.primary:'#CBD5E1',transition:'background .2s'}}>
+                  <div style={{position:'absolute',top:2,left:agenda.dias[dk].activo?20:2,width:18,height:18,borderRadius:'50%',
+                    background:'#fff',transition:'left .2s',boxShadow:'0 1px 2px rgba(0,0,0,0.2)'}}/>
+                </button>
+                <span style={{width:80,fontSize:13,fontWeight:agenda.dias[dk].activo?600:400,
+                  color:agenda.dias[dk].activo?'#0F172A':'#9ca3af'}}>{DIAS[i]}</span>
+                {agenda.dias[dk].activo ? (
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <input type="time" value={agenda.dias[dk].desde}
+                      onChange={e=>upd(['dias',dk,'desde'],e.target.value)}
+                      style={{...sty.inp,width:110,fontSize:12}}/>
+                    <span style={{color:'#6b7280',fontSize:12}}>hasta</span>
+                    <input type="time" value={agenda.dias[dk].hasta}
+                      onChange={e=>upd(['dias',dk,'hasta'],e.target.value)}
+                      style={{...sty.inp,width:110,fontSize:12}}/>
+                  </div>
+                ) : (
+                  <span style={{fontSize:12,color:'#9ca3af'}}>No disponible</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Google Calendar status */}
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:8}}>📅 Google Calendar</div>
+          {me.google_tokens ? (
+            <div style={{display:'flex',alignItems:'center',gap:8,fontSize:12}}>
+              <span style={{padding:'4px 10px',borderRadius:99,background:'#DCFCE7',color:'#14532d',fontWeight:600}}>✅ Conectado</span>
+              <span style={{color:'#6b7280'}}>{me.google_tokens.email}</span>
+            </div>
+          ) : (
+            <div>
+              <div style={{fontSize:12,color:'#6b7280',marginBottom:8}}>Conecta Google Calendar para que el sistema verifique tu disponibilidad real y cree los eventos automáticamente.</div>
+              <button onClick={()=>window.location.href=`/api/auth?action=login&userId=${me.id}`}
+                style={{...sty.btnP,fontSize:12}}>
+                Conectar Google Calendar
+              </button>
+            </div>
+          )}
+        </div>
+      </>)}
     </div>
   )
 }
