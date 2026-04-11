@@ -5293,26 +5293,42 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 // ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
 function AgendaEquipoView({users, setUsers, saveUsers}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
-  const agentes = (users||[]).filter(u => u.role === 'agent')
-  const [editingId, setEditingId] = React.useState(null)
+  const todosAgentes = (users||[]).filter(u => u.role === 'agent')
+  
+  // Brokers que están en la agenda (tienen agenda_config.enAgenda = true)
   const [saving, setSaving] = React.useState(false)
+  const [savedMsg, setSavedMsg] = React.useState('')
   const [localConfigs, setLocalConfigs] = React.useState(() => {
     const map = {}
-    agentes.forEach(u => { map[u.id] = u.agenda_config || {activa:false,peso:5,duracion:60,anticipacion:12,ingresos_categorias:['cualquiera'],dias:{}} })
+    todosAgentes.forEach(u => {
+      map[u.id] = u.agenda_config || {activa:false,enAgenda:false,peso:5,duracion:60,anticipacion:12,ingresos_categorias:['cualquiera'],dias:{}}
+    })
     return map
   })
+  const [editingId, setEditingId] = React.useState(null)
 
-  const updConfig = (userId, field, val) => {
+  const brokersEnAgenda = todosAgentes.filter(u => localConfigs[u.id]?.enAgenda)
+  const brokersDisponibles = todosAgentes.filter(u => !localConfigs[u.id]?.enAgenda)
+
+  const updConfig = (userId, field, val) =>
     setLocalConfigs(prev => ({...prev, [userId]: {...prev[userId], [field]: val}}))
+
+  const agregarBroker = (userId) => updConfig(userId, 'enAgenda', true)
+  const quitarBroker = (userId) => {
+    updConfig(userId, 'enAgenda', false)
+    updConfig(userId, 'activa', false)
   }
 
   const saveAll = async () => {
     setSaving(true)
     const updated = (users||[]).map(u => {
       if (u.role !== 'agent') return u
-      return {...u, agenda_config: {...(u.agenda_config||{}), ...localConfigs[u.id]}}
+      const cfg = {...(u.agenda_config||{}), ...localConfigs[u.id]}
+      return {...u, agenda_config: cfg}
     })
     await saveUsers(updated)
+    setSavedMsg('✅ Guardado')
+    setTimeout(()=>setSavedMsg(''), 2000)
     setSaving(false)
   }
 
@@ -5325,6 +5341,117 @@ function AgendaEquipoView({users, setUsers, saveUsers}) {
     {k:'alto',       l:'$5M+',             col:'#059669'},
   ]
 
+  const BrokerCard = ({u}) => {
+    const cfg = localConfigs[u.id] || {}
+    const isOpen = editingId === u.id
+    const cats = cfg.ingresos_categorias || ['cualquiera']
+    const diasActivos = Object.entries(cfg.dias||{}).filter(([,d])=>d.activo).length
+
+    return (
+      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden',
+        boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
+        {/* Header row */}
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',flexWrap:'wrap'}}>
+          <div style={{cursor:'pointer',display:'flex',alignItems:'center',gap:10,flex:1,minWidth:0}}
+            onClick={()=>setEditingId(isOpen?null:u.id)}>
+            <AV name={u.name} size={36} src={u.avatar_url||null}/>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{u.name}</div>
+              <div style={{fontSize:11,color:'#9ca3af',display:'flex',gap:6,flexWrap:'wrap',marginTop:1}}>
+                {u.google_tokens ? <span style={{color:'#14532d',fontWeight:600}}>✅ Calendar</span> : <span>❌ Sin Calendar</span>}
+                <span>· P:{cfg.peso||5} · {diasActivos}d · {cfg.duracion||60}min</span>
+              </div>
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+            {/* Recibe reuniones toggle */}
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{fontSize:11,color:B.mid}}>Activo</span>
+              <button onClick={()=>updConfig(u.id,'activa',!cfg.activa)}
+                style={{width:40,height:22,borderRadius:99,border:'none',cursor:'pointer',position:'relative',
+                  background:cfg.activa?B.primary:'#CBD5E1',transition:'background .2s'}}>
+                <div style={{position:'absolute',top:2,left:cfg.activa?20:2,width:18,height:18,borderRadius:'50%',
+                  background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+              </button>
+            </div>
+            {/* Remove from agenda */}
+            <button onClick={()=>quitarBroker(u.id)}
+              style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #fca5a5',
+                background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontWeight:600}}>
+              Quitar
+            </button>
+            <span style={{fontSize:12,color:'#9ca3af',cursor:'pointer'}} onClick={()=>setEditingId(isOpen?null:u.id)}>{isOpen?'▲':'▼'}</span>
+          </div>
+        </div>
+
+        {/* Expanded config */}
+        {isOpen && (
+          <div style={{borderTop:'1px solid #f0f4ff',padding:'14px 16px',background:'#f9fbff'}}>
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10,marginBottom:12}}>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:5}}>Prioridad (1-10)</div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <input type="range" min={1} max={10} value={cfg.peso||5}
+                    onChange={e=>updConfig(u.id,'peso',parseInt(e.target.value))}
+                    style={{flex:1,accentColor:B.primary}}/>
+                  <span style={{fontWeight:800,fontSize:15,color:B.primary,minWidth:22,textAlign:'center'}}>{cfg.peso||5}</span>
+                </div>
+                <div style={{fontSize:10,color:'#9ca3af',marginTop:1}}>Mayor peso = más reuniones</div>
+              </div>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:5}}>Duración</div>
+                <select value={cfg.duracion||60} onChange={e=>updConfig(u.id,'duracion',parseInt(e.target.value))} style={sty.sel}>
+                  <option value={30}>30 min</option>
+                  <option value={45}>45 min</option>
+                  <option value={60}>1 hora</option>
+                  <option value={90}>1.5 horas</option>
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:5}}>Anticipación mínima</div>
+                <select value={cfg.anticipacion||12} onChange={e=>updConfig(u.id,'anticipacion',parseInt(e.target.value))} style={sty.sel}>
+                  <option value={6}>6 horas</option>
+                  <option value={12}>12 horas</option>
+                  <option value={24}>24 horas</option>
+                  <option value={48}>48 horas</option>
+                </select>
+              </div>
+            </div>
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>💰 Ingresos que atiende</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                {ingresosOptions.map(({k,l,col})=>{
+                  const sel = cats.includes(k)
+                  return (
+                    <button key={k} onClick={()=>{
+                      let next = k==='cualquiera' ? ['cualquiera'] :
+                        cats.includes('cualquiera') ? [k] :
+                        sel ? (cats.filter(c=>c!==k)||['cualquiera']) :
+                        [...cats.filter(c=>c!=='cualquiera'),k]
+                      if (!next.length) next=['cualquiera']
+                      updConfig(u.id,'ingresos_categorias',next)
+                    }} style={{fontSize:11,padding:'5px 12px',borderRadius:99,cursor:'pointer',fontWeight:600,
+                      border:sel?`2px solid ${col}`:'1px solid #E2E8F0',
+                      background:sel?col+'18':'#fff',color:sel?col:'#6b7280'}}>
+                      {l}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div style={{padding:'8px 12px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:8,fontSize:11,color:'#6b7280'}}>
+              <strong style={{color:'#374151'}}>Horario del broker: </strong>
+              {diasActivos > 0
+                ? Object.entries(cfg.dias||{}).filter(([,d])=>d.activo)
+                    .map(([dk,d])=>`${dk} ${d.desde}–${d.hasta}`).join(' · ')
+                : 'No ha configurado su horario aún'}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div>
       {/* Header */}
@@ -5332,147 +5459,74 @@ function AgendaEquipoView({users, setUsers, saveUsers}) {
         <div style={{fontSize:28}}>📅</div>
         <div style={{flex:1}}>
           <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Agenda del Equipo</div>
-          <div style={{fontSize:12,color:B.mid}}>Configura quién recibe reuniones, con qué prioridad y qué tipo de clientes</div>
+          <div style={{fontSize:12,color:B.mid}}>{brokersEnAgenda.filter(u=>localConfigs[u.id]?.activa).length} brokers activos recibiendo reuniones</div>
         </div>
         <button onClick={saveAll} disabled={saving}
           style={{...sty.btnP,minWidth:120,flexShrink:0}}>
-          {saving?'Guardando...':'💾 Guardar todo'}
+          {savedMsg || (saving?'Guardando...':'💾 Guardar todo')}
         </button>
       </div>
 
       {/* Link público */}
       <div style={{background:B.light,border:'1px solid #BFDBFE',borderRadius:12,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
         <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:11,fontWeight:700,color:B.primary,marginBottom:2}}>🔗 Link público de agenda para clientes</div>
+          <div style={{fontSize:11,fontWeight:700,color:B.primary,marginBottom:2}}>🔗 Link público — comparte este link con los clientes o Rabito lo envía automáticamente</div>
           <div style={{fontSize:12,color:'#0F172A',wordBreak:'break-all'}}>{agendaLink}</div>
         </div>
-        <button onClick={()=>navigator.clipboard?.writeText(agendaLink).then(()=>alert('Copiado'))}
-          style={{...sty.btn,fontSize:12,flexShrink:0}}>Copiar link</button>
+        <div style={{display:'flex',gap:6,flexShrink:0}}>
+          <button onClick={()=>navigator.clipboard?.writeText(agendaLink).then(()=>{setSavedMsg('Copiado!');setTimeout(()=>setSavedMsg(''),1500)})}
+            style={{...sty.btn,fontSize:12}}>Copiar</button>
+          <a href={agendaLink} target="_blank" rel="noopener noreferrer"
+            style={{...sty.btnP,fontSize:12,textDecoration:'none',padding:'7px 12px'}}>Ver página</a>
+        </div>
       </div>
 
-      {/* Broker cards */}
-      {agentes.length === 0 && (
-        <div style={{textAlign:'center',padding:'40px',color:'#9ca3af',fontSize:14}}>
-          No hay asesores registrados aún
+      {/* Brokers en la agenda */}
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:700,color:'#0F172A',marginBottom:8}}>
+          Brokers en la agenda ({brokersEnAgenda.length})
+        </div>
+        {brokersEnAgenda.length === 0 && (
+          <div style={{padding:'20px',textAlign:'center',color:'#9ca3af',fontSize:13,background:'#f9fbff',borderRadius:10,border:'1px dashed #E2E8F0'}}>
+            Ningún broker agregado. Agrega asesores desde la sección de abajo.
+          </div>
+        )}
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {brokersEnAgenda.map(u => <BrokerCard key={u.id} u={u}/>)}
+        </div>
+      </div>
+
+      {/* Brokers disponibles para agregar */}
+      {brokersDisponibles.length > 0 && (
+        <div>
+          <div style={{fontSize:13,fontWeight:700,color:'#0F172A',marginBottom:8}}>
+            Agregar asesores a la agenda
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            {brokersDisponibles.map(u => (
+              <div key={u.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',
+                background:'#fff',border:'1px solid #E2E8F0',borderRadius:10}}>
+                <AV name={u.name} size={32} src={u.avatar_url||null}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:13,color:'#0F172A'}}>{u.name}</div>
+                  <div style={{fontSize:11,color:'#9ca3af'}}>
+                    {u.google_tokens ? '✅ Google Calendar conectado' : '❌ Sin Google Calendar'}
+                  </div>
+                </div>
+                <button onClick={()=>agregarBroker(u.id)}
+                  style={{fontSize:12,padding:'6px 14px',borderRadius:8,border:`1px solid ${B.primary}`,
+                    background:B.light,color:B.primary,cursor:'pointer',fontWeight:600,flexShrink:0}}>
+                  + Agregar
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
-
-      <div style={{display:'flex',flexDirection:'column',gap:12}}>
-        {agentes.map(u => {
-          const cfg = localConfigs[u.id] || {}
-          const isOpen = editingId === u.id
-          const cats = cfg.ingresos_categorias || ['cualquiera']
-          const diasActivos = Object.entries(cfg.dias||{}).filter(([,d])=>d.activo).length
-
-          return (
-            <div key={u.id} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden',
-              boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
-              {/* Broker header row */}
-              <div style={{display:'flex',alignItems:'center',gap:12,padding:'14px 16px',cursor:'pointer'}}
-                onClick={()=>setEditingId(isOpen?null:u.id)}>
-                <AV name={u.name} size={38} src={u.avatar_url||null}/>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{u.name}</div>
-                  <div style={{fontSize:11,color:'#9ca3af',marginTop:2,display:'flex',gap:8,flexWrap:'wrap'}}>
-                    {u.google_tokens ? <span style={{color:'#14532d',fontWeight:600}}>✅ Google Calendar</span> : <span>❌ Sin Calendar</span>}
-                    <span>·</span>
-                    <span>{diasActivos > 0 ? `${diasActivos} días configurados` : 'Sin horario'}</span>
-                    <span>·</span>
-                    <span>Prioridad {cfg.peso||5}</span>
-                  </div>
-                </div>
-                {/* Recibe reuniones toggle */}
-                <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-                  <span style={{fontSize:11,color:B.mid,display:isMobile?'none':'block'}}>Recibe reuniones</span>
-                  <button onClick={e=>{e.stopPropagation();updConfig(u.id,'activa',!cfg.activa)}}
-                    style={{width:44,height:24,borderRadius:99,border:'none',cursor:'pointer',position:'relative',
-                      background:cfg.activa?B.primary:'#CBD5E1',transition:'background .2s',flexShrink:0}}>
-                    <div style={{position:'absolute',top:2,left:cfg.activa?22:2,width:20,height:20,borderRadius:'50%',
-                      background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
-                  </button>
-                  <span style={{fontSize:14,color:'#9ca3af',marginLeft:4}}>{isOpen?'▲':'▼'}</span>
-                </div>
-              </div>
-
-              {/* Expanded config */}
-              {isOpen && (
-                <div style={{borderTop:'1px solid #f0f4ff',padding:'16px',background:'#f9fbff'}}>
-                  <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:12,marginBottom:14}}>
-                    {/* Prioridad */}
-                    <div>
-                      <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>Prioridad (1=baja · 10=alta)</div>
-                      <div style={{display:'flex',alignItems:'center',gap:8}}>
-                        <input type="range" min={1} max={10} value={cfg.peso||5}
-                          onChange={e=>updConfig(u.id,'peso',parseInt(e.target.value))}
-                          style={{flex:1,accentColor:B.primary}}/>
-                        <span style={{fontWeight:800,fontSize:16,color:B.primary,minWidth:24,textAlign:'center'}}>{cfg.peso||5}</span>
-                      </div>
-                      <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>Quien tiene 10 recibe más reuniones</div>
-                    </div>
-
-                    {/* Duración */}
-                    <div>
-                      <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>Duración de reunión</div>
-                      <select value={cfg.duracion||60} onChange={e=>updConfig(u.id,'duracion',parseInt(e.target.value))} style={sty.sel}>
-                        <option value={30}>30 minutos</option>
-                        <option value={45}>45 minutos</option>
-                        <option value={60}>1 hora</option>
-                        <option value={90}>1.5 horas</option>
-                      </select>
-                    </div>
-
-                    {/* Anticipación */}
-                    <div>
-                      <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>Anticipación mínima</div>
-                      <select value={cfg.anticipacion||12} onChange={e=>updConfig(u.id,'anticipacion',parseInt(e.target.value))} style={sty.sel}>
-                        <option value={6}>6 horas antes</option>
-                        <option value={12}>12 horas antes</option>
-                        <option value={24}>24 horas antes</option>
-                        <option value={48}>48 horas antes</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Ingresos */}
-                  <div style={{marginBottom:14}}>
-                    <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:8}}>💰 Ingresos de clientes que atiende</div>
-                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-                      {ingresosOptions.map(({k,l,col})=>{
-                        const sel = cats.includes(k)
-                        return (
-                          <button key={k} onClick={()=>{
-                            let next
-                            if (k==='cualquiera') { next=['cualquiera'] }
-                            else { next = cats.includes('cualquiera') ? [k] : sel ? (cats.filter(c=>c!==k)||['cualquiera']) : [...cats.filter(c=>c!=='cualquiera'),k] }
-                            if (!next.length) next=['cualquiera']
-                            updConfig(u.id,'ingresos_categorias',next)
-                          }} style={{fontSize:12,padding:'6px 14px',borderRadius:99,cursor:'pointer',fontWeight:600,
-                            border:sel?`2px solid ${col}`:'1px solid #E2E8F0',
-                            background:sel?col+'15':'#fff',color:sel?col:'#6b7280'}}>
-                            {l}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Horario del broker (read-only summary) */}
-                  <div style={{padding:'10px 14px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:8,fontSize:12,color:'#6b7280'}}>
-                    <span style={{fontWeight:600,color:'#374151'}}>🕐 Horario configurado por el broker: </span>
-                    {diasActivos > 0 
-                      ? Object.entries(cfg.dias||{}).filter(([,d])=>d.activo).map(([dk,d])=>`${dk} ${d.desde}-${d.hasta}`).join(' · ')
-                      : 'No ha configurado su horario aún'
-                    }
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
     </div>
   )
 }
+
 
 // ─── Mi Agenda View (broker - only availability schedule) ────────────────────
 function MiAgendaView({me, users, setUsers, saveUsers, supabase, dbReady}) {
