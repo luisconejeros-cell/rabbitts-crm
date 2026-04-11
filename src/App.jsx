@@ -172,7 +172,16 @@ const Modal = ({title, onClose, children, wide=false}) => {
 }
 
 // ─── Agenda Pública (no requiere login) ──────────────────────────────────────
-function AgendaPublicaView() {
+function AgendaPublicaView({settings={}}) {
+  const S = {
+    logo: settings.logo || null,
+    titulo: settings.titulo || 'Reunión de Asesoría Inmobiliaria',
+    subtitulo: settings.subtitulo || 'Agenda Rabbitts',
+    descripcion: settings.descripcion || 'Revisaremos tu situación financiera y objetivos para diseñar un plan de inversión inmobiliaria a tu medida.',
+    colorPrimario: settings.colorPrimario || '#2563EB',
+    duracionLabel: settings.duracionLabel || '1 hora',
+    empresa: settings.empresa || 'Rabbitts Capital',
+  }
   const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
   const DIAS_H = ['DOM.','LUN.','MAR.','MIÉ.','JUE.','VIE.','SÁB.']
 
@@ -236,11 +245,11 @@ function AgendaPublicaView() {
           style={{display:'flex',alignItems:'center',justifyContent:'center',width:36,height:36,margin:'0 auto',
             borderRadius:'50%',border:'none',cursor:isPast?'default':'pointer',
             fontFamily:'inherit',fontSize:14,fontWeight:isSel?700:400,
-            background:isSel?B.primary:isToday?'#EFF6FF':'transparent',
-            color:isPast?'#D1D5DB':isSel?'#fff':isToday?B.primary:'#1a1a1a',
+            background:isSel?S.colorPrimario:isToday?S.colorPrimario+'22':'transparent',
+            color:isPast?'#D1D5DB':isSel?'#fff':isToday?S.colorPrimario:'#1a1a1a',
             transition:'all .1s'}}>
           {d}
-          {isToday&&!isSel&&<span style={{position:'absolute',bottom:2,left:'50%',transform:'translateX(-50%)',width:4,height:4,borderRadius:'50%',background:B.primary}}/>}
+          {isToday&&!isSel&&<span style={{position:'absolute',bottom:2,left:'50%',transform:'translateX(-50%)',width:4,height:4,borderRadius:'50%',background:S.colorPrimario}}/>}
         </button>
       )
     }
@@ -250,11 +259,11 @@ function AgendaPublicaView() {
   const selDateFmt = selDate ? new Date(selDate+'T12:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) : ''
 
   // Styles
-  const page = {fontFamily:"'Inter',sans-serif",minHeight:'100vh',background:'#fff',WebkitFontSmoothing:'antialiased'}
-  const leftPanel = {width:isMobile?'100%':300,borderRight:isMobile?'none':'1px solid #e5e7eb',padding:'32px 24px',flexShrink:0}
+  const page = {fontFamily:"'Inter',sans-serif",minHeight:'100vh',background:'#fff',WebkitFontSmoothing:'antialiased',MozOsxFontSmoothing:'grayscale',letterSpacing:'-0.01em'}
+  const leftPanel = {width:isMobile?'100%':300,borderRight:isMobile?'none':'1px solid #e5e7eb',padding:'32px 24px',flexShrink:0,background:'#fff'}
   const rightPanel = {flex:1,padding:isMobile?'16px':32}
   const inp = {width:'100%',padding:'10px 14px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:14,fontFamily:'inherit',color:'#0F172A',outline:'none',WebkitAppearance:'none',boxSizing:'border-box',marginTop:6}
-  const btnBlue = {padding:'12px 24px',borderRadius:99,border:'none',fontSize:14,fontWeight:700,cursor:'pointer',background:B.primary,color:'#fff',fontFamily:'inherit'}
+  const btnBlue = {padding:'12px 24px',borderRadius:99,border:'none',fontSize:14,fontWeight:700,cursor:'pointer',background:S.colorPrimario,color:'#fff',fontFamily:'inherit'}
 
   return (
     <div style={page}>
@@ -264,15 +273,17 @@ function AgendaPublicaView() {
         <div style={leftPanel}>
           {/* Logo — Vambe style */}
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}>
-            <img src="/icon-192.png" alt="Rabbitts" style={{width:44,height:44,borderRadius:12,objectFit:'cover',flexShrink:0}}/>
+            {S.logo
+            ? <img src={S.logo} alt={S.empresa} style={{width:44,height:44,borderRadius:12,objectFit:'cover',flexShrink:0}}/>
+            : <img src="/icon-192.png" alt={S.empresa} style={{width:44,height:44,borderRadius:12,objectFit:'cover',flexShrink:0}}/>}
             <div>
-              <div style={{fontSize:15,fontWeight:800,color:'#0F172A',letterSpacing:'-0.3px'}}>Rabbitts Capital</div>
-              <div style={{fontSize:11,color:'#64748B',fontWeight:500}}>Agenda Rabbitts</div>
+              <div style={{fontSize:15,fontWeight:800,color:'#0F172A',letterSpacing:'-0.3px'}}>{S.empresa}</div>
+              <div style={{fontSize:11,color:'#64748B',fontWeight:500}}>{S.subtitulo}</div>
             </div>
           </div>
-          <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:16,lineHeight:1.25,letterSpacing:'-0.5px'}}>Reunión de Asesoría Inmobiliaria</div>
+          <div style={{fontSize:22,fontWeight:800,color:'#0F172A',marginBottom:16,lineHeight:1.25,letterSpacing:'-0.5px'}}>{S.titulo}</div>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
-            <span>🕐</span> 1 hora
+            <span>🕐</span> {S.duracionLabel}
           </div>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:14,color:'#4b5563'}}>
             <span>🎥</span> Google Meet (se enviará al confirmar)
@@ -283,7 +294,7 @@ function AgendaPublicaView() {
             </div>
           )}
           <div style={{fontSize:13,color:'#6b7280',lineHeight:1.6,marginTop:16}}>
-            Revisaremos tu situación financiera y objetivos para diseñar un plan de inversión inmobiliaria a tu medida: multicrédito, DFL2 y recuperación de IVA.
+            {S.descripcion}
           </div>
           <div style={{marginTop:24,fontSize:11,color:'#9ca3af'}}>🌍 Zona horaria: Santiago, Chile</div>
         </div>
@@ -321,12 +332,12 @@ function AgendaPublicaView() {
                       {slots.map((s,i)=>(
                         selSlot?.time===s.time ? (
                           <div key={i} style={{display:'flex',gap:6}}>
-                            <button style={{flex:1,padding:'10px',borderRadius:8,border:`2px solid ${B.primary}`,
+                            <button style={{flex:1,padding:'10px',borderRadius:8,border:`2px solid ${S.colorPrimario}`,
                               background:'#6b7280',color:'#fff',cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit'}}>
                               {s.time}
                             </button>
                             <button onClick={()=>setStep(2)}
-                              style={{padding:'10px 16px',borderRadius:8,border:'none',background:B.primary,color:'#fff',
+                              style={{padding:'10px 16px',borderRadius:8,border:'none',background:S.colorPrimario,color:'#fff',
                                 cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',whiteSpace:'nowrap'}}>
                               Siguiente
                             </button>
@@ -334,8 +345,8 @@ function AgendaPublicaView() {
                         ) : (
                           <button key={i} onClick={()=>setSelSlot(s)}
                             style={{width:'100%',padding:'10px',borderRadius:8,
-                              border:`2px solid ${B.primary}`,background:'#fff',
-                              color:B.primary,cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',transition:'all .1s'}}>
+                              border:`2px solid ${S.colorPrimario}`,background:'#fff',
+                              color:S.colorPrimario,cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',transition:'all .1s'}}>
                             {s.time}
                           </button>
                         )
@@ -350,7 +361,7 @@ function AgendaPublicaView() {
           {/* STEP 2 — Form */}
           {step===2&&(
             <div style={{maxWidth:480}}>
-              <button onClick={()=>setStep(1)} style={{background:'none',border:'none',cursor:'pointer',color:B.primary,fontSize:14,fontWeight:600,marginBottom:20,fontFamily:'inherit',display:'flex',alignItems:'center',gap:4,padding:0}}>
+              <button onClick={()=>setStep(1)} style={{background:'none',border:'none',cursor:'pointer',color:S.colorPrimario,fontSize:14,fontWeight:600,marginBottom:20,fontFamily:'inherit',display:'flex',alignItems:'center',gap:4,padding:0}}>
                 ← Volver
               </button>
               <div style={{fontSize:18,fontWeight:700,color:'#0F172A',marginBottom:24}}>Introduzca los detalles</div>
@@ -388,7 +399,7 @@ function AgendaPublicaView() {
                 Al continuar, aceptas nuestra política de privacidad y términos de servicio.
               </div>
               <button onClick={confirmar} disabled={confirming||!form.nombre||!form.telefono||!form.ingresos}
-                style={{...btnBlue,width:'100%',opacity:confirming||!form.nombre||!form.telefono||!form.ingresos?0.5:1}}>
+                style={{...btnBlue,background:S.colorPrimario,width:'100%',opacity:confirming||!form.nombre||!form.telefono||!form.ingresos?0.5:1}}>
                 {confirming?'Confirmando...':'Programar reunión'}
               </button>
             </div>
@@ -470,6 +481,16 @@ export default function App() {
   const [conversations, setConversations] = useState([]) // WhatsApp conversations
   const [activeConv, setActiveConv] = useState(null)    // selected conversation
   const [convMessages, setConvMessages] = useState({})  // {convId: [messages]}
+  const [agendaSettings, setAgendaSettings] = useState({
+    logo: null,           // base64 or null (uses default)
+    titulo: 'Reunión de Asesoría Inmobiliaria',
+    subtitulo: 'Agenda Rabbitts',
+    descripcion: 'Revisaremos tu situación financiera y objetivos para diseñar un plan de inversión inmobiliaria a tu medida: multicrédito, DFL2 y recuperación de IVA.',
+    colorPrimario: '#2563EB',
+    duracionLabel: '1 hora',
+    empresa: 'Rabbitts Capital',
+  })
+
   const [iaConfig, setIaConfig] = useState({
     nombre: 'Rabito',
     tono: 'motivador',
@@ -590,6 +611,16 @@ export default function App() {
     return () => { supabase.removeChannel(channel) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbReady, me?.id])
+
+  // ── Auto-save agendaSettings to Supabase ────────────────────────────────────
+  useEffect(() => {
+    if (!dbReady) return
+    clearTimeout(window._agendaSettingsTimer)
+    window._agendaSettingsTimer = setTimeout(async () => {
+      try { await supabase.from('crm_settings').upsert({key:'agenda_settings', value:agendaSettings}) } catch(_) {}
+      localStorage.setItem('rcrm_agenda_settings', JSON.stringify(agendaSettings))
+    }, 1000)
+  }, [agendaSettings, dbReady])
 
   // ── Auto-save iaConfig to Supabase ──────────────────────────────────────
   useEffect(() => {
@@ -714,6 +745,14 @@ export default function App() {
       try {
         const { data: ia } = await supabase.from('crm_settings').select('value').eq('key','ia_config').single()
         if (ia?.value) setIaConfig(prev => ({...prev, ...ia.value}))
+      } catch(_) {}
+      // Load agendaSettings
+      try {
+        const { data: ag } = await supabase.from('crm_settings').select('value').eq('key','agenda_settings').single()
+        if (ag?.value) {
+          setAgendaSettings(prev => ({...prev, ...ag.value}))
+          localStorage.setItem('rcrm_agenda_settings', JSON.stringify({...ag.value}))
+        }
       } catch(_) {}
       // Load conversations
       try {
@@ -1415,7 +1454,8 @@ export default function App() {
 
   // ── AGENDA PÚBLICA — no requiere login ─────────────────────────────────────
   if (typeof window !== 'undefined' && window.location.pathname === '/agenda') {
-    return <AgendaPublicaView/>
+    const savedSettings = JSON.parse(localStorage.getItem('rcrm_agenda_settings')||'{}')
+    return <AgendaPublicaView settings={savedSettings}/>
   }
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
@@ -3146,7 +3186,7 @@ export default function App() {
 
         {/* AGENDA EQUIPO — admin config */}
         {nav==='agenda' && isAdmin && (
-          <AgendaEquipoView users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady}/>
+          <AgendaEquipoView users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady} agendaSettings={agendaSettings} setAgendaSettings={setAgendaSettings}/>
         )}
 
         {/* MI AGENDA — broker availability config */}
@@ -5550,7 +5590,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 }
 
 // ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
-function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady}) {
+function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agendaSettings={}, setAgendaSettings}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const todosAgentes = (users||[]).filter(u => u.role === 'agent')
   
@@ -5759,6 +5799,64 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady}) {
             style={{...sty.btn,fontSize:12}}>Copiar</button>
           <a href={agendaLink} target="_blank" rel="noopener noreferrer"
             style={{...sty.btnP,fontSize:12,textDecoration:'none',padding:'7px 12px'}}>Ver página</a>
+        </div>
+      </div>
+
+      {/* ── Personalización de la página ── */}
+      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginBottom:16}}>
+        <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:12}}>🎨 Página de reservas — configuración</div>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:12}}>
+          {/* Logo */}
+          <div style={{gridColumn:'1/-1',display:'flex',alignItems:'center',gap:14}}>
+            <div style={{width:64,height:64,borderRadius:14,overflow:'hidden',border:'1px solid #E2E8F0',flexShrink:0,background:'#f8fafc',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              {agendaSettings?.logo
+                ? <img src={agendaSettings.logo} style={{width:'100%',height:'100%',objectFit:'cover'}} alt="logo"/>
+                : <img src="/icon-192.png" style={{width:'100%',height:'100%',objectFit:'cover'}} alt="logo"/>}
+            </div>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:6}}>Logo de la empresa</div>
+              <label htmlFor="agenda-logo-up" style={{display:'inline-block',padding:'6px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#374151',marginRight:6}}>
+                Subir imagen
+              </label>
+              <input id="agenda-logo-up" type="file" accept="image/*" style={{display:'none'}}
+                onChange={e=>{
+                  const file=e.target.files[0]; if(!file) return
+                  if(file.size>2*1024*1024){alert('Máx 2MB');return}
+                  const r=new FileReader(); r.onload=ev=>setAgendaSettings(s=>({...s,logo:ev.target.result})); r.readAsDataURL(file)
+                }}/>
+              {agendaSettings?.logo && <button onClick={()=>setAgendaSettings(s=>({...s,logo:null}))} style={{fontSize:11,color:'#991b1b',background:'none',border:'none',cursor:'pointer',padding:0}}>Eliminar</button>}
+              <div style={{fontSize:10,color:'#9ca3af',marginTop:3}}>PNG, JPG o SVG · máx 2MB</div>
+            </div>
+          </div>
+          {/* Fields */}
+          <Fld label="Nombre de la empresa">
+            <input value={agendaSettings?.empresa||''} onChange={e=>setAgendaSettings(s=>({...s,empresa:e.target.value}))} style={sty.inp} placeholder="Rabbitts Capital"/>
+          </Fld>
+          <Fld label="Título del evento">
+            <input value={agendaSettings?.titulo||''} onChange={e=>setAgendaSettings(s=>({...s,titulo:e.target.value}))} style={sty.inp} placeholder="Reunión de Asesoría Inmobiliaria"/>
+          </Fld>
+          <div style={{gridColumn:'1/-1'}}>
+            <Fld label="Descripción">
+              <textarea value={agendaSettings?.descripcion||''} onChange={e=>setAgendaSettings(s=>({...s,descripcion:e.target.value}))}
+                style={{...sty.inp,minHeight:68,resize:'vertical'}} placeholder="Revisaremos tu situación..."/>
+            </Fld>
+          </div>
+          <Fld label="Color principal">
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              <input type="color" value={agendaSettings?.colorPrimario||'#2563EB'}
+                onChange={e=>setAgendaSettings(s=>({...s,colorPrimario:e.target.value}))}
+                style={{width:40,height:36,borderRadius:6,border:'1px solid #E2E8F0',cursor:'pointer',padding:2,flexShrink:0}}/>
+              <input value={agendaSettings?.colorPrimario||'#2563EB'}
+                onChange={e=>setAgendaSettings(s=>({...s,colorPrimario:e.target.value}))}
+                style={{...sty.inp,flex:1}}/>
+            </div>
+          </Fld>
+          <Fld label="Duración visible al cliente">
+            <input value={agendaSettings?.duracionLabel||'1 hora'} onChange={e=>setAgendaSettings(s=>({...s,duracionLabel:e.target.value}))} style={sty.inp} placeholder="1 hora"/>
+          </Fld>
+        </div>
+        <div style={{marginTop:10,padding:'7px 12px',background:'#F0FDF4',borderRadius:8,fontSize:11,color:'#14532d'}}>
+          💾 Los cambios se guardan automáticamente y se reflejan en crm.rabbittscapital.com/agenda
         </div>
       </div>
 
