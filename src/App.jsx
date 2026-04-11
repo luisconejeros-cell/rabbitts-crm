@@ -1311,18 +1311,23 @@ export default function App() {
             })}
             <div style={{marginTop:'auto',paddingTop:12,borderTop:'1px solid #f0f4ff',display:'flex',flexDirection:'column',gap:6}}>
               <button onClick={()=>{setEditP({name:me.name,phone:me.phone||'',email:me.email||'',avatar_url:me.avatar_url||''});setPinF({cur:'',n1:'',n2:''});setPinErr('');setProfErr('');setModal('profile');setMobileMenuOpen(false)}} style={{padding:'10px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'transparent',cursor:'pointer',color:B.mid,fontSize:13,textAlign:'left'}}>👤 Mi perfil</button>
-              {installPrompt && (
+              {installPrompt ? (
                 <button onClick={async()=>{
                   installPrompt.prompt()
                   const {outcome} = await installPrompt.userChoice
                   setInstallPrompt(null); setShowInstallBanner(false); setMobileMenuOpen(false)
                 }} style={{padding:'10px 14px',borderRadius:8,border:'1px solid #2563EB',background:'#EFF6FF',cursor:'pointer',color:'#2563EB',fontSize:13,textAlign:'left',fontWeight:600}}>
-                  📲 Instalar app en celular
+                  📲 Instalar app en este celular
                 </button>
-              )}
-              {!installPrompt && (
-                <div style={{padding:'10px 14px',borderRadius:8,background:'#f8fafc',fontSize:11,color:'#64748B'}}>
-                  📲 iOS: Safari → compartir ↑ → "Añadir a pantalla de inicio"
+              ) : (
+                <div style={{padding:'10px 14px',borderRadius:8,background:'#f8fafc',border:'1px solid #E2E8F0',fontSize:12,color:'#374151'}}>
+                  <div style={{fontWeight:600,marginBottom:6}}>📲 Instalar app</div>
+                  <div style={{color:'#64748B',fontSize:11,marginBottom:4}}>
+                    <strong>iPhone/iPad:</strong> Safari → botón compartir ↑ → "Añadir a pantalla de inicio"
+                  </div>
+                  <div style={{color:'#64748B',fontSize:11}}>
+                    <strong>Android:</strong> Chrome → tres puntos ⋮ → "Añadir a pantalla de inicio"
+                  </div>
                 </div>
               )}
               <button onClick={()=>{setMe(null);localStorage.removeItem('rcrm_session')}} style={{padding:'10px 14px',borderRadius:8,border:'none',background:'#FEF2F2',cursor:'pointer',color:'#991b1b',fontSize:13,textAlign:'left',fontWeight:600}}>🚪 Cerrar sesión</button>
