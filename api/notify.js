@@ -45,6 +45,24 @@ export default async function handler(req, res) {
       </div>`
       to = body.to
     }
+    if (type === 'nueva_reunion') {
+      subject = `Nueva reunión agendada — ${body.lead?.nombre}`
+      html = `<div style="font-family:Inter,sans-serif;max-width:600px;margin:0 auto;padding:24px">
+        <img src="https://crm.rabbittscapital.com/icon-72.png" style="width:48px;border-radius:10px;margin-bottom:16px"/>
+        <h2 style="color:#0F172A;margin:0 0 4px">Nueva reunión agendada</h2>
+        <p style="color:#64748B;margin:0 0 24px">Hola ${body.broker}, tienes una nueva reunión confirmada.</p>
+        <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:16px;margin-bottom:20px">
+          <p style="margin:0 0 8px"><strong>👤 Cliente:</strong> ${body.lead?.nombre}</p>
+          <p style="margin:0 0 8px"><strong>📱 Teléfono:</strong> ${body.lead?.telefono}</p>
+          <p style="margin:0 0 8px"><strong>💰 Renta:</strong> ${body.lead?.renta}</p>
+          <p style="margin:0 0 8px"><strong>📅 Fecha:</strong> ${body.lead?.fecha}</p>
+          <p style="margin:0"><strong>🕐 Hora:</strong> ${body.lead?.hora}</p>
+        </div>
+        ${body.meetLink ? `<a href="${body.meetLink}" style="display:inline-block;padding:12px 24px;background:#1a73e8;color:#fff;border-radius:10px;text-decoration:none;font-weight:700">🎥 Unirse a Google Meet</a>` : ''}
+        <p style="color:#9ca3af;font-size:12px;margin-top:24px">El lead ya fue creado en tu CRM de Rabbitts Capital.</p>
+      </div>`
+      to = body.to
+    }
     if (type === 'escalation') {
       subject = `Rabito escaló a humano — ${body.lead?.nombre||'Lead'}`
       html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
