@@ -1,19 +1,23 @@
-// api/whatsapp.js — Evolution API webhook con resolución @lid
+// api/whatsapp.js — Evolution API v2 webhook
 export default async function handler(req, res) {
 
   if (req.method === 'GET') {
-    return res.status(200).json({ status: 'ok', service: 'Rabbitts WhatsApp Webhook' })
+    return res.status(200).json({ status: 'ok', service: 'Rabbitts WhatsApp Webhook v2' })
   }
 
   if (req.method === 'POST') {
     try {
       const body = req.body
-      const event = (body?.event || '').toLowerCase().replace('_','.')
+      const event = (body?.event || '').toLowerCase()
+      console.log('WA event:', event, 'instance:', body?.instance)
+
       if (!event.includes('messages') || !event.includes('upsert')) {
         return res.status(200).json({ status: 'ok', skipped: event })
       }
 
-      const msg = body?.data?.messages?.[0] || body?.data
+      // Evolution API v2 estructura: body.data es el mensaje directamente
+      const data = body?.data
+      const msg = Array.isArray(data) ? data[0] : data
       if (!msg) return res.status(200).json({ status: 'ok', skipped: 'no msg' })
       if (msg.key?.fromMe) return res.status(200).json({ status: 'ok', skipped: 'fromMe' })
 
@@ -21,50 +25,28 @@ export default async function handler(req, res) {
       if (remoteJid.includes('@g.us')) return res.status(200).json({ status: 'ok', skipped: 'group' })
 
       const instanceName = body?.instance || ''
-      const msgText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
+      const msgText = msg.message?.conversation || 
+                      msg.message?.extendedTextMessage?.text || 
+                      msg.message?.imageMessage?.caption || ''
       const pushName = msg.pushName || ''
 
-      const EVO_URL = 'https://wa.rabbittscapital.com'
-      const EVO_KEY = 'rabbitts2024'
+      // Extraer número — v2 resuelve @lid correctamente
+      let phoneFrom = remoteJid
+        .replace(/@s\.whatsapp\.net$/, '')
+        .replace(/@lid$/, '')
+        .replace(/@[\w.]+$/, '')
+      
+      let sendNumber = remoteJid.endsWith('@s.whatsapp.net') ? phoneFrom : remoteJid
 
-      // Resolver número real desde @lid usando contactos de Evolution API
-      let sendNumber = remoteJid
-      let phoneFrom = remoteJid.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '').replace(/@[\w.]+$/, '')
-
-      if (remoteJid.endsWith('@s.whatsapp.net')) {
-        // Formato normal - usar número directo
-        sendNumber = phoneFrom
-      } else if (remoteJid.endsWith('@lid')) {
-        // Buscar número real en contactos
-        try {
-          const contactRes = await fetch(
-            `${EVO_URL}/chat/findContacts/${instanceName}?where={"id":"${remoteJid}"}`,
-            { headers: { 'apikey': EVO_KEY } }
-          )
-          const contacts = await contactRes.json()
-          const contact = Array.isArray(contacts) ? contacts[0] : contacts
-          const realPhone = contact?.number || contact?.pushName
-          if (realPhone && !realPhone.includes('@')) {
-            sendNumber = realPhone
-            phoneFrom = realPhone
-            console.log('Resolved @lid to:', sendNumber)
-          } else {
-            // Fallback: usar pushName si tiene número, o mantener @lid
-            sendNumber = remoteJid
-            console.log('Could not resolve @lid, using remoteJid:', remoteJid)
-          }
-        } catch(e) {
-          sendNumber = remoteJid
-          console.log('Error resolving @lid:', e.message)
-        }
-      }
-
-      console.log('WA msg from:', phoneFrom, 'sendTo:', sendNumber, 'instance:', instanceName, 'text:', msgText?.slice(0,30))
+      console.log('msg from:', phoneFrom, 'remoteJid:', remoteJid, 'sendTo:', sendNumber, 'text:', msgText?.slice(0,30))
 
       if (!msgText || !phoneFrom) return res.status(200).json({ status: 'ok', skipped: 'no text/from' })
 
       const SUPABASE_URL = process.env.VITE_SUPABASE_URL
       const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY
+      const EVO_URL = 'https://wa.rabbittscapital.com'
+      const EVO_KEY = 'rabbitts2024'
+
       const sbHeaders = {
         'apikey': SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
@@ -72,11 +54,15 @@ export default async function handler(req, res) {
       }
 
       const sendWA = async (text) => {
-        console.log('Sending to:', sendNumber)
+        console.log('Sending to:', sendNumber, 'via:', instanceName)
         const r = await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
-          body: JSON.stringify({ number: sendNumber, options: { delay: 500 }, textMessage: { text } })
+          body: JSON.stringify({ 
+            number: sendNumber, 
+            text,
+            delay: 500
+          })
         })
         const rb = await r.text()
         console.log('sendWA status:', r.status, rb.slice(0, 150))
@@ -107,6 +93,7 @@ export default async function handler(req, res) {
           headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify(conv)
         })
+        console.log('Conv created for:', phoneFrom)
       }
 
       await fetch(`${SUPABASE_URL}/rest/v1/crm_conv_messages`, {
@@ -129,17 +116,26 @@ export default async function handler(req, res) {
       const iaConfig = cfgData?.[0]?.value || {}
       if (!iaConfig.activo) return res.status(200).json({ status: 'ok', skipped: 'ia off' })
 
-      const histRes = await fetch(`${SUPABASE_URL}/rest/v1/crm_conv_messages?conv_id=eq.${conv.id}&order=created_at.asc&limit=20`, { headers: sbHeaders })
+      const histRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/crm_conv_messages?conv_id=eq.${conv.id}&order=created_at.asc&limit=20`,
+        { headers: sbHeaders }
+      )
       const histData = await histRes.json()
       const history = Array.isArray(histData) ? histData.map(m => ({ role: m.role, content: m.content })) : []
 
       const agentRes = await fetch('https://crm.rabbittscapital.com/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msgText, conversationHistory: history.slice(0,-1), iaConfig, leadData: { telefono: '+'+phoneFrom, nombre: conv.nombre } })
+        body: JSON.stringify({
+          message: msgText,
+          conversationHistory: history.slice(0, -1),
+          iaConfig,
+          leadData: { telefono: '+' + phoneFrom, nombre: conv.nombre }
+        })
       })
       const agentData = await agentRes.json()
       const reply = agentData?.reply
+      console.log('Rabito reply:', reply?.slice(0, 50))
       if (!reply) return res.status(200).json({ status: 'ok', skipped: 'no reply' })
 
       await sendWA(reply)
@@ -153,7 +149,7 @@ export default async function handler(req, res) {
       await fetch(`${SUPABASE_URL}/rest/v1/crm_conversations`, {
         method: 'POST',
         headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify({ ...conv, last_message: reply, updated_at: new Date().toISOString(), ...(agentData?.leadUpdate||{}) })
+        body: JSON.stringify({ ...conv, last_message: reply, updated_at: new Date().toISOString(), ...(agentData?.leadUpdate || {}) })
       })
 
       if (agentData?.action === 'escalacion') {
@@ -165,8 +161,8 @@ export default async function handler(req, res) {
         await fetch('https://crm.rabbittscapital.com/api/notify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'escalation', to: process.env.CRM_ADMIN_EMAIL, lead: { nombre: conv.nombre, telefono: '+'+phoneFrom } })
-        }).catch(()=>{})
+          body: JSON.stringify({ type: 'escalation', to: process.env.CRM_ADMIN_EMAIL, lead: { nombre: conv.nombre, telefono: '+' + phoneFrom } })
+        }).catch(() => {})
       }
 
       return res.status(200).json({ status: 'ok', replied: true })
