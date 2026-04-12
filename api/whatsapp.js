@@ -6,26 +6,32 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    res.status(200).json({ status: 'ok' })
-
     try {
       const body = req.body
-      if (body?.event !== 'messages.upsert') return
+      const event = (body?.event || '').toLowerCase().replace('_','.')
+      
+      console.log('WA webhook received:', event, 'instance:', body?.instance)
+
+      // Aceptar messages.upsert o MESSAGES_UPSERT
+      if (!event.includes('messages') || !event.includes('upsert')) {
+        return res.status(200).json({ status: 'ok', skipped: event })
+      }
 
       const msg = body?.data?.messages?.[0] || body?.data
-      if (!msg) return
-      if (msg.key?.fromMe) return
+      if (!msg) return res.status(200).json({ status: 'ok', skipped: 'no msg' })
+      if (msg.key?.fromMe) return res.status(200).json({ status: 'ok', skipped: 'fromMe' })
 
       const remoteJid = msg.key?.remoteJid || ''
-      // Ignorar grupos
-      if (remoteJid.includes('@g.us')) return
-      // Manejar @s.whatsapp.net y @lid (nuevo formato WhatsApp)
+      if (remoteJid.includes('@g.us')) return res.status(200).json({ status: 'ok', skipped: 'group' })
+
       const from = remoteJid.replace('@s.whatsapp.net','').replace('@lid','')
       const msgText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
-      const instanceName = body?.instance || body?.instanceName || ''
+      const instanceName = body?.instance || ''
       const pushName = msg.pushName || from
 
-      if (!msgText || !from) return
+      console.log('Processing message from:', from, 'text:', msgText, 'instance:', instanceName)
+
+      if (!msgText || !from) return res.status(200).json({ status: 'ok', skipped: 'no text or from' })
 
       const SUPABASE_URL = process.env.VITE_SUPABASE_URL
       const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY
@@ -38,17 +44,13 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json'
       }
 
-      // Enviar mensaje via Evolution API — usar remoteJid completo para responder
       const sendWA = async (text) => {
-        await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
+        const r = await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
-          body: JSON.stringify({
-            number: remoteJid,
-            options: { delay: 500 },
-            textMessage: { text }
-          })
+          body: JSON.stringify({ number: remoteJid, options: { delay: 500 }, textMessage: { text } })
         })
+        console.log('sendWA status:', r.status)
       }
 
       // Buscar conversación existente
@@ -58,6 +60,7 @@ export default async function handler(req, res) {
       )
       const convs = await convRes.json()
       let conv = Array.isArray(convs) ? convs[0] : null
+      console.log('Conv found:', !!conv)
 
       if (!conv) {
         conv = {
@@ -76,92 +79,60 @@ export default async function handler(req, res) {
           headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify(conv)
         })
+        console.log('Conv created')
       }
 
-      // Guardar mensaje entrante
       await fetch(`${SUPABASE_URL}/rest/v1/crm_conv_messages`, {
         method: 'POST',
         headers: sbHeaders,
-        body: JSON.stringify({
-          conv_id: conv.id,
-          role: 'user',
-          content: msgText,
-          created_at: new Date().toISOString()
-        })
+        body: JSON.stringify({ conv_id: conv.id, role: 'user', content: msgText, created_at: new Date().toISOString() })
       })
 
-      // Modo humano → no responder con IA
       if (conv.mode === 'humano') {
         await fetch(`${SUPABASE_URL}/rest/v1/crm_conversations`, {
           method: 'POST',
           headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify({ ...conv, last_message: msgText, updated_at: new Date().toISOString() })
         })
-        return
+        return res.status(200).json({ status: 'ok', mode: 'humano' })
       }
 
-      // Cargar iaConfig
-      const cfgRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/crm_settings?key=eq.ia_config&select=value`,
-        { headers: sbHeaders }
-      )
+      const cfgRes = await fetch(`${SUPABASE_URL}/rest/v1/crm_settings?key=eq.ia_config&select=value`, { headers: sbHeaders })
       const cfgData = await cfgRes.json()
       const iaConfig = cfgData?.[0]?.value || {}
-      if (!iaConfig.activo) return
+      console.log('IA activo:', iaConfig.activo)
+      
+      if (!iaConfig.activo) return res.status(200).json({ status: 'ok', skipped: 'ia off' })
 
-      // Cargar historial
-      const histRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/crm_conv_messages?conv_id=eq.${conv.id}&order=created_at.asc&limit=20`,
-        { headers: sbHeaders }
-      )
+      const histRes = await fetch(`${SUPABASE_URL}/rest/v1/crm_conv_messages?conv_id=eq.${conv.id}&order=created_at.asc&limit=20`, { headers: sbHeaders })
       const histData = await histRes.json()
-      const history = Array.isArray(histData)
-        ? histData.map(m => ({ role: m.role, content: m.content }))
-        : []
+      const history = Array.isArray(histData) ? histData.map(m => ({ role: m.role, content: m.content })) : []
 
-      // Llamar a Rabito
       const agentRes = await fetch('https://crm.rabbittscapital.com/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: msgText,
-          conversationHistory: history.slice(0, -1),
-          iaConfig,
-          leadData: { telefono: '+' + from, nombre: conv.nombre }
-        })
+        body: JSON.stringify({ message: msgText, conversationHistory: history.slice(0,-1), iaConfig, leadData: { telefono: '+'+from, nombre: conv.nombre } })
       })
       const agentData = await agentRes.json()
       const reply = agentData?.reply
-      if (!reply) return
+      console.log('Rabito reply:', reply?.slice(0,50))
 
-      // Enviar respuesta
+      if (!reply) return res.status(200).json({ status: 'ok', skipped: 'no reply' })
+
       await sendWA(reply)
 
-      // Guardar respuesta
       await fetch(`${SUPABASE_URL}/rest/v1/crm_conv_messages`, {
         method: 'POST',
         headers: sbHeaders,
-        body: JSON.stringify({
-          conv_id: conv.id,
-          role: 'assistant',
-          content: reply,
-          created_at: new Date().toISOString()
-        })
+        body: JSON.stringify({ conv_id: conv.id, role: 'assistant', content: reply, created_at: new Date().toISOString() })
       })
 
-      // Actualizar conversación
       await fetch(`${SUPABASE_URL}/rest/v1/crm_conversations`, {
         method: 'POST',
         headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify({
-          ...conv,
-          last_message: reply,
-          updated_at: new Date().toISOString(),
-          ...(agentData?.leadUpdate || {})
-        })
+        body: JSON.stringify({ ...conv, last_message: reply, updated_at: new Date().toISOString(), ...(agentData?.leadUpdate||{}) })
       })
 
-      // Escalación
       if (agentData?.action === 'escalacion') {
         await fetch(`${SUPABASE_URL}/rest/v1/crm_conversations`, {
           method: 'POST',
@@ -171,18 +142,16 @@ export default async function handler(req, res) {
         await fetch('https://crm.rabbittscapital.com/api/notify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'escalation',
-            to: process.env.CRM_ADMIN_EMAIL,
-            lead: { nombre: conv.nombre, telefono: '+' + from }
-          })
-        }).catch(() => {})
+          body: JSON.stringify({ type: 'escalation', to: process.env.CRM_ADMIN_EMAIL, lead: { nombre: conv.nombre, telefono: '+'+from } })
+        }).catch(()=>{})
       }
 
+      return res.status(200).json({ status: 'ok', replied: true })
+
     } catch (err) {
-      console.error('WhatsApp webhook error:', err)
+      console.error('WhatsApp webhook error:', err.message)
+      return res.status(200).json({ status: 'error', message: err.message })
     }
-    return
   }
 
   return res.status(405).end()
