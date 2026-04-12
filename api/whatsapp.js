@@ -1,4 +1,4 @@
-// api/whatsapp.js — Evolution API webhook (WhatsApp QR via WA Web)
+// api/whatsapp.js — Evolution API webhook con resolución @lid
 export default async function handler(req, res) {
 
   if (req.method === 'GET') {
@@ -20,43 +20,71 @@ export default async function handler(req, res) {
       const remoteJid = msg.key?.remoteJid || ''
       if (remoteJid.includes('@g.us')) return res.status(200).json({ status: 'ok', skipped: 'group' })
 
-      // Extraer número limpio (sin @s.whatsapp.net ni @lid)
-      const from = remoteJid.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '').replace(/@[\w.]+$/, '')
-      const msgText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
       const instanceName = body?.instance || ''
-      const pushName = msg.pushName || from
+      const msgText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
+      const pushName = msg.pushName || ''
 
-      console.log('WA msg from:', from, 'remoteJid:', remoteJid, 'instance:', instanceName, 'text:', msgText?.slice(0,30))
-
-      if (!msgText || !from) return res.status(200).json({ status: 'ok', skipped: 'no text/from' })
-
-      const SUPABASE_URL = process.env.VITE_SUPABASE_URL
-      const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY
       const EVO_URL = 'https://wa.rabbittscapital.com'
       const EVO_KEY = 'rabbitts2024'
 
+      // Resolver número real desde @lid usando contactos de Evolution API
+      let sendNumber = remoteJid
+      let phoneFrom = remoteJid.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '').replace(/@[\w.]+$/, '')
+
+      if (remoteJid.endsWith('@s.whatsapp.net')) {
+        // Formato normal - usar número directo
+        sendNumber = phoneFrom
+      } else if (remoteJid.endsWith('@lid')) {
+        // Buscar número real en contactos
+        try {
+          const contactRes = await fetch(
+            `${EVO_URL}/chat/findContacts/${instanceName}?where={"id":"${remoteJid}"}`,
+            { headers: { 'apikey': EVO_KEY } }
+          )
+          const contacts = await contactRes.json()
+          const contact = Array.isArray(contacts) ? contacts[0] : contacts
+          const realPhone = contact?.number || contact?.pushName
+          if (realPhone && !realPhone.includes('@')) {
+            sendNumber = realPhone
+            phoneFrom = realPhone
+            console.log('Resolved @lid to:', sendNumber)
+          } else {
+            // Fallback: usar pushName si tiene número, o mantener @lid
+            sendNumber = remoteJid
+            console.log('Could not resolve @lid, using remoteJid:', remoteJid)
+          }
+        } catch(e) {
+          sendNumber = remoteJid
+          console.log('Error resolving @lid:', e.message)
+        }
+      }
+
+      console.log('WA msg from:', phoneFrom, 'sendTo:', sendNumber, 'instance:', instanceName, 'text:', msgText?.slice(0,30))
+
+      if (!msgText || !phoneFrom) return res.status(200).json({ status: 'ok', skipped: 'no text/from' })
+
+      const SUPABASE_URL = process.env.VITE_SUPABASE_URL
+      const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY
       const sbHeaders = {
         'apikey': SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type': 'application/json'
       }
 
-      // Enviar — usar número limpio para @s.whatsapp.net, remoteJid completo para @lid
       const sendWA = async (text) => {
-        const sendTo = remoteJid.endsWith('@s.whatsapp.net') ? from : remoteJid
-        console.log('Sending to:', sendTo)
+        console.log('Sending to:', sendNumber)
         const r = await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
-          body: JSON.stringify({ number: sendTo, options: { delay: 500 }, textMessage: { text } })
+          body: JSON.stringify({ number: sendNumber, options: { delay: 500 }, textMessage: { text } })
         })
         const rb = await r.text()
-        console.log('sendWA status:', r.status, rb.slice(0, 200))
+        console.log('sendWA status:', r.status, rb.slice(0, 150))
       }
 
       // Buscar conversación
       const convRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/crm_conversations?telefono=eq.%2B${from}&order=created_at.desc&limit=1`,
+        `${SUPABASE_URL}/rest/v1/crm_conversations?telefono=eq.%2B${phoneFrom}&order=created_at.desc&limit=1`,
         { headers: sbHeaders }
       )
       const convs = await convRes.json()
@@ -65,8 +93,8 @@ export default async function handler(req, res) {
       if (!conv) {
         conv = {
           id: 'conv-' + Date.now(),
-          telefono: '+' + from,
-          nombre: pushName,
+          telefono: '+' + phoneFrom,
+          nombre: pushName || phoneFrom,
           mode: 'ia',
           status: 'activo',
           instanceName,
@@ -108,7 +136,7 @@ export default async function handler(req, res) {
       const agentRes = await fetch('https://crm.rabbittscapital.com/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msgText, conversationHistory: history.slice(0,-1), iaConfig, leadData: { telefono: '+'+from, nombre: conv.nombre } })
+        body: JSON.stringify({ message: msgText, conversationHistory: history.slice(0,-1), iaConfig, leadData: { telefono: '+'+phoneFrom, nombre: conv.nombre } })
       })
       const agentData = await agentRes.json()
       const reply = agentData?.reply
@@ -137,7 +165,7 @@ export default async function handler(req, res) {
         await fetch('https://crm.rabbittscapital.com/api/notify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'escalation', to: process.env.CRM_ADMIN_EMAIL, lead: { nombre: conv.nombre, telefono: '+'+from } })
+          body: JSON.stringify({ type: 'escalation', to: process.env.CRM_ADMIN_EMAIL, lead: { nombre: conv.nombre, telefono: '+'+phoneFrom } })
         }).catch(()=>{})
       }
 
