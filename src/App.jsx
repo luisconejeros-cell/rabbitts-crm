@@ -4519,7 +4519,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       // 1. Crear instancia
       const createRes = await fetch(`${EVO_URL}/instance/create`, {
         method: 'POST', headers: evoHeaders,
-        body: JSON.stringify({ instanceName, qrcode: true, webhook: WEBHOOK_URL, webhookByEvents: false })
+        body: JSON.stringify({ instanceName, integration: "WHATSAPP-BAILEYS", qrcode: true })
       })
       const createData = await createRes.json()
       if (!createData.instance) throw new Error('No se pudo crear la instancia')
@@ -4529,7 +4529,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       await new Promise(r => setTimeout(r, 2000))
       const qrRes = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, { headers: evoHeaders })
       const qrJson = await qrRes.json()
-      const qrBase64 = qrJson?.base64 || qrJson?.qrcode?.base64
+      const qrBase64 = qrJson?.base64 || qrJson?.qrcode?.base64 || qrJson?.code
 
       if (!qrBase64) throw new Error('No se pudo obtener el QR')
 
@@ -4544,7 +4544,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
         try {
           const stateRes = await fetch(`${EVO_URL}/instance/connectionState/${instanceName}`, { headers: evoHeaders })
           const stateData = await stateRes.json()
-          if (stateData?.instance?.state === 'open') {
+          if (stateData?.instance?.state === 'open' || stateData?.state === 'open') {
             clearInterval(poll)
             // Obtener número conectado
             const infoRes = await fetch(`${EVO_URL}/instance/fetchInstances?instanceName=${instanceName}`, { headers: evoHeaders })
@@ -4570,7 +4570,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
             // Configurar webhook
             await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
               method: 'POST', headers: evoHeaders,
-              body: JSON.stringify({ webhook: { enabled: true, url: WEBHOOK_URL, webhookByEvents: false, events: ['MESSAGES_UPSERT'] } })
+              body: JSON.stringify({ url: WEBHOOK_URL, enabled: true, webhookByEvents: false, events: ['MESSAGES_UPSERT'] })
             })
           }
         } catch(_) {}
