@@ -9,10 +9,6 @@ export default async function handler(req, res) {
     try {
       const body = req.body
       const event = (body?.event || '').toLowerCase().replace('_','.')
-      
-      console.log('WA webhook received:', event, 'instance:', body?.instance)
-
-      // Aceptar messages.upsert o MESSAGES_UPSERT
       if (!event.includes('messages') || !event.includes('upsert')) {
         return res.status(200).json({ status: 'ok', skipped: event })
       }
@@ -24,14 +20,15 @@ export default async function handler(req, res) {
       const remoteJid = msg.key?.remoteJid || ''
       if (remoteJid.includes('@g.us')) return res.status(200).json({ status: 'ok', skipped: 'group' })
 
-      const from = remoteJid.replace('@s.whatsapp.net','').replace('@lid','')
+      // Extraer número limpio (sin @s.whatsapp.net ni @lid)
+      const from = remoteJid.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '').replace(/@[\w.]+$/, '')
       const msgText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
       const instanceName = body?.instance || ''
       const pushName = msg.pushName || from
 
-      console.log('Processing message from:', from, 'text:', msgText, 'instance:', instanceName)
+      console.log('WA msg from:', from, 'remoteJid:', remoteJid, 'instance:', instanceName, 'text:', msgText?.slice(0,30))
 
-      if (!msgText || !from) return res.status(200).json({ status: 'ok', skipped: 'no text or from' })
+      if (!msgText || !from) return res.status(200).json({ status: 'ok', skipped: 'no text/from' })
 
       const SUPABASE_URL = process.env.VITE_SUPABASE_URL
       const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY
@@ -44,23 +41,26 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json'
       }
 
+      // Enviar — usar número limpio para @s.whatsapp.net, remoteJid completo para @lid
       const sendWA = async (text) => {
+        const sendTo = remoteJid.endsWith('@s.whatsapp.net') ? from : remoteJid
+        console.log('Sending to:', sendTo)
         const r = await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
-          body: JSON.stringify({ number: from, options: { delay: 500 }, textMessage: { text } })
+          body: JSON.stringify({ number: sendTo, options: { delay: 500 }, textMessage: { text } })
         })
-        console.log('sendWA status:', r.status)
+        const rb = await r.text()
+        console.log('sendWA status:', r.status, rb.slice(0, 200))
       }
 
-      // Buscar conversación existente
+      // Buscar conversación
       const convRes = await fetch(
         `${SUPABASE_URL}/rest/v1/crm_conversations?telefono=eq.%2B${from}&order=created_at.desc&limit=1`,
         { headers: sbHeaders }
       )
       const convs = await convRes.json()
       let conv = Array.isArray(convs) ? convs[0] : null
-      console.log('Conv found:', !!conv)
 
       if (!conv) {
         conv = {
@@ -79,7 +79,6 @@ export default async function handler(req, res) {
           headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify(conv)
         })
-        console.log('Conv created')
       }
 
       await fetch(`${SUPABASE_URL}/rest/v1/crm_conv_messages`, {
@@ -100,8 +99,6 @@ export default async function handler(req, res) {
       const cfgRes = await fetch(`${SUPABASE_URL}/rest/v1/crm_settings?key=eq.ia_config&select=value`, { headers: sbHeaders })
       const cfgData = await cfgRes.json()
       const iaConfig = cfgData?.[0]?.value || {}
-      console.log('IA activo:', iaConfig.activo)
-      
       if (!iaConfig.activo) return res.status(200).json({ status: 'ok', skipped: 'ia off' })
 
       const histRes = await fetch(`${SUPABASE_URL}/rest/v1/crm_conv_messages?conv_id=eq.${conv.id}&order=created_at.asc&limit=20`, { headers: sbHeaders })
@@ -115,8 +112,6 @@ export default async function handler(req, res) {
       })
       const agentData = await agentRes.json()
       const reply = agentData?.reply
-      console.log('Rabito reply:', reply?.slice(0,50))
-
       if (!reply) return res.status(200).json({ status: 'ok', skipped: 'no reply' })
 
       await sendWA(reply)
@@ -149,7 +144,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'ok', replied: true })
 
     } catch (err) {
-      console.error('WhatsApp webhook error:', err.message)
+      console.error('WA webhook error:', err.message)
       return res.status(200).json({ status: 'error', message: err.message })
     }
   }
