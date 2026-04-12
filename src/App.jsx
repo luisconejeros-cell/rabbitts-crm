@@ -3242,7 +3242,7 @@ export default function App() {
 
         {/* IA CONFIG */}
         {nav==='ia' && isAdmin && (
-          <IAConfigView iaConfig={iaConfig} setIaConfig={setIaConfig} users={users} leads={leads}/>
+          <IAConfigView iaConfig={iaConfig} setIaConfig={setIaConfig} users={users} leads={leads} supabase={supabase} dbReady={dbReady}/>
         )}
 
         {/* CONVERSACIONES */}
@@ -4495,15 +4495,13 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
   // ── Cargar Facebook SDK ──────────────────────────────────────────────────
   React.useEffect(() => {
+    if (!META_APP_ID) return // no inicializar sin App ID
     if (window.FB) { setFbReady(true); return }
     window.fbAsyncInit = () => {
-      window.FB.init({
-        appId:   META_APP_ID,
-        cookie:  true,
-        xfbml:   false,
-        version: 'v19.0'
-      })
-      setFbReady(true)
+      try {
+        window.FB.init({ appId: META_APP_ID, cookie: true, xfbml: false, version: 'v19.0' })
+        setFbReady(true)
+      } catch(e) { console.warn('FB.init error:', e) }
     }
     const script = document.createElement('script')
     script.src   = 'https://connect.facebook.net/es_LA/sdk.js'
@@ -4807,7 +4805,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
 
 // ─── IA Config View ───────────────────────────────────────────────────────────
-function IAConfigView({iaConfig, setIaConfig, users, leads}) {
+function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const [tab, setTab] = useState('config')
   const [testMsg, setTestMsg] = useState('')
