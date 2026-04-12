@@ -581,6 +581,11 @@ export default function App() {
     notifMensajeHumano: true,   // notify when new message in human stage
     activo: false,
     calendlyLink: 'https://calendly.com/agenda-rabbittscapital/60min',
+    metaPhoneId: '',
+    metaWabaId: '',
+    metaToken: '',
+    metaVerifyToken: 'rabbitts_webhook_secret',
+    metaPhoneNumber: '',
     driveUrl: '',
     driveFiles: [], // cached file list from Drive
     rentaMinima: 1500000,
@@ -4466,6 +4471,341 @@ function AgentComisionesView({leads, me, users, stages, indicators, commissions,
   )
 }
 
+// ─── WhatsApp Multi-Number Panel ─────────────────────────────────────────────
+function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+  const [numeros, setNumeros]     = React.useState([])
+  const [loading, setLoading]     = React.useState(true)
+  const [showForm, setShowForm]   = React.useState(false)
+  const [connecting, setConnecting] = React.useState(false)
+  const [testing, setTesting]     = React.useState(null)
+  const [fbReady, setFbReady]     = React.useState(false)
+  const [signupStatus, setSignupStatus] = React.useState(null) // null | 'loading' | 'success' | 'error'
+  const [signupMsg, setSignupMsg] = React.useState('')
+
+  const META_APP_ID = typeof window !== 'undefined'
+    ? (window.__META_APP_ID__ || import.meta?.env?.VITE_META_APP_ID || '')
+    : ''
+
+  const [newNum, setNewNum] = React.useState({
+    nombre: '', numero: '', phoneId: '', wabaId: '', token: '',
+    verifyToken: 'rabbitts_webhook_' + Math.random().toString(36).slice(2,8),
+    activo: true
+  })
+
+  // ── Cargar Facebook SDK ──────────────────────────────────────────────────
+  React.useEffect(() => {
+    if (window.FB) { setFbReady(true); return }
+    window.fbAsyncInit = () => {
+      window.FB.init({
+        appId:   META_APP_ID,
+        cookie:  true,
+        xfbml:   false,
+        version: 'v19.0'
+      })
+      setFbReady(true)
+    }
+    const script = document.createElement('script')
+    script.src   = 'https://connect.facebook.net/es_LA/sdk.js'
+    script.async = true
+    script.defer = true
+    document.head.appendChild(script)
+  }, [META_APP_ID])
+
+  // ── Escuchar mensaje de Embedded Signup (phone_number_id, waba_id) ────────
+  React.useEffect(() => {
+    const onMessage = (e) => {
+      if (e.origin !== 'https://www.facebook.com' && e.origin !== 'https://web.facebook.com') return
+      try {
+        const d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
+        if (d.type === 'WA_EMBEDDED_SIGNUP') {
+          if (d.event === 'FINISH') {
+            window.__waSignupData__ = {
+              phoneNumberId: d.data?.phone_number_id || d.data?.phone_number?.id,
+              wabaId:        d.data?.waba_id         || d.data?.business?.id
+            }
+          }
+        }
+      } catch(_) {}
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+
+  React.useEffect(() => { loadNumeros() }, [dbReady])
+
+  const loadNumeros = async () => {
+    if (!dbReady || !supabase) return
+    setLoading(true)
+    try {
+      const { data } = await supabase.from('crm_settings').select('value').eq('key','wa_numeros').single()
+      setNumeros(data?.value || [])
+    } catch(_) { setNumeros([]) }
+    setLoading(false)
+  }
+
+  const saveNumeros = async (list) => {
+    if (!dbReady || !supabase) return
+    await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: list })
+    setNumeros(list)
+  }
+
+  // ── Lanzar Embedded Signup ────────────────────────────────────────────────
+  const launchEmbeddedSignup = () => {
+    if (!window.FB || !fbReady) {
+      alert('El SDK de Meta aún está cargando. Espera un momento e intenta de nuevo.')
+      return
+    }
+    window.__waSignupData__ = null
+    setConnecting(true)
+    setSignupStatus(null)
+
+    window.FB.login(
+      async (response) => {
+        setConnecting(false)
+        if (response.status !== 'connected') {
+          setSignupStatus('error')
+          setSignupMsg('Proceso cancelado o no autorizado.')
+          return
+        }
+
+        const userToken     = response.authResponse?.accessToken
+        const signupData    = window.__waSignupData__ || {}
+        const phoneNumberId = signupData.phoneNumberId
+        const wabaId        = signupData.wabaId
+
+        if (!phoneNumberId) {
+          setSignupStatus('error')
+          setSignupMsg('No se recibió el Phone Number ID de Meta. Intenta de nuevo.')
+          return
+        }
+
+        setSignupStatus('loading')
+        setSignupMsg('Guardando número...')
+
+        try {
+          const verifyTok = 'rabbitts_' + Math.random().toString(36).slice(2, 10)
+          const res = await fetch('/api/whatsapp-signup', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ userToken, phoneNumberId, wabaId, verifyToken: verifyTok })
+          })
+          const data = await res.json()
+          if (data.success) {
+            setSignupStatus('success')
+            setSignupMsg(`✅ ${data.numero.nombre} (${data.numero.numero}) conectado correctamente.`)
+            await loadNumeros()
+          } else {
+            setSignupStatus('error')
+            setSignupMsg('Error al guardar: ' + (data.error || 'desconocido'))
+          }
+        } catch(err) {
+          setSignupStatus('error')
+          setSignupMsg('Error de red: ' + err.message)
+        }
+      },
+      {
+        scope: 'whatsapp_business_management,whatsapp_business_messaging',
+        extras: {
+          feature:        'whatsapp_embedded_signup',
+          setup:          {},
+          sessionInfoVersion: 2
+        }
+      }
+    )
+  }
+
+  // ── Formulario manual ─────────────────────────────────────────────────────
+  const agregarNumero = async () => {
+    if (!newNum.nombre || !newNum.phoneId || !newNum.token) return
+    const num = { ...newNum, id: 'wa-' + Date.now(), createdAt: new Date().toISOString() }
+    await saveNumeros([...numeros, num])
+    setNewNum({ nombre:'', numero:'', phoneId:'', wabaId:'', token:'', verifyToken:'rabbitts_webhook_'+Math.random().toString(36).slice(2,8), activo:true })
+    setShowForm(false)
+  }
+
+  const eliminarNumero = async (id) => {
+    if (!confirm('¿Eliminar este número?')) return
+    await saveNumeros(numeros.filter(n => n.id !== id))
+  }
+
+  const toggleActivo = async (id) => {
+    await saveNumeros(numeros.map(n => n.id === id ? {...n, activo: !n.activo} : n))
+  }
+
+  const testConnection = async (num) => {
+    setTesting(num.id)
+    try {
+      const r = await fetch(`https://graph.facebook.com/v19.0/${num.phoneId}`, {
+        headers: { 'Authorization': `Bearer ${num.token}` }
+      })
+      const d = await r.json()
+      if (d.id) alert(`✅ Conexión exitosa!\nNúmero: ${d.display_phone_number}\nEstado: ${d.verified_name||'Verificado'}`)
+      else alert(`❌ Error: ${d.error?.message || JSON.stringify(d)}`)
+    } catch(e) { alert('Error de red: ' + e.message) }
+    setTesting(null)
+  }
+
+  const WEBHOOK_URL = 'https://crm.rabbittscapital.com/api/whatsapp'
+
+  return (
+    <div>
+      {/* Info webhook */}
+      <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:12,color:'#0c4a6e',lineHeight:1.7}}>
+        <strong>Webhook URL (igual para todos los números):</strong>{' '}
+        <code style={{background:'#fff',padding:'1px 6px',borderRadius:3,fontSize:11,border:'1px solid #bae6fd',userSelect:'all'}}>{WEBHOOK_URL}</code>
+        <br/>Los tokens se guardan en Supabase — puedes agregar ilimitados números sin redeploy.
+      </div>
+
+      {/* Lista de números */}
+      {loading && <div style={{padding:'20px',textAlign:'center',color:'#9ca3af',fontSize:13}}>Cargando...</div>}
+
+      {!loading && numeros.length === 0 && !showForm && (
+        <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:13,border:'2px dashed #E2E8F0',borderRadius:10,marginBottom:12}}>
+          <div style={{fontSize:32,marginBottom:8}}>📱</div>
+          Sin números configurados. Conecta tu primer número de WhatsApp.
+        </div>
+      )}
+
+      {numeros.map((num) => (
+        <div key={num.id} style={{background:num.activo?'#fff':'#f9fafb',border:'1px solid '+(num.activo?'#E2E8F0':'#f0f0f0'),borderRadius:10,padding:'12px 14px',marginBottom:8}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+            <div style={{width:10,height:10,borderRadius:'50%',background:num.activo?'#22c55e':'#9ca3af',flexShrink:0}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{num.nombre}</div>
+              <div style={{fontSize:11,color:'#6b7280',marginTop:1}}>
+                {num.numero && <span style={{marginRight:8}}>📞 {num.numero}</span>}
+                <span style={{fontFamily:'monospace',fontSize:10}}>ID: {num.phoneId?.slice(0,8)}...</span>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center'}}>
+              <button onClick={()=>toggleActivo(num.id)}
+                style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'none',cursor:'pointer',fontWeight:700,
+                  background:num.activo?'#DCFCE7':'#F3F4F6',color:num.activo?'#14532d':'#6b7280'}}>
+                {num.activo?'Activo':'Inactivo'}
+              </button>
+              <button onClick={()=>testConnection(num)} disabled={testing===num.id}
+                style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',color:B.primary,fontWeight:600}}>
+                {testing===num.id?'Probando...':'Probar'}
+              </button>
+              <button onClick={()=>eliminarNumero(num.id)}
+                style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>
+                ✕
+              </button>
+            </div>
+          </div>
+          <div style={{marginTop:8,padding:'6px 10px',background:'#f9fbff',borderRadius:6,fontSize:10,color:'#6b7280',display:'flex',gap:16,flexWrap:'wrap'}}>
+            <span>Webhook: <code style={{color:B.primary}}>{WEBHOOK_URL}</code></span>
+            <span>Verify Token: <code style={{color:B.primary,userSelect:'all'}}>{num.verifyToken}</code></span>
+          </div>
+        </div>
+      ))}
+
+      {/* Mensaje de estado del signup */}
+      {signupStatus && (
+        <div style={{
+          padding:'10px 14px',borderRadius:8,marginBottom:12,fontSize:12,fontWeight:600,
+          background: signupStatus==='success'?'#F0FDF4': signupStatus==='error'?'#FEF2F2':'#EFF6FF',
+          color:      signupStatus==='success'?'#14532d': signupStatus==='error'?'#991b1b':'#1e40af',
+          border:`1px solid ${signupStatus==='success'?'#86efac':signupStatus==='error'?'#fca5a5':'#93c5fd'}`
+        }}>
+          {signupStatus==='loading' && '⏳ '}{signupMsg}
+        </div>
+      )}
+
+      {/* Botón principal: Embedded Signup */}
+      {!showForm && (
+        <button
+          onClick={launchEmbeddedSignup}
+          disabled={connecting || !META_APP_ID}
+          style={{
+            width:'100%', padding:'12px 16px', borderRadius:10, border:'none', cursor:'pointer',
+            background: connecting ? '#9ca3af' : 'linear-gradient(135deg,#1877F2,#0a5dc2)',
+            color:'#fff', fontWeight:700, fontSize:14, marginBottom:8,
+            display:'flex', alignItems:'center', justifyContent:'center', gap:10,
+            boxShadow:'0 2px 8px rgba(24,119,242,0.3)', transition:'all 0.2s',
+            opacity: !META_APP_ID ? 0.6 : 1
+          }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M20.007 3.354C17.84 1.19 14.98 0 11.93 0 5.54 0 .34 5.2.34 11.59c0 2.04.53 4.03 1.55 5.79L.25 24l6.78-1.78c1.69.92 3.6 1.4 5.54 1.4h.01c6.38 0 11.58-5.2 11.58-11.59 0-3.1-1.2-6.01-3.38-8.09zm-8.08 17.84h-.01c-1.73 0-3.42-.46-4.9-1.34l-.35-.21-3.63.95.97-3.54-.23-.36c-.97-1.54-1.49-3.32-1.49-5.14 0-5.33 4.34-9.67 9.68-9.67 2.58 0 5.01 1.01 6.83 2.84 1.83 1.83 2.84 4.26 2.84 6.84-.01 5.33-4.35 9.63-9.71 9.63zm5.31-7.23c-.29-.15-1.72-.85-1.99-.94-.27-.1-.46-.15-.65.15-.2.29-.75.94-.92 1.14-.17.2-.34.22-.63.07-.29-.15-1.23-.45-2.33-1.44-.86-.77-1.44-1.72-1.61-2.01-.17-.29-.02-.45.13-.6.13-.13.29-.34.44-.51.15-.17.2-.29.29-.49.1-.19.05-.37-.02-.51-.08-.15-.66-1.59-.9-2.18-.24-.57-.48-.49-.66-.5-.17-.01-.37-.01-.56-.01-.2 0-.51.07-.77.37-.27.29-1.02 1-1.02 2.43 0 1.43 1.04 2.82 1.19 3.01.15.2 2.05 3.13 4.97 4.39.69.3 1.23.48 1.65.61.69.22 1.33.19 1.82.12.56-.09 1.72-.7 1.96-1.38.24-.68.24-1.26.17-1.38-.07-.12-.27-.19-.56-.34z"/></svg>
+          {connecting ? 'Conectando...' : '🔗 Conectar número con Meta'}
+        </button>
+      )}
+
+      {!META_APP_ID && (
+        <div style={{fontSize:11,color:'#b45309',background:'#FFF7ED',border:'1px solid #fcd34d',borderRadius:6,padding:'6px 10px',marginBottom:8}}>
+          ⚠️ Falta la variable <code>VITE_META_APP_ID</code> en Vercel para usar la conexión automática.
+        </div>
+      )}
+
+      {/* Separador */}
+      {!showForm && (
+        <div style={{display:'flex',alignItems:'center',gap:8,margin:'8px 0'}}>
+          <div style={{flex:1,height:1,background:'#E2E8F0'}}/>
+          <span style={{fontSize:11,color:'#9ca3af'}}>o bien</span>
+          <div style={{flex:1,height:1,background:'#E2E8F0'}}/>
+        </div>
+      )}
+
+      {/* Formulario manual */}
+      {showForm && (
+        <div style={{background:'#f9fbff',border:'1px solid #dce8ff',borderRadius:10,padding:'14px 16px',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:B.primary,marginBottom:12}}>➕ Agregar número manualmente</div>
+          <div style={{background:'#FFF7ED',border:'1px solid #fcd34d',borderRadius:8,padding:'10px 12px',marginBottom:12,fontSize:12,color:'#92400e',lineHeight:1.6}}>
+            <strong>Cómo obtener el token permanente:</strong><br/>
+            1. <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer" style={{color:'#92400e',fontWeight:700}}>business.facebook.com</a> → ⚙️ Configuración → Usuarios del sistema → Crear<br/>
+            2. Asignar activos → Apps → tu app → Control total<br/>
+            3. Generar token → activar <code>whatsapp_business_messaging</code> + <code>whatsapp_business_management</code><br/>
+            4. El Phone Number ID está en: developers.facebook.com → tu app → WhatsApp → Configuración de la API
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:10,marginBottom:10}}>
+            <Fld label="Nombre descriptivo *">
+              <input value={newNum.nombre} onChange={e=>setNewNum(p=>({...p,nombre:e.target.value}))} style={sty.inp} placeholder="Ej: Rabbitts Chile Principal"/>
+            </Fld>
+            <Fld label="Número WhatsApp">
+              <input value={newNum.numero} onChange={e=>setNewNum(p=>({...p,numero:e.target.value}))} style={sty.inp} placeholder="+56 9 XXXX XXXX"/>
+            </Fld>
+            <Fld label="Phone Number ID *">
+              <input value={newNum.phoneId} onChange={e=>setNewNum(p=>({...p,phoneId:e.target.value}))} style={sty.inp} placeholder="102938475610293"/>
+            </Fld>
+            <Fld label="WhatsApp Business Account ID">
+              <input value={newNum.wabaId} onChange={e=>setNewNum(p=>({...p,wabaId:e.target.value}))} style={sty.inp} placeholder="987654321098765"/>
+            </Fld>
+            <div style={{gridColumn:'1/-1'}}>
+              <Fld label="Access Token permanente *">
+                <input value={newNum.token} onChange={e=>setNewNum(p=>({...p,token:e.target.value}))} type="password" style={sty.inp} placeholder="EAABs..."/>
+              </Fld>
+            </div>
+            <div style={{gridColumn:'1/-1'}}>
+              <Fld label="Verify Token (cópialo a Meta al configurar el webhook)">
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <input value={newNum.verifyToken} onChange={e=>setNewNum(p=>({...p,verifyToken:e.target.value}))}
+                    style={{...sty.inp,flex:1,fontFamily:'monospace'}}/>
+                  <button onClick={()=>setNewNum(p=>({...p,verifyToken:'rabbitts_'+Math.random().toString(36).slice(2,10)}))}
+                    style={{...sty.btn,fontSize:11,flexShrink:0}}>Regenerar</button>
+                </div>
+              </Fld>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={agregarNumero} disabled={!newNum.nombre||!newNum.phoneId||!newNum.token}
+              style={{...sty.btnP,flex:1,opacity:!newNum.nombre||!newNum.phoneId||!newNum.token?0.5:1}}>
+              Guardar número
+            </button>
+            <button onClick={()=>setShowForm(false)} style={{...sty.btn,flex:1}}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {!showForm && (
+        <button onClick={()=>setShowForm(true)} style={{...sty.btnO,width:'100%',fontSize:12,marginTop:0}}>
+          + Agregar manualmente (avanzado)
+        </button>
+      )}
+    </div>
+  )
+}
+
+
 // ─── IA Config View ───────────────────────────────────────────────────────────
 function IAConfigView({iaConfig, setIaConfig, users, leads}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
@@ -4598,21 +4938,17 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
           </div>
 
           <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
-            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>📱 Integración WhatsApp</p>
-            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10}}>
-              <Fld label="Proveedor">
-                <select style={sty.sel}>
-                  <option>Twilio WhatsApp API</option>
-                  <option>Meta WhatsApp Business</option>
-                </select>
-              </Fld>
-              <Fld label="Account SID / API Key"><input style={sty.inp} placeholder="AC..." type="password"/></Fld>
-              <Fld label="Número de Rabbitts"><input style={sty.inp} placeholder="+56 9 XXXX XXXX"/></Fld>
+            {/* Header */}
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+              <div style={{flex:1}}>
+                <p style={{margin:0,fontSize:13,fontWeight:700,color:'#0F172A'}}>Meta WhatsApp Cloud API — Multi-número</p>
+                <p style={{margin:0,fontSize:11,color:B.mid}}>Agrega múltiples números. Las credenciales se guardan en Supabase, no en Vercel.</p>
+              </div>
+              <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:'#DCFCE7',color:'#14532d',fontWeight:700,border:'1px solid #86efac',flexShrink:0}}>✅ Oficial Meta</span>
             </div>
-            <div style={{marginTop:10,padding:'10px 12px',background:B.light,borderRadius:8,fontSize:11,color:B.primary,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span>🔧 Configuración real disponible cuando actives la integración con Twilio o Meta</span>
-              <button style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:`1px solid ${B.primary}`,background:'#fff',color:B.primary,cursor:'pointer',fontWeight:600}}>Probar conexión</button>
-            </div>
+
+            <WhatsAppNumerosPanel iaConfig={iaConfig} upd={upd} supabase={supabase} dbReady={dbReady}/>
           </div>
 
           {/* Calificacion y Calendly */}
@@ -5065,7 +5401,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads}) {
             <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:12,background:'#f9fbff',borderRadius:8}}>
               <div style={{fontSize:28,marginBottom:6}}>📱</div>
               Los mensajes enviados aparecerán aquí cuando actives la integración con WhatsApp.
-              <div style={{marginTop:8,fontSize:11}}>Compatible con Twilio WhatsApp API y Meta WhatsApp Business API</div>
+              <div style={{marginTop:8,fontSize:11}}>Compatible con Meta WhatsApp Cloud API (API oficial de Meta)</div>
             </div>
           </div>
         </div>
@@ -5194,8 +5530,8 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
       alert('Ningún usuario seleccionado tiene número de WhatsApp. Agrégalo en Usuarios → editar.')
       return
     }
-    const TWILIO_CONFIGURED = false
-    if (TWILIO_CONFIGURED) {
+    const META_CONFIGURED = !!(iaConfig?.metaToken && iaConfig?.metaPhoneId)
+    if (META_CONFIGURED) {
       setMasivoSending(true)
       let sent=0, failed=0
       for (const u of withPhone) {
@@ -5632,7 +5968,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                 </div>
                 <div style={{marginTop:6,fontSize:11,color:B.mid,textAlign:'right'}}>{selectedUsers.length} seleccionados</div>
                 <div style={{marginTop:8,padding:'8px 12px',background:'#FFF7ED',borderRadius:8,fontSize:11,color:'#92400e'}}>
-                  💡 Ahora abre WhatsApp Web por cada miembro. Cuando conectes Meta/Twilio se enviará automáticamente.
+                  💡 Ahora abre WhatsApp Web por cada miembro. Cuando actives Meta Cloud API en la pestaña IA se enviará automáticamente.
                 </div>
               </div>
             )}
