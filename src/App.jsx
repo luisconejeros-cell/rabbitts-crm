@@ -4731,20 +4731,6 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   )
 }
 
-            <button onClick={()=>setShowForm(false)} style={{...sty.btn,flex:1}}>Cancelar</button>
-          </div>
-        </div>
-      )}
-
-      {!showForm && (
-        <button onClick={()=>setShowForm(true)} style={{...sty.btnO,width:'100%',fontSize:12,marginTop:0}}>
-          + Agregar manualmente (avanzado)
-        </button>
-      )}
-    </div>
-  )
-}
-
 
 // ─── IA Config View ───────────────────────────────────────────────────────────
 function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) {
