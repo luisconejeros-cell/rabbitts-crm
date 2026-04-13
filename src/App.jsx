@@ -1537,8 +1537,8 @@ export default function App() {
     : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
     : leads.filter(l => l.assigned_to===me.id)
 
-  const mpVisible = marketplaceConfig.enabled && marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role)
-  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','ia','conversaciones','agenda','etapas','importar','extraer', ...(mpVisible?['marketplace']:[]) ]
+  const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','ia','conversaciones','agenda','etapas','importar','extraer','marketplace']
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
             : isOps      ? ['kanban','lista',                                                                                                            ...(mpVisible?['marketplace']:[]) ]
             : isFinanzas ? ['dashboard_finanzas','comisiones',                                                                                           ...(mpVisible?['marketplace']:[]) ]
@@ -6832,7 +6832,7 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
 
 // ─── Marketplace View ────────────────────────────────────────────────────────
 function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) {
-  const [editing, setEditing] = React.useState(false)
+  const [editing, setEditing] = React.useState(isAdmin && !config.url) // auto-open if not configured
   const [draft, setDraft] = React.useState({...config})
   const [saving, setSaving] = React.useState(false)
   const [iframeError, setIframeError] = React.useState(false)
