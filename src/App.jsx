@@ -4812,9 +4812,10 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
 
   const TABS = [
     {id:'config',    label:'⚙️ Configuración'},
+    {id:'cerebro',   label:'🧠 Cerebro Rabito'},
     {id:'eventos',   label:'🔔 Eventos'},
     {id:'plantillas',label:'💬 Plantillas'},
-    {id:'entrena',   label:'🧠 Entrenamiento'},
+    {id:'entrena',   label:'✏️ Entrenamiento'},
     {id:'monitor',   label:'📊 Monitor'},
   ]
 
@@ -5311,6 +5312,11 @@ function processFolder(folder, results) {
             )}
           </div>
         </div>
+      )}
+
+      {/* TAB: CEREBRO DE RABITO */}
+      {tab==='cerebro' && (
+        <CerebroRabito supabase={supabase} dbReady={dbReady} iaConfig={iaConfig} upd={upd}/>
       )}
 
       {/* TAB: EVENTOS */}
@@ -5872,34 +5878,35 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
   const createLead = async () => {
     if (!activeConv) return
-    // Verificar si ya tiene lead
     if (activeConv.lead_id) { alert('Este contacto ya tiene un lead en el Kanban'); return }
+    if (!dbReady) { alert('Base de datos no disponible'); return }
+    const now = new Date().toISOString()
     const newLead = {
-      id: 'l-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
-      nombre: activeConv.nombre || 'Nuevo lead WhatsApp',
-      telefono: activeConv.telefono||'',
-      email: activeConv.email||'',
-      tag: 'lead',
+      id: 'l-'+Date.now(),
+      fecha: now,
+      stage_moved_at: now,
       stage: 'nuevo',
-      fecha: new Date().toISOString(),
       assigned_to: null,
-      notas: `Lead desde WhatsApp.${activeConv.renta?' Renta: '+activeConv.renta:''}.${activeConv.modelo?' Modelo: '+activeConv.modelo:''}`,
-      fuente: 'whatsapp'
+      nombre: activeConv.nombre || 'Lead WhatsApp',
+      telefono: activeConv.telefono || '—',
+      email: activeConv.email || '—',
+      renta: activeConv.renta || '—',
+      calificacion: '—',
+      resumen: `Lead desde WhatsApp.${activeConv.renta?' Renta: '+activeConv.renta:''}.${activeConv.modelo?' Modelo: '+activeConv.modelo:''}`,
+      tag: 'lead',
+      origen: 'whatsapp',
+      creado_por: me?.id || 'sistema',
+      comments: [],
+      stage_history: [{stage:'nuevo', date:now}]
     }
-    if (!dbReady) { alert('Error: base de datos no disponible'); return }
     try {
-      const { data, error } = await supabase.from('crm_leads').insert(newLead).select().single()
-      if (error) {
-        console.error('createLead error:', error)
-        alert('Error al crear lead: ' + error.message)
-        return
-      }
-      if (data) {
-        setLeads(prev => [data, ...prev])
-        await upsertConversation({...activeConv, lead_id: data.id, status: 'calificado', updated_at: new Date().toISOString()})
-        setActiveConv(prev => prev ? {...prev, lead_id: data.id, status: 'calificado'} : prev)
-        alert('✅ Lead creado en el Kanban')
-      }
+      const { error } = await supabase.from('crm_leads').upsert(newLead)
+      if (error) { console.error('createLead:', error); alert('Error: ' + error.message); return }
+      setLeads(prev => [newLead, ...prev])
+      const updConv = {...activeConv, lead_id: newLead.id, status: 'calificado', updated_at: now}
+      await upsertConversation(updConv)
+      setActiveConv(updConv)
+      alert('✅ Lead creado en el Kanban')
     } catch(e) { alert('Error: ' + e.message) }
   }
 
@@ -6362,722 +6369,39 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   )
 }
 
-// ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
-function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agendaSettings={}, setAgendaSettings}) {
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
-  const todosAgentes = (users||[]).filter(u => u.role === 'agent')
-  
-  // Brokers que están en la agenda (tienen agenda_config.enAgenda = true)
-  const [saving, setSaving] = React.useState(false)
-  const [savedMsg, setSavedMsg] = React.useState('')
-  const [localConfigs, setLocalConfigs] = React.useState(() => {
-    const map = {}
-    todosAgentes.forEach(u => {
-      map[u.id] = u.agenda_config || {activa:false,enAgenda:false,peso:5,duracion:60,anticipacion:12,ingresos_categorias:['cualquiera'],dias:{}}
-    })
-    return map
-  })
-  const [editingId, setEditingId] = React.useState(null)
 
-  // Sync localConfigs when users prop changes (e.g. on remount)
+// ─── Cerebro Rabito: Subir documentos como base de conocimiento ───────────────
+function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
+  const [docs, setDocs] = React.useState([])
+  const [uploading, setUploading] = React.useState(false)
+  const [msg, setMsg] = React.useState(null)
+  const fileRef = React.useRef()
+  const B = { primary:'#4F46E5', light:'#EEF2FF', mid:'#6b7280', border:'#E8EFFE' }
+
+  // Cargar docs guardados
   React.useEffect(() => {
-    setLocalConfigs(prev => {
-      const next = {...prev}
-      todosAgentes.forEach(u => {
-        if (u.agenda_config && !prev[u.id]?.enAgenda && u.agenda_config.enAgenda) {
-          next[u.id] = {...prev[u.id], ...u.agenda_config}
-        }
-      })
-      return next
-    })
-  }, [users])
+    const saved = iaConfig.cerebroDocs || []
+    setDocs(saved)
+  }, [iaConfig.cerebroDocs])
 
-  const brokersEnAgenda = todosAgentes.filter(u => localConfigs[u.id]?.enAgenda)
-  const brokersDisponibles = todosAgentes.filter(u => !localConfigs[u.id]?.enAgenda)
-
-  const updConfig = (userId, field, val) =>
-    setLocalConfigs(prev => ({...prev, [userId]: {...prev[userId], [field]: val}}))
-
-  const agregarBroker = (userId) => updConfig(userId, 'enAgenda', true)
-  const quitarBroker = (userId) => {
-    updConfig(userId, 'enAgenda', false)
-    updConfig(userId, 'activa', false)
-  }
-
-  const saveAll = async () => {
-    setSaving(true)
-    // Update users with merged agenda_config
-    const updated = (users||[]).map(u => {
-      if (u.role !== 'agent') return u
-      const cfg = {...(u.agenda_config||{}), ...localConfigs[u.id]}
-      return {...u, agenda_config: cfg}
-    })
-    await saveUsers(updated)
-    // Also do individual PATCH for agenda_config to ensure it's saved
-    if (dbReady && supabase) {
-      for (const u of updated.filter(u=>u.role==='agent')) {
-        try {
-          await supabase.from('crm_users').update({ agenda_config: u.agenda_config }).eq('id', u.id)
-        } catch(e) { console.warn('agenda_config patch failed', u.id, e) }
-      }
+  const readFileText = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = e => resolve(e.target.result)
+    reader.onerror = reject
+    if (file.name.endsWith('.pdf')) {
+      // Para PDF solo podemos leer como texto plano — recomendar TXT/MD para mejor resultado
+      reader.readAsText(file)
+    } else {
+      reader.readAsText(file, 'UTF-8')
     }
-    setSavedMsg('✅ Guardado')
-    setTimeout(()=>setSavedMsg(''), 2000)
-    setSaving(false)
-  }
-
-  const agendaLink = 'https://crm.rabbittscapital.com/agenda'
-
-  const ingresosOptions = [
-    {k:'cualquiera', l:'Cualquier ingreso', col:'#6b7280'},
-    {k:'bajo',       l:'$1.5M – $2.5M',    col:'#0891b2'},
-    {k:'medio',      l:'$2.5M – $5M',      col:'#7c3aed'},
-    {k:'alto',       l:'$5M+',             col:'#059669'},
-  ]
-
-  const BrokerCard = ({u}) => {
-    const cfg = localConfigs[u.id] || {}
-    const isOpen = editingId === u.id
-    const cats = cfg.ingresos_categorias || ['cualquiera']
-    const diasActivos = Object.entries(cfg.dias||{}).filter(([,d])=>d.activo).length
-
-    return (
-      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden',
-        boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
-        {/* Header row */}
-        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',flexWrap:'wrap'}}>
-          <div style={{cursor:'pointer',display:'flex',alignItems:'center',gap:10,flex:1,minWidth:0}}
-            onClick={()=>setEditingId(isOpen?null:u.id)}>
-            <AV name={u.name} size={36} src={u.avatar_url||null}/>
-            <div style={{minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{u.name}</div>
-              <div style={{fontSize:11,color:'#9ca3af',display:'flex',gap:6,flexWrap:'wrap',marginTop:1}}>
-                {u.google_tokens ? <span style={{color:'#14532d',fontWeight:600}}>✅ Calendar</span> : <span>❌ Sin Calendar</span>}
-                <span>· P:{cfg.peso||5} · {diasActivos}d · {cfg.duracion||60}min</span>
-              </div>
-            </div>
-          </div>
-          <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-            {/* Recibe reuniones toggle */}
-            <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <span style={{fontSize:11,color:B.mid}}>Activo</span>
-              <button onClick={()=>updConfig(u.id,'activa',!cfg.activa)}
-                style={{width:40,height:22,borderRadius:99,border:'none',cursor:'pointer',position:'relative',
-                  background:cfg.activa?B.primary:'#CBD5E1',transition:'background .2s'}}>
-                <div style={{position:'absolute',top:2,left:cfg.activa?20:2,width:18,height:18,borderRadius:'50%',
-                  background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
-              </button>
-            </div>
-            {/* Remove from agenda */}
-            <button onClick={()=>quitarBroker(u.id)}
-              style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #fca5a5',
-                background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontWeight:600}}>
-              Quitar
-            </button>
-            <span style={{fontSize:12,color:'#9ca3af',cursor:'pointer'}} onClick={()=>setEditingId(isOpen?null:u.id)}>{isOpen?'▲':'▼'}</span>
-          </div>
-        </div>
-
-        {/* Expanded config */}
-        {isOpen && (
-          <div style={{borderTop:'1px solid #f0f4ff',padding:'14px 16px',background:'#f9fbff'}}>
-            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10,marginBottom:12}}>
-              <div>
-                <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:5}}>Prioridad (1-10)</div>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <input type="range" min={1} max={10} value={cfg.peso||5}
-                    onChange={e=>updConfig(u.id,'peso',parseInt(e.target.value))}
-                    style={{flex:1,accentColor:B.primary}}/>
-                  <span style={{fontWeight:800,fontSize:15,color:B.primary,minWidth:22,textAlign:'center'}}>{cfg.peso||5}</span>
-                </div>
-                <div style={{fontSize:10,color:'#9ca3af',marginTop:1}}>Mayor peso = más reuniones</div>
-              </div>
-              <div>
-                <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:5}}>Duración</div>
-                <select value={cfg.duracion||60} onChange={e=>updConfig(u.id,'duracion',parseInt(e.target.value))} style={sty.sel}>
-                  <option value={30}>30 min</option>
-                  <option value={45}>45 min</option>
-                  <option value={60}>1 hora</option>
-                  <option value={90}>1.5 horas</option>
-                </select>
-              </div>
-              <div>
-                <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:5}}>Anticipación mínima</div>
-                <select value={cfg.anticipacion||12} onChange={e=>updConfig(u.id,'anticipacion',parseInt(e.target.value))} style={sty.sel}>
-                  <option value={6}>6 horas</option>
-                  <option value={12}>12 horas</option>
-                  <option value={24}>24 horas</option>
-                  <option value={48}>48 horas</option>
-                </select>
-              </div>
-            </div>
-            <div style={{marginBottom:10}}>
-              <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>💰 Ingresos que atiende</div>
-              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                {ingresosOptions.map(({k,l,col})=>{
-                  const sel = cats.includes(k)
-                  return (
-                    <button key={k} onClick={()=>{
-                      let next = k==='cualquiera' ? ['cualquiera'] :
-                        cats.includes('cualquiera') ? [k] :
-                        sel ? (cats.filter(c=>c!==k)||['cualquiera']) :
-                        [...cats.filter(c=>c!=='cualquiera'),k]
-                      if (!next.length) next=['cualquiera']
-                      updConfig(u.id,'ingresos_categorias',next)
-                    }} style={{fontSize:11,padding:'5px 12px',borderRadius:99,cursor:'pointer',fontWeight:600,
-                      border:sel?`2px solid ${col}`:'1px solid #E2E8F0',
-                      background:sel?col+'18':'#fff',color:sel?col:'#6b7280'}}>
-                      {l}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-            <div style={{padding:'8px 12px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:8,fontSize:11,color:'#6b7280'}}>
-              <strong style={{color:'#374151'}}>Horario del broker: </strong>
-              {diasActivos > 0
-                ? Object.entries(cfg.dias||{}).filter(([,d])=>d.activo)
-                    .map(([dk,d])=>`${dk} ${d.desde}–${d.hasta}`).join(' · ')
-                : 'No ha configurado su horario aún'}
-            </div>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      {/* Header */}
-      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E2E8F0',flexWrap:'wrap'}}>
-        <div style={{fontSize:28}}>📅</div>
-        <div style={{flex:1}}>
-          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Agenda del Equipo</div>
-          <div style={{fontSize:12,color:B.mid}}>{brokersEnAgenda.filter(u=>localConfigs[u.id]?.activa).length} brokers activos recibiendo reuniones</div>
-        </div>
-        <button onClick={saveAll} disabled={saving}
-          style={{...sty.btnP,minWidth:120,flexShrink:0}}>
-          {savedMsg || (saving?'Guardando...':'💾 Guardar todo')}
-        </button>
-      </div>
-
-      {/* Link público */}
-      <div style={{background:B.light,border:'1px solid #BFDBFE',borderRadius:12,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:11,fontWeight:700,color:B.primary,marginBottom:2}}>🔗 Link público — comparte este link con los clientes o Rabito lo envía automáticamente</div>
-          <div style={{fontSize:12,color:'#0F172A',wordBreak:'break-all'}}>{agendaLink}</div>
-        </div>
-        <div style={{display:'flex',gap:6,flexShrink:0}}>
-          <button onClick={()=>navigator.clipboard?.writeText(agendaLink).then(()=>{setSavedMsg('Copiado!');setTimeout(()=>setSavedMsg(''),1500)})}
-            style={{...sty.btn,fontSize:12}}>Copiar</button>
-          <a href={agendaLink} target="_blank" rel="noopener noreferrer"
-            style={{...sty.btnP,fontSize:12,textDecoration:'none',padding:'7px 12px'}}>Ver página</a>
-        </div>
-      </div>
-
-      {/* ── Personalización de la página ── */}
-      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginBottom:16}}>
-        <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:12}}>🎨 Página de reservas — configuración</div>
-        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:12}}>
-          {/* Logo */}
-          <div style={{gridColumn:'1/-1',background:'#f8fafc',borderRadius:10,padding:'14px',border:'1px solid #E2E8F0'}}>
-            <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:10}}>Logo de la empresa</div>
-            <div style={{display:'flex',alignItems:'flex-start',gap:16,flexWrap:'wrap'}}>
-              {/* Preview */}
-              <div style={{background:'#FAFAFA',border:'1px solid #E2E8F0',borderRadius:10,padding:'12px 16px',minWidth:140,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                {agendaSettings?.logo ? (
-                  <img src={agendaSettings.logo}
-                    style={{
-                      height: {pequeno:32,mediano:48,grande:72}[agendaSettings?.logoSize||'mediano'],
-                      maxWidth:140, objectFit:'contain'
-                    }} alt="preview"/>
-                ) : (
-                  <img src="/icon-192.png"
-                    style={{
-                      width:{pequeno:32,mediano:48,grande:72}[agendaSettings?.logoSize||'mediano'],
-                      height:{pequeno:32,mediano:48,grande:72}[agendaSettings?.logoSize||'mediano'],
-                      borderRadius:8, objectFit:'cover'
-                    }} alt="preview"/>
-                )}
-              </div>
-              {/* Controls */}
-              <div style={{flex:1}}>
-                <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
-                  <label htmlFor="agenda-logo-up" style={{display:'inline-block',padding:'7px 16px',borderRadius:8,border:`1px solid ${B.primary}`,background:B.light,cursor:'pointer',fontSize:12,fontWeight:700,color:B.primary}}>
-                    📁 Subir logo
-                  </label>
-                  <input id="agenda-logo-up" type="file" accept="image/*" style={{display:'none'}}
-                    onChange={e=>{
-                      const file=e.target.files[0]; if(!file) return
-                      if(file.size>2*1024*1024){alert('Máx 2MB');return}
-                      const r=new FileReader(); r.onload=ev=>setAgendaSettings(s=>({...s,logo:ev.target.result})); r.readAsDataURL(file)
-                    }}/>
-                  {agendaSettings?.logo && (
-                    <button onClick={()=>setAgendaSettings(s=>({...s,logo:null}))}
-                      style={{padding:'7px 12px',borderRadius:8,border:'1px solid #fca5a5',background:'#FEF2F2',fontSize:12,color:'#991b1b',cursor:'pointer',fontWeight:600}}>
-                      Eliminar
-                    </button>
-                  )}
-                </div>
-                {/* Size selector */}
-                <div style={{marginBottom:6}}>
-                  <div style={{fontSize:11,color:'#6b7280',marginBottom:6,fontWeight:600}}>Tamaño del logo</div>
-                  <div style={{display:'flex',gap:6}}>
-                    {[{k:'pequeno',l:'Pequeño',h:32},{k:'mediano',l:'Mediano',h:48},{k:'grande',l:'Grande',h:72}].map(({k,l,h})=>{
-                      const sel = (agendaSettings?.logoSize||'mediano')===k
-                      return (
-                        <button key={k} onClick={()=>setAgendaSettings(s=>({...s,logoSize:k}))}
-                          style={{flex:1,padding:'6px 4px',borderRadius:8,cursor:'pointer',fontWeight:600,fontSize:11,
-                            border:sel?`2px solid ${B.primary}`:'1px solid #E2E8F0',
-                            background:sel?B.light:'#fff',color:sel?B.primary:'#6b7280',
-                            display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
-                          <div style={{width:h*0.6,height:h*0.35,borderRadius:3,background:sel?B.primary:'#CBD5E1',transition:'all .15s'}}/>
-                          {l}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-                <div style={{fontSize:10,color:'#9ca3af'}}>PNG, SVG o JPG recomendado · máx 2MB · fondo transparente ideal</div>
-              </div>
-            </div>
-          </div>
-          {/* Fields */}
-          <Fld label="Nombre de la empresa">
-            <input value={agendaSettings?.empresa||''} onChange={e=>setAgendaSettings(s=>({...s,empresa:e.target.value}))} style={sty.inp} placeholder="Rabbitts Capital"/>
-          </Fld>
-          <Fld label="Título del evento">
-            <input value={agendaSettings?.titulo||''} onChange={e=>setAgendaSettings(s=>({...s,titulo:e.target.value}))} style={sty.inp} placeholder="Reunión de Asesoría Inmobiliaria"/>
-          </Fld>
-          <div style={{gridColumn:'1/-1'}}>
-            <Fld label="Descripción">
-              <textarea value={agendaSettings?.descripcion||''} onChange={e=>setAgendaSettings(s=>({...s,descripcion:e.target.value}))}
-                style={{...sty.inp,minHeight:68,resize:'vertical'}} placeholder="Revisaremos tu situación..."/>
-            </Fld>
-          </div>
-          <Fld label="Color principal">
-            <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              <input type="color" value={agendaSettings?.colorPrimario||'#2563EB'}
-                onChange={e=>setAgendaSettings(s=>({...s,colorPrimario:e.target.value}))}
-                style={{width:40,height:36,borderRadius:6,border:'1px solid #E2E8F0',cursor:'pointer',padding:2,flexShrink:0}}/>
-              <input value={agendaSettings?.colorPrimario||'#2563EB'}
-                onChange={e=>setAgendaSettings(s=>({...s,colorPrimario:e.target.value}))}
-                style={{...sty.inp,flex:1}}/>
-            </div>
-          </Fld>
-          <Fld label="Duración visible al cliente">
-            <input value={agendaSettings?.duracionLabel||'1 hora'} onChange={e=>setAgendaSettings(s=>({...s,duracionLabel:e.target.value}))} style={sty.inp} placeholder="1 hora"/>
-          </Fld>
-        </div>
-        <div style={{marginTop:10,padding:'7px 12px',background:'#F0FDF4',borderRadius:8,fontSize:11,color:'#14532d'}}>
-          💾 Los cambios se guardan automáticamente y se reflejan en crm.rabbittscapital.com/agenda
-        </div>
-      </div>
-
-      {/* Brokers en la agenda */}
-      <div style={{marginBottom:20}}>
-        <div style={{fontSize:13,fontWeight:700,color:'#0F172A',marginBottom:8}}>
-          Brokers en la agenda ({brokersEnAgenda.length})
-        </div>
-        {brokersEnAgenda.length === 0 && (
-          <div style={{padding:'20px',textAlign:'center',color:'#9ca3af',fontSize:13,background:'#f9fbff',borderRadius:10,border:'1px dashed #E2E8F0'}}>
-            Ningún broker agregado. Agrega asesores desde la sección de abajo.
-          </div>
-        )}
-        <div style={{display:'flex',flexDirection:'column',gap:8}}>
-          {brokersEnAgenda.map(u => <BrokerCard key={u.id} u={u}/>)}
-        </div>
-      </div>
-
-      {/* Brokers disponibles para agregar */}
-      {brokersDisponibles.length > 0 && (
-        <div>
-          <div style={{fontSize:13,fontWeight:700,color:'#0F172A',marginBottom:8}}>
-            Agregar asesores a la agenda
-          </div>
-          <div style={{display:'flex',flexDirection:'column',gap:6}}>
-            {brokersDisponibles.map(u => (
-              <div key={u.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',
-                background:'#fff',border:'1px solid #E2E8F0',borderRadius:10}}>
-                <AV name={u.name} size={32} src={u.avatar_url||null}/>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:13,color:'#0F172A'}}>{u.name}</div>
-                  <div style={{fontSize:11,color:'#9ca3af'}}>
-                    {u.google_tokens ? '✅ Google Calendar conectado' : '❌ Sin Google Calendar'}
-                  </div>
-                </div>
-                <button onClick={()=>agregarBroker(u.id)}
-                  style={{fontSize:12,padding:'6px 14px',borderRadius:8,border:`1px solid ${B.primary}`,
-                    background:B.light,color:B.primary,cursor:'pointer',fontWeight:600,flexShrink:0}}>
-                  + Agregar
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-
-// ─── Mi Agenda View (broker - only availability schedule) ────────────────────
-function MiAgendaView({me, users, setUsers, saveUsers, supabase, dbReady}) {
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
-  const DIAS = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo']
-  const DIAS_KEY = ['lun','mar','mie','jue','vie','sab','dom']
-
-  const myUser = (users||[]).find(u=>u.id===me.id) || me
-  const existingConfig = myUser.agenda_config || {}
-
-  const [activa, setActiva] = React.useState(existingConfig.activa || false)
-  const [dias, setDias] = React.useState(existingConfig.dias || {
-    lun:{activo:true,  desde:'09:00',hasta:'18:00'},
-    mar:{activo:true,  desde:'09:00',hasta:'18:00'},
-    mie:{activo:true,  desde:'09:00',hasta:'18:00'},
-    jue:{activo:true,  desde:'09:00',hasta:'18:00'},
-    vie:{activo:true,  desde:'09:00',hasta:'18:00'},
-    sab:{activo:false, desde:'10:00',hasta:'14:00'},
-    dom:{activo:false, desde:'10:00',hasta:'14:00'},
   })
-  const [saving, setSaving] = React.useState(false)
-  const [saved, setSaved] = React.useState(false)
 
-  const updDia = (dk, field, val) => setDias(prev => ({...prev, [dk]: {...prev[dk], [field]: val}}))
-
-  const save = async () => {
-    setSaving(true)
-    // Merge with existing admin config (don't overwrite peso, duracion, etc.)
-    const newConfig = { ...existingConfig, activa, dias }
-    const updated = (users||[]).map(u => u.id===me.id ? {...u, agenda_config: newConfig} : u)
-    await saveUsers(updated)
-    setSaved(true)
-    setTimeout(()=>setSaved(false), 2000)
-    setSaving(false)
-  }
-
-  return (
-    <div style={{maxWidth:600}}>
-      {/* Header */}
-      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E2E8F0'}}>
-        <div style={{fontSize:28}}>📅</div>
-        <div style={{flex:1}}>
-          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Mi disponibilidad</div>
-          <div style={{fontSize:12,color:B.mid}}>Configura cuándo puedes atender reuniones con clientes</div>
-        </div>
-        <button onClick={save} disabled={saving}
-          style={{...sty.btnP,opacity:saving?0.6:1,minWidth:110,flexShrink:0}}>
-          {saved?'✅ Guardado':saving?'Guardando...':'Guardar'}
-        </button>
-      </div>
-
-      {/* Activa toggle */}
-      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:12,
-        display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
-        <div>
-          <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>Disponible para reuniones</div>
-          <div style={{fontSize:12,color:B.mid,marginTop:2}}>Cuando está activo, los clientes pueden agendar contigo</div>
-        </div>
-        <button onClick={()=>setActiva(v=>!v)}
-          style={{width:48,height:26,borderRadius:99,border:'none',cursor:'pointer',position:'relative',
-            background:activa?B.primary:'#CBD5E1',transition:'background .2s',flexShrink:0}}>
-          <div style={{position:'absolute',top:3,left:activa?24:3,width:20,height:20,borderRadius:'50%',
-            background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
-        </button>
-      </div>
-
-      {/* Schedule */}
-      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:12}}>
-        <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:12}}>🕐 Horario disponible por día</div>
-        <div style={{display:'flex',flexDirection:'column',gap:0}}>
-          {DIAS_KEY.map((dk,i)=>(
-            <div key={dk} style={{display:'flex',alignItems:'center',gap:10,padding:'11px 0',
-              borderBottom:i<6?'1px solid #f0f4ff':'none',flexWrap:isMobile?'wrap':'nowrap'}}>
-              <button onClick={()=>updDia(dk,'activo',!dias[dk].activo)}
-                style={{width:40,height:22,borderRadius:99,border:'none',cursor:'pointer',position:'relative',flexShrink:0,
-                  background:dias[dk].activo?B.primary:'#CBD5E1',transition:'background .2s'}}>
-                <div style={{position:'absolute',top:2,left:dias[dk].activo?20:2,width:18,height:18,borderRadius:'50%',
-                  background:'#fff',transition:'left .2s',boxShadow:'0 1px 2px rgba(0,0,0,0.2)'}}/>
-              </button>
-              <span style={{width:82,fontSize:13,fontWeight:dias[dk].activo?600:400,
-                color:dias[dk].activo?'#0F172A':'#9ca3af',flexShrink:0}}>{DIAS[i]}</span>
-              {dias[dk].activo ? (
-                <div style={{display:'flex',alignItems:'center',gap:8,flex:1}}>
-                  <input type="time" value={dias[dk].desde}
-                    onChange={e=>updDia(dk,'desde',e.target.value)}
-                    style={{...sty.inp,width:isMobile?'100%':110,fontSize:13}}/>
-                  <span style={{color:'#6b7280',fontSize:12,flexShrink:0}}>—</span>
-                  <input type="time" value={dias[dk].hasta}
-                    onChange={e=>updDia(dk,'hasta',e.target.value)}
-                    style={{...sty.inp,width:isMobile?'100%':110,fontSize:13}}/>
-                </div>
-              ) : (
-                <span style={{fontSize:12,color:'#9ca3af'}}>No disponible</span>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Google Calendar status */}
-      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px',marginBottom:12}}>
-        <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:8}}>📅 Google Calendar</div>
-        {me.google_tokens ? (
-          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-            <span style={{padding:'4px 12px',borderRadius:99,background:'#DCFCE7',color:'#14532d',fontWeight:600,fontSize:12}}>✅ Conectado</span>
-            <span style={{color:'#6b7280',fontSize:12}}>{me.google_tokens.email}</span>
-            <button onClick={()=>window.location.href=`/api/auth?action=login&userId=${me.id}`}
-              style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #86efac',background:'#fff',color:'#14532d',cursor:'pointer',marginLeft:4}}>
-              Reconectar
-            </button>
-          </div>
-        ) : (
-          <div>
-            <div style={{fontSize:12,color:'#6b7280',marginBottom:10}}>
-              Conecta Google Calendar para que las reuniones se creen automáticamente y el cliente reciba la invitación.
-            </div>
-            <button onClick={()=>window.location.href=`/api/auth?action=login&userId=${me.id}`}
-              style={{...sty.btnP,fontSize:13,display:'flex',alignItems:'center',gap:6}}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-              Conectar Google Calendar
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Info about admin settings */}
-      <div style={{padding:'10px 14px',background:'#FFF7ED',border:'1px solid #FED7AA',borderRadius:10,fontSize:12,color:'#92400e'}}>
-        ℹ️ La prioridad, rango de ingresos y duración de reunión los configura el administrador en tu perfil.
-      </div>
-    </div>
-  )
-}
-
-
-// ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[]}) {
-  const si = stages.findIndex(x=>x.id===lead.stage)
-  const ag = (users||[]).find(u=>u.id===lead.assigned_to)
-  const cal = CAL[lead.calificacion]
-  return (
-    <div onClick={onOpen} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 10px',cursor:'pointer',marginBottom:8,boxShadow:'0 1px 4px rgba(27,79,200,0.05)',wordBreak:'break-word'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
-        <div style={{fontWeight:600,fontSize:13,color:'#0F172A',lineHeight:1.3,flex:1,marginRight:6}}>{lead.nombre}</div>
-        <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3,flexShrink:0}}>
-          <Days d={daysIn(lead)}/>
-          {cal&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:cal.bg,color:cal.col,fontWeight:600}}>{lead.calificacion}</span>}
-        </div>
-      </div>
-      <div style={{fontSize:12,color:'#6b7280',marginBottom:5}}>{lead.telefono!=='—'?lead.telefono:lead.email}</div>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-        <div style={{display:'flex',alignItems:'center',gap:5}}>
-          <Tag tag={lead.tag||'lead'} sm/>
-          {(lead.comments||[]).length>0&&<span style={{fontSize:10,color:'#9ca3af'}}>💬{(lead.comments||[]).length}</span>}
-        </div>
-        {isAdmin&&ag&&<div style={{display:'flex',alignItems:'center',gap:4}}><AV name={ag.name} size={16}/><span style={{fontSize:10,color:'#9ca3af'}}>{ag.name.split(' ')[0]}</span></div>}
-      </div>
-      {!isAdmin&&!isPartner&&(()=>{
-        const isOpsLocked = OPS_LOCKED_STAGES.includes(lead.stage)
-        if (isOpsLocked && !isOps) {
-          return (
-            <div style={{display:'flex',alignItems:'center',gap:4,marginTop:8}}>
-              <span style={{fontSize:10,color:'#7e22ce',background:'#FDF4FF',padding:'2px 8px',borderRadius:6,border:'1px solid #d8b4fe',fontWeight:600}}>🔒 En gestión de Operaciones</span>
-            </div>
-          )
-        }
-        return (
-          <div style={{display:'flex',gap:4,marginTop:8}} onClick={e=>e.stopPropagation()}>
-            {si>0&&!RESTRICTED_STAGES.includes(stages[si-1]?.id)&&<button onClick={()=>onMove(lead.id,stages[si-1].id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:'1px solid #E2E8F0',background:'transparent',cursor:'pointer',color:'#6b7280'}}>← Atrás</button>}
-            {si<stages.length-1&&(()=>{
-              const nextStage = stages[si+1]
-              const isRestricted = RESTRICTED_STAGES.includes(nextStage?.id)
-              if (isRestricted && !isOps) return <span style={{fontSize:10,color:'#9ca3af',padding:'3px 6px'}}>🔒 Solo Ops</span>
-              return <button onClick={()=>onMove(lead.id,nextStage.id)} style={{fontSize:11,padding:'3px 8px',borderRadius:8,border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',color:B.primary,fontWeight:600}}>Avanzar →</button>
-            })()}
-          </div>
-        )
-      })()}
-    </div>
-  )
-}
-
-// ─── Marketplace View ────────────────────────────────────────────────────────
-function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) {
-  const [editing, setEditing] = React.useState(isAdmin && !config.url) // auto-open if not configured
-  const [draft, setDraft] = React.useState({...config})
-  const [saving, setSaving] = React.useState(false)
-  const [iframeError, setIframeError] = React.useState(false)
-  const [iframeKey, setIframeKey] = React.useState(0)
-
-  const ROLES = ['admin','agent','partner','operaciones','finanzas']
-
-  const save = async () => {
-    setSaving(true)
-    try {
-      const next = { ...draft }
-      setConfig(next)
-      if (supabase && dbReady) {
-        await supabase.from('crm_settings').upsert({ key: 'marketplace_config', value: next })
-      }
-      setEditing(false)
-      setIframeError(false)
-      setIframeKey(k => k + 1)
-    } catch(e) { alert('Error guardando: ' + e.message) }
-    finally { setSaving(false) }
-  }
-
-  const label = config.label || 'Marketplace'
-
-  return (
-    <div>
-      {/* Header */}
-      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
-        <div style={{fontSize:28}}>🏪</div>
-        <div style={{flex:1}}>
-          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>{label}</div>
-          {config.url && <div style={{fontSize:11,color:B.mid,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:400}}>{config.url}</div>}
-        </div>
-        {isAdmin && (
-          <button onClick={()=>{setDraft({...config});setEditing(v=>!v)}}
-            style={{...sty.btn,fontSize:12}}>
-            {editing ? '✕ Cancelar' : '⚙️ Configurar'}
-          </button>
-        )}
-      </div>
-
-      {/* Admin config panel */}
-      {isAdmin && editing && (
-        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'20px',marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,color:B.primary,marginBottom:14}}>⚙️ Configuración del Marketplace</div>
-
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
-            <div>
-              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>URL del marketplace</label>
-              <input value={draft.url||''} onChange={e=>setDraft(p=>({...p,url:e.target.value}))}
-                placeholder="https://app.tumarketplace.com"
-                style={{...sty.inp,fontSize:12}}/>
-              <div style={{fontSize:10,color:B.mid,marginTop:3}}>El sitio se cargará dentro del CRM via iframe.</div>
-            </div>
-            <div>
-              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Nombre de la pestaña</label>
-              <input value={draft.label||''} onChange={e=>setDraft(p=>({...p,label:e.target.value}))}
-                placeholder="Marketplace"
-                style={{...sty.inp,fontSize:12}}/>
-            </div>
-          </div>
-
-          <div style={{marginBottom:16}}>
-            <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:8}}>Roles que pueden ver el marketplace</label>
-            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-              {ROLES.map(role => {
-                const active = (draft.allowRoles||[]).includes(role)
-                return (
-                  <button key={role} onClick={()=>{
-                    const arr = draft.allowRoles||[]
-                    setDraft(p=>({...p, allowRoles: active ? arr.filter(r=>r!==role) : [...arr,role]}))
-                  }} style={{fontSize:12,padding:'5px 14px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,
-                    background:active?B.primary:'#f0f4ff',color:active?'#fff':B.mid}}>
-                    {role}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:16}}>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <button onClick={()=>setDraft(p=>({...p,enabled:!p.enabled}))}
-                style={{width:40,height:22,borderRadius:11,border:'none',cursor:'pointer',
-                  background:draft.enabled?B.primary:'#d1d5db',position:'relative',transition:'background .2s'}}>
-                <div style={{width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,
-                  left:draft.enabled?20:2,transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
-              </button>
-              <span style={{fontSize:12,fontWeight:600,color:'#374151'}}>
-                {draft.enabled ? '🟢 Pestaña visible para usuarios' : '⚫ Pestaña oculta'}
-              </span>
-            </div>
-          </div>
-
-          <div style={{padding:'10px 14px',background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:8,fontSize:11,color:'#92400e',marginBottom:14}}>
-            ⚠️ <strong>Importante:</strong> Algunos sitios bloquean cargarse dentro de iframes (X-Frame-Options). Si el marketplace muestra un error, contacta al soporte del marketplace para que habiliten el acceso por iframe, o usa una URL alternativa que lo permita.
-          </div>
-
-          <div style={{display:'flex',gap:8}}>
-            <button onClick={save} disabled={saving||!draft.url}
-              style={{...sty.btnP,opacity:saving||!draft.url?0.5:1}}>
-              {saving ? 'Guardando...' : '💾 Guardar configuración'}
-            </button>
-            {draft.url && (
-              <a href={draft.url} target="_blank" rel="noopener noreferrer"
-                style={{...sty.btn,textDecoration:'none',display:'flex',alignItems:'center',gap:4,fontSize:12}}>
-                🔗 Abrir en nueva pestaña
-              </a>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Iframe area */}
-      {config.enabled && config.url ? (
-        <div style={{position:'relative',borderRadius:12,overflow:'hidden',border:'1px solid #E2E8F0',background:'#f9fbff'}}>
-          {iframeError && (
-            <div style={{padding:'32px',textAlign:'center',color:'#374151'}}>
-              <div style={{fontSize:40,marginBottom:12}}>🚫</div>
-              <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>Este sitio no permite cargarse en iframe</div>
-              <div style={{fontSize:13,color:B.mid,marginBottom:16}}>El marketplace bloqueó la carga dentro del CRM. Puedes abrirlo en una pestaña nueva.</div>
-              <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
-                <a href={config.url} target="_blank" rel="noopener noreferrer"
-                  style={{...sty.btnP,textDecoration:'none',display:'inline-flex',alignItems:'center',gap:6}}>
-                  🔗 Abrir {label} en nueva pestaña
-                </a>
-                {isAdmin && (
-                  <button onClick={()=>{setIframeError(false);setIframeKey(k=>k+1)}} style={sty.btn}>
-                    🔄 Reintentar
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-          <iframe
-            key={iframeKey}
-            src={config.url}
-            title={label}
-            onError={() => setIframeError(true)}
-            onLoad={e => {
-              // Try to detect X-Frame-Options block
-              try {
-                const doc = e.target.contentDocument
-                if (!doc || doc.URL === 'about:blank') setIframeError(true)
-              } catch(_) {
-                // Cross-origin — can't read, but likely loaded OK
-              }
-            }}
-            style={{
-              width: '100%',
-              height: 'calc(100vh - 180px)',
-              border: 'none',
-              display: iframeError ? 'none' : 'block'
-            }}
-            allow="fullscreen; payment; clipboard-read; clipboard-write"
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
-          />
-        </div>
-      ) : !isAdmin ? (
-        <div style={{textAlign:'center',padding:'60px 20px',color:B.mid}}>
-          <div style={{fontSize:48,marginBottom:12}}>🏪</div>
-          <div style={{fontSize:15,fontWeight:600,marginBottom:8}}>Marketplace no disponible</div>
-          <div style={{fontSize:13}}>El administrador aún no ha configurado el marketplace.</div>
-        </div>
-      ) : !editing && (
-        <div style={{textAlign:'center',padding:'60px 20px',color:B.mid,background:'#f9fbff',borderRadius:12,border:'2px dashed #dce8ff'}}>
-          <div style={{fontSize:48,marginBottom:12}}>🏪</div>
-          <div style={{fontSize:15,fontWeight:700,color:B.primary,marginBottom:8}}>Configura tu Marketplace</div>
-          <div style={{fontSize:13,marginBottom:20}}>Pega la URL del marketplace y elige qué roles pueden verlo.</div>
-          <button onClick={()=>{setDraft({...config});setEditing(true)}} style={sty.btnP}>
-            ⚙️ Configurar ahora
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
+  const uploadFiles = async (files) => {
+    if (!files.length) return
+    setUploading(true)
+    setMsg(null)
+    const newDocs = []
+    for (const file of files) {
+      try {
+        const text = await readFileText(file)
+        const clean = text.replace(/
