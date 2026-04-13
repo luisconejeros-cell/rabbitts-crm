@@ -4673,7 +4673,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
       {numeros.map(num => (
         <div key={num.id} style={{background:num.activo?'#fff':'#f9fafb',border:'1px solid '+(num.activo?'#E2E8F0':'#f0f0f0'),borderRadius:10,padding:'12px 14px',marginBottom:8}}>
-          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>\
             <div style={{width:10,height:10,borderRadius:'50%',background:num.activo?'#22c55e':'#9ca3af',flexShrink:0}}/>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{num.nombre}</div>
@@ -4682,7 +4682,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
                 <span style={{fontFamily:'monospace',fontSize:10}}>{num.instanceName?.slice(0,20)}...</span>
               </div>
             </div>
-            <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center'}}>
+            <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center',flexWrap:'wrap'}}>
               <button onClick={()=>toggleActivo(num.id)}
                 style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'none',cursor:'pointer',fontWeight:700,
                   background:num.activo?'#DCFCE7':'#F3F4F6',color:num.activo?'#14532d':'#6b7280'}}>
@@ -4691,6 +4691,27 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
               <button onClick={()=>testConnection(num)} disabled={testing===num.id}
                 style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',color:B.primary,fontWeight:600}}>
                 {testing===num.id?'...':'Probar'}
+              </button>
+              <button onClick={async ()=>{
+                try {
+                  setStatusMsg({type:'loading', text:'Reparando webhook...'})
+                  const r = await fetch(`${EVO_URL}/webhook/set/${num.instanceName}`, {
+                    method: 'POST', headers: evoHeaders,
+                    body: JSON.stringify({
+                      url: WEBHOOK_URL,
+                      enabled: true,
+                      webhookByEvents: false,
+                      events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'MESSAGES_UPDATE']
+                    })
+                  })
+                  const d = await r.json()
+                  console.log('webhook set:', d)
+                  setStatusMsg({type:'success', text:`✅ Webhook reparado para ${num.nombre}. Prueba mandando un WhatsApp ahora.`})
+                } catch(e) {
+                  setStatusMsg({type:'error', text:'Error: ' + e.message})
+                }
+              }} style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #f59e0b',background:'#FFF7ED',color:'#92400e',cursor:'pointer',fontWeight:600}}>
+                🔧 Reparar webhook
               </button>
               <button onClick={()=>eliminarNumero(num)}
                 style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>✕</button>
@@ -5751,6 +5772,14 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   useEffect(() => {
     if (activeConv) loadConvMessages(activeConv.id)
   }, [activeConv])
+
+  // Auto-seleccionar la primera conversación al entrar a la bandeja
+  useEffect(() => {
+    if (!activeConv && conversations.length > 0 && tab === 'bandeja') {
+      const first = conversations[0]
+      setActiveConv(first)
+    }
+  }, [conversations, tab])
 
   // Polling automático cada 5 segundos para nuevas conversaciones y mensajes
   useEffect(() => {
