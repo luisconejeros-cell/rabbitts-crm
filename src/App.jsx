@@ -3262,6 +3262,7 @@ export default function App() {
             supabase={supabase}
             dbReady={dbReady}
             me={me}
+            setConversations={setConversations}
           />
         )}
 
@@ -5437,7 +5438,7 @@ function RabitoChat({iaConfig}) {
 }
 
 // ─── Conversaciones View ─────────────────────────────────────────────────────
-function ConversacionesView({conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, users, leads, setLeads, supabase, dbReady, me}) {
+function ConversacionesView({conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, users, leads, setLeads, supabase, dbReady, me, setConversations}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const [tab, setTab] = useState('bandeja')       // bandeja | masivo
   const [newMsg, setNewMsg] = useState('')
@@ -5493,6 +5494,34 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   useEffect(() => {
     if (activeConv) loadConvMessages(activeConv.id)
   }, [activeConv])
+
+  // Supabase Realtime — actualizar conversaciones automáticamente
+  useEffect(() => {
+    if (!supabase || !dbReady) return
+    const channel = supabase
+      .channel('crm_conversations_realtime')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'crm_conversations'
+      }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setConversations(prev => {
+            if (prev.find(c => c.id === payload.new.id)) return prev
+            return [payload.new, ...prev]
+          })
+        } else if (payload.eventType === 'UPDATE') {
+          setConversations(prev => prev.map(c => c.id === payload.new.id ? payload.new : c)
+            .sort((a,b) => new Date(b.updated_at||0) - new Date(a.updated_at||0)))
+        }
+        // Si hay conversación activa y llega mensaje nuevo, recargar mensajes
+        if (activeConv && payload.new?.id === activeConv.id) {
+          loadConvMessages(activeConv.id)
+        }
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [supabase, dbReady])
 
   // Scroll to bottom on new messages
   useEffect(() => {
