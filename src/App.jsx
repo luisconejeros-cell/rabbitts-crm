@@ -4683,20 +4683,16 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
           <div style={{fontWeight:700,fontSize:13,color:'#14532d',marginBottom:12}}>
             📱 Escanea con WhatsApp Business — {qrData.nombre}
           </div>
-          <div style={{padding:'20px',background:'#f0fdf4',borderRadius:8,border:'1px solid #86efac',marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:700,color:'#14532d',marginBottom:8}}>
-              📱 Pasos para conectar:
-            </div>
-            <div style={{fontSize:12,color:'#166534',lineHeight:1.8}}>
-              1. En el panel que se abrió, busca <strong>{qrData.instanceName}</strong><br/>
-              2. Haz clic en <strong>"Get QR Code"</strong><br/>
-              3. Escanea con WhatsApp Business → ⋮ → Dispositivos vinculados
-            </div>
-          </div>
-          <button onClick={()=>window.open(qrData.managerUrl||`${EVO_URL}/manager`,'_blank')}
-            style={{...sty.btnP,width:'100%',marginBottom:8}}>
-            🔗 Abrir panel de conexión
-          </button>
+          {qrData.qr ? (
+            <>
+              <img src={qrData.qr} alt="QR WhatsApp" style={{width:220,height:220,borderRadius:8,border:'1px solid #E2E8F0',display:'block',margin:'0 auto 12px'}}/>
+              <div style={{fontSize:12,color:'#6b7280'}}>
+                WhatsApp Business → ⋮ → Dispositivos vinculados → Vincular dispositivo
+              </div>
+            </>
+          ) : (
+            <div style={{padding:'20px',color:'#6b7280',fontSize:13}}>⏳ Generando QR...</div>
+          )}
           <div style={{display:'flex',gap:8,justifyContent:'center',marginTop:12}}>
             <button onClick={refreshQr} style={{...sty.btn,fontSize:12}}>🔄 Actualizar QR</button>
             <button onClick={()=>{setQrData(null);setConnecting(false);setStatusMsg(null)}} style={{...sty.btn,fontSize:12}}>Cancelar</button>
