@@ -590,6 +590,8 @@ export default function App() {
     driveFiles: [], // cached file list from Drive
     driveFileUrls: [], // individual doc URLs to sync
     driveLastSync: null,
+    driveScriptUrl: '', // Google Apps Script web app URL
+    driveFolderIds: [], // folder IDs to sync via Apps Script
     rentaMinima: 1500000,
     rentaMinimaPareja: 2000000,
     eventos: {
@@ -4756,6 +4758,9 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
   const [driveSyncing, setDriveSyncing] = useState(false)
   const [driveResults, setDriveResults] = useState(null)
   const [newDocUrl, setNewDocUrl] = useState('')
+  const [newFolderUrl, setNewFolderUrl] = useState('')
+  const [driveMode, setDriveMode] = useState('folder') // 'folder' | 'docs'
+  const [showScriptGuide, setShowScriptGuide] = useState(false)
 
   const agents = (users||[]).filter(u=>u.role==='agent')
   const upd = (path, val) => {
@@ -5019,126 +5024,274 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
 
           {/* Google Drive — Base de conocimiento REAL */}
           <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
-            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6,flexWrap:'wrap'}}>
               <img src="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" style={{width:24,height:24}} alt="Drive"/>
               <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>Google Drive — Base de conocimiento</p>
-              {iaConfig.driveConectado && (
-                <span style={{marginLeft:'auto',fontSize:11,padding:'3px 10px',borderRadius:20,background:'#DCFCE7',color:'#14532d',fontWeight:600}}>✅ Activo</span>
-              )}
+              {iaConfig.driveConectado && <span style={{fontSize:11,padding:'3px 10px',borderRadius:20,background:'#DCFCE7',color:'#14532d',fontWeight:600}}>✅ Activo · {(iaConfig.driveFiles||[]).length} docs</span>}
+              {/* Mode tabs */}
+              <div style={{marginLeft:'auto',display:'flex',gap:4}}>
+                {['folder','docs'].map(m=>(
+                  <button key={m} onClick={()=>setDriveMode(m)} style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'none',cursor:'pointer',fontWeight:600,
+                    background:driveMode===m?B.primary:'#f0f4ff',color:driveMode===m?'#fff':B.mid}}>
+                    {m==='folder'?'📁 Carpetas':'📄 Docs sueltos'}
+                  </button>
+                ))}
+              </div>
             </div>
-            <p style={{margin:'0 0 12px',fontSize:11,color:B.mid}}>Agrega tus Google Docs y Google Sheets con info de proyectos, precios y guiones. Rabito leerá el contenido real al responder.</p>
+            <p style={{margin:'0 0 12px',fontSize:11,color:B.mid}}>Rabito leerá el contenido real de tus documentos al responder.</p>
 
-            {/* Lista de documentos agregados */}
-            {(iaConfig.driveFileUrls||[]).length > 0 && (
-              <div style={{marginBottom:10}}>
-                {(iaConfig.driveFileUrls||[]).map((url,i)=>{
-                  const syncedFile = (driveResults||iaConfig.driveFiles||[]).find(f=>f.url===url)
-                  const isDoc = url.includes('/document/')
-                  const isSheet = url.includes('/spreadsheets/')
-                  const icon = isDoc ? '📄' : isSheet ? '📊' : '📁'
-                  return (
-                    <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',marginBottom:6,background:'#FAFBFF'}}>
-                      <span style={{fontSize:16}}>{icon}</span>
-                      <div style={{flex:1,minWidth:0}}>
-                        {syncedFile?.ok ? (
-                          <div style={{fontSize:12,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{syncedFile.name}</div>
-                        ) : (
-                          <div style={{fontSize:11,color:'#6b7280',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{url}</div>
-                        )}
-                        {syncedFile?.ok && <div style={{fontSize:10,color:'#22c55e'}}>✓ {syncedFile.chars?.toLocaleString()} caracteres cargados</div>}
-                        {syncedFile?.error && <div style={{fontSize:10,color:'#ef4444'}}>✗ {syncedFile.error}</div>}
-                        {!syncedFile && <div style={{fontSize:10,color:'#9ca3af'}}>Sin sincronizar</div>}
-                      </div>
-                      <button onClick={()=>{
-                        const arr = [...(iaConfig.driveFileUrls||[])]
-                        arr.splice(i,1)
-                        upd(['driveFileUrls'],arr)
-                        setDriveResults(null)
-                      }} style={{background:'none',border:'none',cursor:'pointer',fontSize:16,color:'#9ca3af',padding:'0 2px',lineHeight:1}}>×</button>
+            {/* ── MODO CARPETA (Apps Script) ─────────────────────────────── */}
+            {driveMode==='folder' && (
+              <div>
+                {/* Apps Script URL input */}
+                <div style={{marginBottom:10}}>
+                  <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:6}}>
+                    URL de tu Google Apps Script
+                    <button onClick={()=>setShowScriptGuide(v=>!v)} style={{marginLeft:8,fontSize:11,background:'#EEF2FF',border:'none',borderRadius:4,padding:'2px 8px',color:B.primary,cursor:'pointer',fontWeight:600}}>
+                      {showScriptGuide?'▲ Ocultar guía':'▼ Cómo configurar (5 min)'}
+                    </button>
+                  </div>
+                  <input value={iaConfig.driveScriptUrl||''} onChange={e=>upd(['driveScriptUrl'],e.target.value)}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    style={{...sty.inp,fontSize:12}}/>
+                </div>
+
+                {/* Setup guide */}
+                {showScriptGuide && (
+                  <div style={{padding:'12px 14px',background:'#F0F9FF',border:'1px solid #BAE6FD',borderRadius:10,marginBottom:12,fontSize:12}}>
+                    <div style={{fontWeight:700,color:'#0369a1',marginBottom:8}}>📋 Configuración en 5 pasos (solo una vez):</div>
+                    <ol style={{margin:0,paddingLeft:20,lineHeight:2,color:'#0F172A'}}>
+                      <li>Abre <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" style={{color:B.primary,fontWeight:600}}>script.google.com</a> → Nuevo proyecto</li>
+                      <li>Borra todo el código y pega el código que está abajo</li>
+                      <li>Clic en <strong>Implementar → Nueva implementación</strong></li>
+                      <li>Tipo: <strong>Aplicación web</strong> · Quién tiene acceso: <strong>Cualquier persona</strong> → Implementar</li>
+                      <li>Copia la URL que aparece y pégala arriba</li>
+                    </ol>
+                    <div style={{marginTop:10,background:'#0F172A',borderRadius:8,padding:'10px 14px',fontFamily:'monospace',fontSize:11,color:'#a5f3fc',lineHeight:1.7,whiteSpace:'pre-wrap',overflowX:'auto'}}>
+{`function doGet(e) {
+  try {
+    var folderId = e.parameter.folderId;
+    var folder = DriveApp.getFolderById(folderId);
+    var results = [];
+    processFolder(folder, results);
+    return ContentService
+      .createTextOutput(JSON.stringify({ok:true, files:results, folder:folder.getName()}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ok:false, error:err.message}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function processFolder(folder, results) {
+  var files = folder.getFiles();
+  while (files.hasNext()) {
+    var file = files.next();
+    var mime = file.getMimeType();
+    var content = '';
+    try {
+      if (mime === 'application/vnd.google-apps.document') {
+        content = DocumentApp.openById(file.getId()).getBody().getText();
+      } else if (mime === 'application/vnd.google-apps.spreadsheet') {
+        var data = SpreadsheetApp.openById(file.getId())
+          .getActiveSheet().getDataRange().getValues();
+        content = data.map(function(r){return r.join('\\t');}).join('\\n');
+      }
+    } catch(err) { content = '[Error: ' + err.message + ']'; }
+    if (content) results.push({id:file.getId(), name:file.getName(), type:mime, content:content.substring(0,6000)});
+  }
+  var subs = folder.getFolders();
+  while (subs.hasNext()) { processFolder(subs.next(), results); }
+}`}
                     </div>
-                  )
-                })}
+                    <button onClick={()=>{
+                      navigator.clipboard?.writeText(`function doGet(e) {
+  try {
+    var folderId = e.parameter.folderId;
+    var folder = DriveApp.getFolderById(folderId);
+    var results = [];
+    processFolder(folder, results);
+    return ContentService.createTextOutput(JSON.stringify({ok:true, files:results, folder:folder.getName()})).setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({ok:false, error:err.message})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+function processFolder(folder, results) {
+  var files = folder.getFiles();
+  while (files.hasNext()) {
+    var file = files.next();
+    var mime = file.getMimeType();
+    var content = '';
+    try {
+      if (mime === 'application/vnd.google-apps.document') {
+        content = DocumentApp.openById(file.getId()).getBody().getText();
+      } else if (mime === 'application/vnd.google-apps.spreadsheet') {
+        var data = SpreadsheetApp.openById(file.getId()).getActiveSheet().getDataRange().getValues();
+        content = data.map(function(r){return r.join('\t');}).join('\n');
+      }
+    } catch(err) { content = '[Error: ' + err.message + ']'; }
+    if (content) results.push({id:file.getId(), name:file.getName(), type:mime, content:content.substring(0,6000)});
+  }
+  var subs = folder.getFolders();
+  while (subs.hasNext()) { processFolder(subs.next(), results); }
+}`)
+                      alert('✅ Código copiado al portapapeles')
+                    }} style={{marginTop:8,fontSize:11,padding:'4px 12px',borderRadius:6,border:'none',background:'#1e40af',color:'#fff',cursor:'pointer',fontWeight:600}}>
+                      📋 Copiar código
+                    </button>
+                  </div>
+                )}
+
+                {/* Folder list */}
+                {(iaConfig.driveFolderIds||[]).length > 0 && (
+                  <div style={{marginBottom:10}}>
+                    {(iaConfig.driveFolderIds||[]).map((fid,i)=>{
+                      const syncedFiles = (driveResults||iaConfig.driveFiles||[]).filter(f=>f.folder===fid||f.folderId===fid)
+                      return (
+                        <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',marginBottom:6,background:'#FAFBFF'}}>
+                          <span style={{fontSize:16}}>📁</span>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                              ID: {fid.slice(0,20)}...
+                            </div>
+                            {syncedFiles.length>0
+                              ? <div style={{fontSize:10,color:'#22c55e'}}>✓ {syncedFiles.length} documentos cargados</div>
+                              : <div style={{fontSize:10,color:'#9ca3af'}}>Sin sincronizar</div>}
+                          </div>
+                          <a href={`https://drive.google.com/drive/folders/${fid}`} target="_blank" rel="noopener noreferrer"
+                            style={{fontSize:10,color:B.primary,textDecoration:'underline',whiteSpace:'nowrap'}}>Abrir ↗</a>
+                          <button onClick={()=>{
+                            const arr=[...(iaConfig.driveFolderIds||[])]
+                            arr.splice(i,1)
+                            upd(['driveFolderIds'],arr)
+                          }} style={{background:'none',border:'none',cursor:'pointer',fontSize:16,color:'#9ca3af',padding:'0 2px',lineHeight:1}}>×</button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Add folder URL input */}
+                <div style={{display:'flex',gap:8,marginBottom:10}}>
+                  <input value={newFolderUrl} onChange={e=>setNewFolderUrl(e.target.value)}
+                    onKeyDown={e=>{ if(e.key==='Enter'&&newFolderUrl.trim()){
+                      const m=newFolderUrl.match(/folders\/([a-zA-Z0-9_-]+)/)
+                      if(!m){alert('URL de carpeta no válida');return}
+                      const arr=[...(iaConfig.driveFolderIds||[]),m[1]]
+                      upd(['driveFolderIds'],arr); setNewFolderUrl('')
+                    }}}
+                    placeholder="https://drive.google.com/drive/folders/..."
+                    style={{...sty.inp,flex:1,fontSize:12}}/>
+                  <button onClick={()=>{
+                    const m=newFolderUrl.match(/folders\/([a-zA-Z0-9_-]+)/)
+                    if(!m){alert('URL de carpeta no válida');return}
+                    const arr=[...(iaConfig.driveFolderIds||[]),m[1]]
+                    upd(['driveFolderIds'],arr); setNewFolderUrl('')
+                  }} style={{...sty.btn,fontSize:12,whiteSpace:'nowrap'}}>+ Agregar carpeta</button>
+                </div>
+
+                {!iaConfig.driveScriptUrl && (
+                  <div style={{padding:'8px 12px',background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:8,fontSize:11,color:'#92400e',marginBottom:10}}>
+                    ⚠️ Necesitas configurar el Apps Script primero. Haz clic en "Cómo configurar" arriba.
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Input agregar doc */}
-            <div style={{display:'flex',gap:8,marginBottom:10}}>
-              <input
-                value={newDocUrl}
-                onChange={e=>setNewDocUrl(e.target.value)}
-                onKeyDown={e=>{ if(e.key==='Enter'&&newDocUrl.trim()){
-                  const arr=[...(iaConfig.driveFileUrls||[]),newDocUrl.trim()]
-                  upd(['driveFileUrls'],arr); setNewDocUrl('')
-                }}}
-                placeholder="Pega URL de Google Doc o Google Sheet..."
-                style={{...sty.inp,flex:1,fontSize:12}}
-              />
-              <button
-                onClick={()=>{
-                  if(!newDocUrl.trim()) return
-                  const arr=[...(iaConfig.driveFileUrls||[]),newDocUrl.trim()]
-                  upd(['driveFileUrls'],arr); setNewDocUrl('')
-                }}
-                style={{...sty.btn,fontSize:12,whiteSpace:'nowrap'}}>
-                + Agregar
-              </button>
-            </div>
+            {/* ── MODO DOCS SUELTOS ─────────────────────────────────────── */}
+            {driveMode==='docs' && (
+              <div>
+                {(iaConfig.driveFileUrls||[]).length > 0 && (
+                  <div style={{marginBottom:10}}>
+                    {(iaConfig.driveFileUrls||[]).map((url,i)=>{
+                      const syncedFile = (driveResults||iaConfig.driveFiles||[]).find(f=>f.url===url)
+                      const icon = url.includes('/document/') ? '📄' : url.includes('/spreadsheets/') ? '📊' : '📁'
+                      return (
+                        <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',marginBottom:6,background:'#FAFBFF'}}>
+                          <span style={{fontSize:16}}>{icon}</span>
+                          <div style={{flex:1,minWidth:0}}>
+                            {syncedFile?.ok
+                              ? <div style={{fontSize:12,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{syncedFile.name}</div>
+                              : <div style={{fontSize:11,color:'#6b7280',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{url}</div>}
+                            {syncedFile?.ok && <div style={{fontSize:10,color:'#22c55e'}}>✓ {syncedFile.chars?.toLocaleString()} caracteres</div>}
+                            {syncedFile?.error && <div style={{fontSize:10,color:'#ef4444'}}>✗ {syncedFile.error}</div>}
+                            {!syncedFile && <div style={{fontSize:10,color:'#9ca3af'}}>Sin sincronizar</div>}
+                          </div>
+                          <button onClick={()=>{const arr=[...(iaConfig.driveFileUrls||[])];arr.splice(i,1);upd(['driveFileUrls'],arr);setDriveResults(null)}}
+                            style={{background:'none',border:'none',cursor:'pointer',fontSize:16,color:'#9ca3af',padding:'0 2px',lineHeight:1}}>×</button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                <div style={{display:'flex',gap:8,marginBottom:10}}>
+                  <input value={newDocUrl} onChange={e=>setNewDocUrl(e.target.value)}
+                    onKeyDown={e=>{ if(e.key==='Enter'&&newDocUrl.trim()){upd(['driveFileUrls'],[...(iaConfig.driveFileUrls||[]),newDocUrl.trim()]);setNewDocUrl('')}}}
+                    placeholder="URL de Google Doc o Google Sheet..." style={{...sty.inp,flex:1,fontSize:12}}/>
+                  <button onClick={()=>{if(!newDocUrl.trim())return;upd(['driveFileUrls'],[...(iaConfig.driveFileUrls||[]),newDocUrl.trim()]);setNewDocUrl('')}}
+                    style={{...sty.btn,fontSize:12,whiteSpace:'nowrap'}}>+ Agregar</button>
+                </div>
+                <div style={{padding:'8px 12px',background:'#F0F9FF',border:'1px solid #BAE6FD',borderRadius:8,fontSize:11,color:'#0369a1'}}>
+                  💡 Cada documento debe estar compartido como "Cualquiera con el link puede ver". Soporta Google Docs y Google Sheets.
+                </div>
+              </div>
+            )}
 
-            {/* Botón sincronizar */}
-            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            {/* ── Botón Sincronizar (compartido) ───────────────────────── */}
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:12,paddingTop:12,borderTop:'1px solid #f0f4ff'}}>
               <button
-                disabled={driveSyncing||(iaConfig.driveFileUrls||[]).length===0}
+                disabled={driveSyncing || (driveMode==='folder'
+                  ? !iaConfig.driveScriptUrl||(iaConfig.driveFolderIds||[]).length===0
+                  : (iaConfig.driveFileUrls||[]).length===0)}
                 onClick={async ()=>{
-                  setDriveSyncing(true)
-                  setDriveResults(null)
+                  setDriveSyncing(true); setDriveResults(null)
                   try {
-                    const r = await fetch('/api/drive', {
-                      method:'POST',
-                      headers:{'Content-Type':'application/json'},
-                      body: JSON.stringify({ fileUrls: iaConfig.driveFileUrls||[] })
-                    })
+                    const body = driveMode==='folder'
+                      ? { scriptUrl: iaConfig.driveScriptUrl, folderIds: iaConfig.driveFolderIds||[], fileUrls: [] }
+                      : { fileUrls: iaConfig.driveFileUrls||[], scriptUrl:'', folderIds:[] }
+                    const r = await fetch('/api/drive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
                     const d = await r.json()
                     if (d.ok) {
                       setDriveResults(d.results)
                       upd(['driveFiles'], d.results.filter(f=>f.ok))
                       upd(['driveLastSync'], new Date().toISOString())
                       upd(['driveConectado'], d.results.some(f=>f.ok))
-                      if (d.synced===0) alert('⚠️ Ningún documento pudo sincronizarse. Revisa que estén compartidos como "Cualquiera con el link puede ver".')
-                      else alert(`✅ ${d.synced} de ${d.total} documentos sincronizados correctamente.`)
-                    } else {
-                      alert('Error al sincronizar: ' + (d.error||'desconocido'))
-                    }
-                  } catch(e) {
-                    alert('Error de conexión: ' + e.message)
-                  } finally { setDriveSyncing(false) }
+                      if (d.synced===0) alert('⚠️ Ningún documento sincronizado. Revisa la configuración.')
+                      else alert(`✅ ${d.synced} documentos sincronizados correctamente.`)
+                    } else alert('Error: ' + (d.error||'desconocido'))
+                  } catch(e) { alert('Error: ' + e.message) }
+                  finally { setDriveSyncing(false) }
                 }}
-                style={{...sty.btnP,fontSize:12,opacity:driveSyncing||(iaConfig.driveFileUrls||[]).length===0?0.5:1}}>
+                style={{...sty.btnP,fontSize:12,opacity:driveSyncing?0.5:1}}>
                 {driveSyncing ? '⏳ Sincronizando...' : '🔄 Sincronizar documentos'}
               </button>
-
               {iaConfig.driveLastSync && (
                 <span style={{fontSize:11,color:B.mid}}>
                   Última sync: {new Date(iaConfig.driveLastSync).toLocaleString('es-CL')}
                 </span>
               )}
-
               {iaConfig.driveConectado && (
-                <button onClick={()=>{
-                  upd(['driveConectado'],false)
-                  upd(['driveFiles'],[])
-                  upd(['driveLastSync'],null)
-                  setDriveResults(null)
-                }} style={{fontSize:11,background:'none',border:'none',color:'#991b1b',cursor:'pointer',padding:0,marginLeft:'auto'}}>
+                <button onClick={()=>{upd(['driveConectado'],false);upd(['driveFiles'],[]);upd(['driveLastSync'],null);setDriveResults(null)}}
+                  style={{fontSize:11,background:'none',border:'none',color:'#991b1b',cursor:'pointer',padding:0,marginLeft:'auto'}}>
                   Desconectar
                 </button>
               )}
             </div>
 
-            {/* Info */}
-            <div style={{marginTop:10,padding:'8px 12px',background:'#F0F9FF',border:'1px solid #BAE6FD',borderRadius:8,fontSize:11,color:'#0369a1'}}>
-              💡 <strong>Cómo funciona:</strong> Agrega Google Docs o Sheets con info de proyectos, precios, condiciones. Haz clic en "Sincronizar" para que Rabito lea el contenido real. Vuelve a sincronizar cada vez que actualices tus documentos en Drive.<br/>
-              <strong>Requisito:</strong> Cada documento debe estar compartido como "Cualquiera con el link puede ver".
-            </div>
+            {/* Preview de archivos sincronizados */}
+            {(driveResults||iaConfig.driveFiles||[]).filter(f=>f.ok).length > 0 && (
+              <div style={{marginTop:10,padding:'8px 12px',background:'#DCFCE7',border:'1px solid #86efac',borderRadius:8,fontSize:11}}>
+                <div style={{fontWeight:700,color:'#14532d',marginBottom:4}}>
+                  ✅ {(driveResults||iaConfig.driveFiles||[]).filter(f=>f.ok).length} documentos cargados en Rabito:
+                </div>
+                {(driveResults||iaConfig.driveFiles||[]).filter(f=>f.ok).map((f,i)=>(
+                  <div key={i} style={{color:'#166534',marginBottom:2}}>
+                    {f.type==='sheet'?'📊':'📄'} <strong>{f.name}</strong> — {f.chars?.toLocaleString()} caracteres{f.truncated?' (truncado)':''}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
