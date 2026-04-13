@@ -9,6 +9,7 @@ export default async function handler(req, res) {
     try {
       const body = req.body
       const event = (body?.event || '').toLowerCase()
+      console.log('WA raw body:', JSON.stringify(body).slice(0, 300))
       const instanceName = body?.instance || ''
 
       const SUPABASE_URL = process.env.VITE_SUPABASE_URL
