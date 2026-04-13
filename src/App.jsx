@@ -6027,6 +6027,10 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
               <div style={{fontSize:12,marginTop:4}}>Las conversaciones de WhatsApp aparecerán aquí</div>
             </div>
           )}
+          </div>
+        </div>
+      )}
+
       {/* TAB: MASIVO */}
       {tab==='masivo' && (
           <div>
