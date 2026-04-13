@@ -101,8 +101,8 @@ Al final de tu respuesta incluye si aplica:
 
     // Overloaded o rate limit → retry con backoff
     if (response.status === 529 || data?.error?.type === 'overloaded_error') {
-      if (attempt <= 3) {
-        const wait = attempt * 3000  // 3s, 6s, 9s
+      if (attempt <= 2) {
+        const wait = attempt * 1000  // 1s, 2s max — no mas en serverless
         console.warn(`[Agent] Overloaded (attempt ${attempt}), retrying in ${wait}ms...`)
         await sleep(wait)
         return callClaude(attempt + 1)
