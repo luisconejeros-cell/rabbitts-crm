@@ -212,7 +212,7 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message,
+        message: msgText,
         conversationHistory: history.slice(0, -1), // excluir el último (recién guardado)
         iaConfig,
         leadData: { telefono: '+' + phoneFrom, nombre: conv.nombre, renta: conv.renta, modelo: conv.modelo }
