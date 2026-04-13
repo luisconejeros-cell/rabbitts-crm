@@ -1,189 +1,169 @@
-// api/whatsapp.js — Evolution API v2 webhook (sin dependencias externas)
-export default async function handler(req, res) {
+// api/whatsapp.js — Evolution API v2 webhook (DEFINITIVO)
+// waitUntil mantiene la función viva después de responder al webhook
+import { waitUntil } from '@vercel/functions'
 
-  if (req.method === 'GET') {
-    return res.status(200).json({ status: 'ok', service: 'Rabbitts WhatsApp Webhook v2' })
-  }
+export default async function handler(req, res) {
+  if (req.method === 'GET') return res.status(200).json({ status: 'ok', service: 'Rabbitts WhatsApp v2' })
   if (req.method !== 'POST') return res.status(405).end()
 
-  // Responder INMEDIATAMENTE para que Evolution API no timeout
-  res.status(200).json({ status: 'ok' })
+  const body = req.body
 
-  // Procesar el mensaje después de devolver la respuesta
-  try {
-    await processWebhook(req.body)
-  } catch(err) {
-    console.error('[WA] processWebhook error:', err.message)
-  }
+  // Responder INMEDIATAMENTE a Evolution API
+  // waitUntil garantiza que processWebhook termina antes de que Vercel mate la función
+  waitUntil(processWebhook(body))
+  return res.status(200).json({ status: 'ok' })
 }
 
 async function processWebhook(body) {
-  const event        = (body?.event || '').toLowerCase()
-  const instanceName = body?.instance || ''
+  try {
+    const event        = (body?.event || '').toLowerCase()
+    const instanceName = body?.instance || ''
+    const SB           = process.env.VITE_SUPABASE_URL
+    const SK           = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY
+    const EVO          = 'https://wa.rabbittscapital.com'
+    const EVOKEY       = 'rabbitts2024'
 
-  const SB_URL = process.env.VITE_SUPABASE_URL
-  const SB_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY
-  const EVO_URL = 'https://wa.rabbittscapital.com'
-  const EVO_KEY = 'rabbitts2024'
+    if (!SB || !SK) { console.error('[WA] env missing'); return }
+    console.log('[WA]', event, '| key:', SK.slice(-6))
 
-  if (!SB_URL || !SB_KEY) { console.error('[WA] Faltan env vars'); return }
+    const H = { 'apikey': SK, 'Authorization': `Bearer ${SK}`, 'Content-Type': 'application/json' }
 
-  console.log('[WA] event:', event, '| instance:', instanceName)
-
-  const H = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' }
-
-  // QR
-  if (event.includes('qrcode') || event.includes('qr')) {
-    const qr = body?.data?.qrcode?.base64 || body?.data?.base64 || body?.data?.qr
-    if (qr) await sb_upsert(SB_URL, H, 'crm_settings', { key: `wa_qr_${instanceName}`, value: { qr, ts: Date.now() } })
-    return
-  }
-
-  // Conexión
-  if (event.includes('connection')) {
-    if (body?.data?.state === 'open' || body?.data?.connection === 'open') {
-      await fetch(`${SB_URL}/rest/v1/crm_settings?key=eq.wa_qr_${instanceName}`, { method: 'DELETE', headers: H })
+    const sbGet = async (path) => {
+      const r = await fetch(`${SB}/rest/v1/${path}`, { headers: H })
+      const t = await r.text()
+      if (!r.ok) console.error(`[WA] GET ${path} ${r.status}:`, t.slice(0,150))
+      try { return JSON.parse(t) } catch { return null }
     }
-    return
-  }
-
-  // Solo messages.upsert
-  if (!event.includes('messages') || !event.includes('upsert')) return
-
-  const data = body?.data
-  const msg  = Array.isArray(data) ? data[0] : data
-  if (!msg || msg.key?.fromMe) return
-
-  const remoteJid = msg.key?.remoteJid || ''
-  if (remoteJid.includes('@g.us')) return
-
-  const msgText =
-    msg.message?.conversation ||
-    msg.message?.extendedTextMessage?.text ||
-    msg.message?.imageMessage?.caption ||
-    msg.message?.videoMessage?.caption || ''
-
-  const pushName   = msg.pushName || ''
-  const phoneRaw   = remoteJid.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '').replace(/@[\w.]+$/, '')
-  const telefono   = '+' + phoneRaw
-  const sendNumber = remoteJid.endsWith('@s.whatsapp.net') ? phoneRaw : remoteJid
-
-  console.log('[WA] de:', telefono, '| nombre:', pushName, '| texto:', msgText?.slice(0,60))
-  if (!phoneRaw) return
-
-  // Buscar conversación por teléfono
-  const r1 = await fetch(`${SB_URL}/rest/v1/crm_conversations?telefono=eq.${encodeURIComponent(telefono)}&order=updated_at.desc&limit=1`, { headers: H })
-  const arr = await r1.json()
-  let conv  = Array.isArray(arr) && arr.length > 0 ? arr[0] : null
-
-  console.log('[WA] búsqueda conv status:', r1.status, '| encontrada:', !!conv)
-
-  if (!conv) {
-    // Crear conversación con campos mínimos garantizados
-    const id = 'wa-' + Date.now()
-    const convData = {
-      id,
-      telefono,
-      nombre:       pushName || phoneRaw,
-      mode:         'ia',
-      status:       'activo',
-      last_message: msgText || '[multimedia]',
-      created_at:   new Date().toISOString(),
-      updated_at:   new Date().toISOString()
-    }
-    const r2 = await fetch(`${SB_URL}/rest/v1/crm_conversations`, {
-      method: 'POST', headers: { ...H, 'Prefer': 'return=representation' },
-      body: JSON.stringify(convData)
-    })
-    const body2 = await r2.text()
-    console.log('[WA] INSERT conv status:', r2.status, '| body:', body2.slice(0,200))
-
-    if (r2.ok) {
-      try { const j = JSON.parse(body2); conv = Array.isArray(j) ? j[0] : j } catch { conv = convData }
-    } else {
-      // Si falla con instanceName u otra columna, intentar sin campos extra
-      const convMinimal = { id, telefono, nombre: pushName || phoneRaw, mode: 'ia', status: 'activo',
-        last_message: msgText || '[multimedia]', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
-      const r3 = await fetch(`${SB_URL}/rest/v1/crm_conversations`, {
-        method: 'POST', headers: { ...H, 'Prefer': 'return=representation' },
-        body: JSON.stringify(convMinimal)
+    const sbPost = async (table, data, prefer = 'return=representation') => {
+      const r = await fetch(`${SB}/rest/v1/${table}`, {
+        method: 'POST', headers: { ...H, 'Prefer': prefer }, body: JSON.stringify(data)
       })
-      const body3 = await r3.text()
-      console.log('[WA] INSERT minimal status:', r3.status, '| body:', body3.slice(0,200))
-      try { const j = JSON.parse(body3); conv = Array.isArray(j) ? j[0] : j } catch { conv = convMinimal }
+      const t = await r.text()
+      if (!r.ok) console.error(`[WA] POST ${table} ${r.status}:`, t.slice(0,200))
+      else console.log(`[WA] POST ${table} ${r.status} ok`)
+      try { const j = JSON.parse(t); return Array.isArray(j) ? j[0] : j } catch { return null }
     }
-  }
+    const sbPatch = async (table, filter, data) => {
+      const r = await fetch(`${SB}/rest/v1/${table}?${filter}`, {
+        method: 'PATCH', headers: { ...H, 'Prefer': 'return=minimal' }, body: JSON.stringify(data)
+      })
+      if (!r.ok) { const t = await r.text(); console.error(`[WA] PATCH ${table} ${r.status}:`, t.slice(0,150)) }
+    }
 
-  // Guardar mensaje del usuario
-  if (msgText) {
-    const rm = await fetch(`${SB_URL}/rest/v1/crm_conv_messages`, {
-      method: 'POST', headers: { ...H, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ conv_id: conv.id, role: 'user', content: msgText, created_at: new Date().toISOString() })
+    // ── QR ────────────────────────────────────────────────────────────────────
+    if (event.includes('qrcode') || event.includes('qr')) {
+      const qr = body?.data?.qrcode?.base64 || body?.data?.base64
+      if (qr) await sbPost('crm_settings', { key: `wa_qr_${instanceName}`, value: { qr, ts: Date.now() } }, 'resolution=merge-duplicates,return=minimal')
+      return
+    }
+    if (event.includes('connection')) {
+      if (body?.data?.state === 'open') await fetch(`${SB}/rest/v1/crm_settings?key=eq.wa_qr_${instanceName}`, { method: 'DELETE', headers: H })
+      return
+    }
+    if (!event.includes('messages') || !event.includes('upsert')) return
+
+    // ── Extraer mensaje ───────────────────────────────────────────────────────
+    const data = body?.data
+    const msg  = Array.isArray(data) ? data[0] : data
+    if (!msg || msg.key?.fromMe) return
+    const jid = msg.key?.remoteJid || ''
+    if (jid.includes('@g.us')) return
+
+    const text     = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || msg.message?.videoMessage?.caption || ''
+    const name     = msg.pushName || ''
+    const phone    = jid.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '').replace(/@[\w.]+$/, '')
+    const sendTo   = jid.endsWith('@s.whatsapp.net') ? phone : jid
+    const telefono = '+' + phone
+
+    console.log('[WA] de:', telefono, '| nombre:', name, '| texto:', text?.slice(0,60))
+    if (!phone) return
+
+    const sendWA = async (txt) => {
+      const r = await fetch(`${EVO}/message/sendText/${instanceName}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': EVOKEY },
+        body: JSON.stringify({ number: sendTo, text: txt, delay: 500 })
+      })
+      console.log('[WA] sendWA:', r.status)
+    }
+
+    // ── Buscar o crear conversación ───────────────────────────────────────────
+    const convs = await sbGet(`crm_conversations?telefono=eq.${encodeURIComponent(telefono)}&order=updated_at.desc&limit=1`)
+    let conv    = Array.isArray(convs) && convs.length > 0 ? convs[0] : null
+    const isNew = !conv
+
+    if (!conv) {
+      const newConv = {
+        id:           'wa-' + Date.now(),
+        telefono,
+        nombre:       name || phone,
+        mode:         'ia',
+        status:       'activo',
+        last_message: text || '[multimedia]',
+        created_at:   new Date().toISOString(),
+        updated_at:   new Date().toISOString()
+      }
+      const saved = await sbPost('crm_conversations', newConv)
+      conv = saved || newConv
+      console.log('[WA] conv creada:', conv?.id)
+    } else {
+      console.log('[WA] conv existente:', conv.id, 'modo:', conv.mode)
+    }
+
+    // ── Guardar mensaje usuario ───────────────────────────────────────────────
+    if (text) {
+      await sbPost('crm_conv_messages',
+        { conv_id: conv.id, role: 'user', content: text, created_at: new Date().toISOString() },
+        'return=minimal'
+      )
+    }
+    await sbPatch('crm_conversations', `id=eq.${conv.id}`, {
+      last_message: text || conv.last_message,
+      updated_at: new Date().toISOString(),
+      ...(name && isNew ? {} : name ? { nombre: name } : {})
     })
-    console.log('[WA] INSERT msg_user status:', rm.status)
-  }
 
-  // Actualizar last_message
-  await fetch(`${SB_URL}/rest/v1/crm_conversations?id=eq.${encodeURIComponent(conv.id)}`, {
-    method: 'PATCH', headers: { ...H, 'Prefer': 'return=minimal' },
-    body: JSON.stringify({ last_message: msgText || conv.last_message, updated_at: new Date().toISOString() })
-  })
+    if (conv.mode === 'humano' || !text) return
 
-  if (conv.mode === 'humano') return
-  if (!msgText) return
+    // ── IA activa? ────────────────────────────────────────────────────────────
+    const cfg = await sbGet('crm_settings?key=eq.ia_config&select=value')
+    const ia  = cfg?.[0]?.value || {}
+    if (!ia.activo) return
 
-  // IA activa?
-  const rc = await fetch(`${SB_URL}/rest/v1/crm_settings?key=eq.ia_config&select=value`, { headers: H })
-  const cd = await rc.json()
-  const iaConfig = cd?.[0]?.value || {}
-  if (!iaConfig.activo) return
+    // ── Historial ─────────────────────────────────────────────────────────────
+    const hist = await sbGet(`crm_conv_messages?conv_id=eq.${conv.id}&order=created_at.asc&limit=20`)
+    const history = Array.isArray(hist)
+      ? hist.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
+      : []
+    console.log('[WA] historial:', history.length, 'msgs')
 
-  // Historial
-  const rh = await fetch(`${SB_URL}/rest/v1/crm_conv_messages?conv_id=eq.${conv.id}&order=created_at.asc&limit=20`, { headers: H })
-  const hd = await rh.json()
-  const history = Array.isArray(hd) ? hd.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })) : []
-  console.log('[WA] historial:', history.length, 'msgs')
-
-  // Llamar agente
-  const ra = await fetch('https://crm.rabbittscapital.com/api/agent', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: msgText,
-      conversationHistory: history.slice(0, -1),
-      iaConfig,
-      leadData: { telefono, nombre: conv.nombre, renta: conv.renta, modelo: conv.modelo }
+    // ── Agente ────────────────────────────────────────────────────────────────
+    const ar = await fetch('https://crm.rabbittscapital.com/api/agent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        conversationHistory: history.slice(0, -1),
+        iaConfig: ia,
+        leadData: { telefono, nombre: conv.nombre, renta: conv.renta, modelo: conv.modelo }
+      })
     })
-  })
-  const agentData = await ra.json()
-  const reply = agentData?.reply
-  if (!reply) { console.log('[WA] sin respuesta del agente'); return }
+    const ad    = await ar.json()
+    const reply = ad?.reply
+    if (!reply) { console.log('[WA] sin reply:', JSON.stringify(ad).slice(0,100)); return }
 
-  // Enviar por WhatsApp
-  await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
-    body: JSON.stringify({ number: sendNumber, text: reply, delay: 500 })
-  })
+    await sendWA(reply)
+    await sbPost('crm_conv_messages',
+      { conv_id: conv.id, role: 'assistant', content: reply, created_at: new Date().toISOString() },
+      'return=minimal'
+    )
 
-  // Guardar respuesta
-  const ra2 = await fetch(`${SB_URL}/rest/v1/crm_conv_messages`, {
-    method: 'POST', headers: { ...H, 'Prefer': 'return=minimal' },
-    body: JSON.stringify({ conv_id: conv.id, role: 'assistant', content: reply, created_at: new Date().toISOString() })
-  })
-  console.log('[WA] INSERT msg_assistant status:', ra2.status)
+    const upd = { last_message: reply, updated_at: new Date().toISOString(), ...(ad?.leadUpdate||{}) }
+    if (ad?.action?.includes('escal')) upd.mode = 'humano'
+    if (ad?.action === 'calificado')  upd.status = 'calificado'
+    await sbPatch('crm_conversations', `id=eq.${conv.id}`, upd)
 
-  const upd = { last_message: reply, updated_at: new Date().toISOString(), ...(agentData?.leadUpdate||{}) }
-  if (agentData?.action?.includes('escal')) upd.mode = 'humano'
-  if (agentData?.action === 'calificado') upd.status = 'calificado'
-  await fetch(`${SB_URL}/rest/v1/crm_conversations?id=eq.${encodeURIComponent(conv.id)}`, {
-    method: 'PATCH', headers: { ...H, 'Prefer': 'return=minimal' }, body: JSON.stringify(upd)
-  })
+    console.log('[WA] ✅ ok →', telefono)
 
-  console.log('[WA] ✅ respondido a:', telefono)
-}
-
-async function sb_upsert(url, headers, table, data) {
-  return fetch(`${url}/rest/v1/${table}`, {
-    method: 'POST', headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify(data)
-  })
+  } catch(e) {
+    console.error('[WA] error fatal:', e.message, e.stack?.slice(0,200))
+  }
 }
