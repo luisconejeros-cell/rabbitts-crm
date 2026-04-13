@@ -5858,7 +5858,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
         feedback, correction, created_at: new Date().toISOString()
       })
       // Save to iaConfig entrenamiento if correction provided
-      if (correction && feedback==='correccion') {
+      if (feedback==='correccion' && (correction !== msg.content || razon)) {
         // Build pregunta from previous user message as context
         const prevUser = [...msgs].slice(0, msgIdx).reverse().find(m=>m.role==='user')
         const pregunta = prevUser ? prevUser.content : msg.content
@@ -5872,33 +5872,70 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
   const createLead = async () => {
     if (!activeConv) return
+    // Verificar si ya tiene lead
+    if (activeConv.lead_id) { alert('Este contacto ya tiene un lead en el Kanban'); return }
     const newLead = {
       id: 'l-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
       nombre: activeConv.nombre || 'Nuevo lead WhatsApp',
       telefono: activeConv.telefono||'',
-      tag: 'lead', stage: 'nuevo', fecha: new Date().toISOString(),
-      assigned_to: null, propiedades: [], comentarios: [],
-      notas: `Lead generado desde WhatsApp. Renta: ${activeConv.renta||'no indicada'}. Modelo: ${activeConv.modelo||'no indicado'}.`
+      email: activeConv.email||'',
+      tag: 'lead',
+      stage: 'nuevo',
+      fecha: new Date().toISOString(),
+      assigned_to: null,
+      notas: `Lead desde WhatsApp.${activeConv.renta?' Renta: '+activeConv.renta:''}.${activeConv.modelo?' Modelo: '+activeConv.modelo:''}`,
+      fuente: 'whatsapp'
     }
-    if (dbReady) {
-      const { data } = await supabase.from('crm_leads').insert(newLead).select().single()
-      if (data) { setLeads(prev=>[data,...prev]); await upsertConversation({...activeConv, lead_id:data.id, updated_at:new Date().toISOString()}) }
-    }
-    alert('Lead creado en el kanban')
+    if (!dbReady) { alert('Error: base de datos no disponible'); return }
+    try {
+      const { data, error } = await supabase.from('crm_leads').insert(newLead).select().single()
+      if (error) {
+        console.error('createLead error:', error)
+        alert('Error al crear lead: ' + error.message)
+        return
+      }
+      if (data) {
+        setLeads(prev => [data, ...prev])
+        await upsertConversation({...activeConv, lead_id: data.id, status: 'calificado', updated_at: new Date().toISOString()})
+        setActiveConv(prev => prev ? {...prev, lead_id: data.id, status: 'calificado'} : prev)
+        alert('✅ Lead creado en el Kanban')
+      }
+    } catch(e) { alert('Error: ' + e.message) }
   }
 
   const sendMasivo = async () => {
     if (!masivo.msg.trim()||selectedConvs.length===0) return
     setMasivoSending(true)
     let sent=0, failed=0
+    const EVO_URL = 'https://wa.rabbittscapital.com'
+    const EVO_KEY = 'rabbitts2024'
+    // Obtener instancia activa
+    let instance = null
+    try {
+      const { data: numData } = await supabase.from('crm_settings').select('value').eq('key','wa_numeros').single()
+      const nums = numData?.value || []
+      instance = nums.find(n=>n.activo)?.instanceName || nums[0]?.instanceName
+    } catch(_) {}
+
     for (const convId of selectedConvs) {
       const conv = conversations.find(c=>c.id===convId)
       if (!conv) continue
       try {
+        // 1. Guardar en Supabase
         const msg = {role:'assistant',content:masivo.msg,created_at:new Date().toISOString(),manual:true,masivo:true}
         await saveConvMessage(convId, msg)
         await upsertConversation({...conv,last_message:masivo.msg,updated_at:new Date().toISOString()})
-        sent++
+        // 2. Enviar por WhatsApp
+        if (instance && conv.telefono) {
+          const phone = conv.telefono.replace(/[^0-9]/g,'')
+          const r = await fetch(`${EVO_URL}/message/sendText/${instance}`, {
+            method:'POST',
+            headers:{'Content-Type':'application/json','apikey':EVO_KEY},
+            body:JSON.stringify({number:phone, text:masivo.msg, delay:1500})
+          })
+          if (r.ok) sent++; else failed++
+        } else { sent++ }
+        await new Promise(r=>setTimeout(r,500)) // espera entre envíos
       } catch(_) { failed++ }
     }
     setMasivoResult({sent, failed})
@@ -6308,13 +6345,13 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                 Cancelar
               </button>
               <button
-                disabled={!trainModal.corrected.trim()||trainModal.corrected===trainModal.original}
+                disabled={!trainModal.corrected.trim()||(!trainModal.razon.trim()&&trainModal.corrected===trainModal.original)}
                 onClick={async ()=>{
                   await sendFeedback(trainModal.msgIdx,'correccion',trainModal.corrected,trainModal.razon)
                   setTrainModal(null)
                 }}
                 style={{padding:'10px 24px',borderRadius:8,border:'none',background:B.primary,color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',
-                  opacity:(!trainModal.corrected.trim()||trainModal.corrected===trainModal.original)?0.4:1}}>
+                  opacity:(!trainModal.corrected.trim()||(!trainModal.razon.trim()&&trainModal.corrected===trainModal.original))?0.4:1}}>
                 🎓 Entrenar
               </button>
             </div>
