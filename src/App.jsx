@@ -9307,4 +9307,183 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
   )
 }
 
-function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) {\n  const [editing, setEditing] = React.useState(false)\n  const [draft, setDraft] = React.useState({...config})\n  const [saving, setSaving] = React.useState(false)\n  const [iframeError, setIframeError] = React.useState(false)\n  const [iframeKey, setIframeKey] = React.useState(0)\n\n  const ROLES = ['admin','agent','partner','operaciones','finanzas']\n\n  const save = async () => {\n    setSaving(true)\n    try {\n      const next = { ...draft }\n      setConfig(next)\n      if (supabase && dbReady) {\n        await supabase.from('crm_settings').upsert({ key: 'marketplace_config', value: next })\n      }\n      setEditing(false)\n      setIframeError(false)\n      setIframeKey(k => k + 1)\n    } catch(e) { alert('Error guardando: ' + e.message) }\n    finally { setSaving(false) }\n  }\n\n  const label = config.label || 'Marketplace'\n\n  return (\n    <div>\n      {/* Header */}\n      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>\n        <div style={{fontSize:28}}>\ud83c\udfea</div>\n        <div style={{flex:1}}>\n          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>{label}</div>\n          {config.url && <div style={{fontSize:11,color:B.mid,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:400}}>{config.url}</div>}\n        </div>\n        {isAdmin && (\n          <button onClick={()=>{setDraft({...config});setEditing(v=>!v)}}\n            style={{...sty.btn,fontSize:12}}>\n            {editing ? '\u2715 Cancelar' : '\u2699\ufe0f Configurar'}\n          </button>\n        )}\n      </div>\n\n      {/* Admin config panel */}\n      {isAdmin && editing && (\n        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'20px',marginBottom:16}}>\n          <div style={{fontSize:13,fontWeight:700,color:B.primary,marginBottom:14}}>\u2699\ufe0f Configuraci\u00f3n del Marketplace</div>\n\n          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>\n            <div>\n              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>URL del marketplace</label>\n              <input value={draft.url||''} onChange={e=>setDraft(p=>({...p,url:e.target.value}))}\n                placeholder=\"https://app.tumarketplace.com\"\n                style={{...sty.inp,fontSize:12}}/>\n              <div style={{fontSize:10,color:B.mid,marginTop:3}}>El sitio se cargar\u00e1 dentro del CRM via iframe.</div>\n            </div>\n            <div>\n              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Nombre de la pesta\u00f1a</label>\n              <input value={draft.label||''} onChange={e=>setDraft(p=>({...p,label:e.target.value}))}\n                placeholder=\"Marketplace\"\n                style={{...sty.inp,fontSize:12}}/>\n            </div>\n          </div>\n\n          <div style={{marginBottom:16}}>\n            <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:8}}>Roles que pueden ver el marketplace</label>\n            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>\n              {ROLES.map(role => {\n                const active = (draft.allowRoles||[]).includes(role)\n                return (\n                  <button key={role} onClick={()=>{\n                    const arr = draft.allowRoles||[]\n                    setDraft(p=>({...p, allowRoles: active ? arr.filter(r=>r!==role) : [...arr,role]}))\n                  }} style={{fontSize:12,padding:'5px 14px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,\n                    background:active?B.primary:'#f0f4ff',color:active?'#fff':B.mid}}>\n                    {role}\n                  </button>\n                )\n              })}\n            </div>\n          </div>\n\n          <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:16}}>\n            <div style={{display:'flex',alignItems:'center',gap:8}}>\n              <button onClick={()=>setDraft(p=>({...p,enabled:!p.enabled}))}\n                style={{width:40,height:22,borderRadius:11,border:'none',cursor:'pointer',\n                  background:draft.enabled?B.primary:'#d1d5db',position:'relative',transition:'background .2s'}}>\n                <div style={{width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,\n                  left:draft.enabled?20:2,transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>\n              </button>\n              <span style={{fontSize:12,fontWeight:600,color:'#374151'}}>\n                {draft.enabled ? '\ud83d\udfe2 Pesta\u00f1a visible para usuarios' : '\u26ab Pesta\u00f1a oculta'}\n              </span>\n            </div>\n          </div>\n\n          <div style={{padding:'10px 14px',background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:8,fontSize:11,color:'#92400e',marginBottom:14}}>\n            \u26a0\ufe0f <strong>Importante:</strong> Algunos sitios bloquean cargarse dentro de iframes (X-Frame-Options). Si el marketplace muestra un error, contacta al soporte del marketplace para que habiliten el acceso por iframe, o usa una URL alternativa que lo permita.\n          </div>\n\n          <div style={{display:'flex',gap:8}}>\n            <button onClick={save} disabled={saving||!draft.url}\n              style={{...sty.btnP,opacity:saving||!draft.url?0.5:1}}>\n              {saving ? 'Guardando...' : '\ud83d\udcbe Guardar configuraci\u00f3n'}\n            </button>\n            {draft.url && (\n              <a href={draft.url} target=\"_blank\" rel=\"noopener noreferrer\"\n                style={{...sty.btn,textDecoration:'none',display:'flex',alignItems:'center',gap:4,fontSize:12}}>\n                \ud83d\udd17 Abrir en nueva pesta\u00f1a\n              </a>\n            )}\n          </div>\n        </div>\n      )}\n\n      {/* Iframe area */}\n      {config.enabled && config.url ? (\n        <div style={{position:'relative',borderRadius:12,overflow:'hidden',border:'1px solid #E2E8F0',background:'#f9fbff'}}>\n          {iframeError && (\n            <div style={{padding:'32px',textAlign:'center',color:'#374151'}}>\n              <div style={{fontSize:40,marginBottom:12}}>\ud83d\udeab</div>\n              <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>Este sitio no permite cargarse en iframe</div>\n              <div style={{fontSize:13,color:B.mid,marginBottom:16}}>El marketplace bloque\u00f3 la carga dentro del CRM. Puedes abrirlo en una pesta\u00f1a nueva.</div>\n              <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>\n                <a href={config.url} target=\"_blank\" rel=\"noopener noreferrer\"\n                  style={{...sty.btnP,textDecoration:'none',display:'inline-flex',alignItems:'center',gap:6}}>\n                  \ud83d\udd17 Abrir {label} en nueva pesta\u00f1a\n                </a>\n                {isAdmin && (\n                  <button onClick={()=>{setIframeError(false);setIframeKey(k=>k+1)}} style={sty.btn}>\n                    \ud83d\udd04 Reintentar\n                  </button>\n                )}\n              </div>\n            </div>\n          )}\n          <iframe\n            key={iframeKey}\n            src={config.url}\n            title={label}\n            onError={() => setIframeError(true)}\n            onLoad={e => {\n              // Try to detect X-Frame-Options block\n              try {\n                const doc = e.target.contentDocument\n                if (!doc || doc.URL === 'about:blank') setIframeError(true)\n              } catch(_) {\n                // Cross-origin \u2014 can't read, but likely loaded OK\n              }\n            }}\n            style={{\n              width: '100%',\n              height: 'calc(100vh - 180px)',\n              border: 'none',\n              display: iframeError ? 'none' : 'block'\n            }}\n            allow=\"fullscreen; payment; clipboard-read; clipboard-write\"\n            sandbox=\"allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation\"\n          />\n        </div>\n      ) : !isAdmin ? (\n        <div style={{textAlign:'center',padding:'60px 20px',color:B.mid}}>\n          <div style={{fontSize:48,marginBottom:12}}>\ud83c\udfea</div>\n          <div style={{fontSize:15,fontWeight:600,marginBottom:8}}>Marketplace no disponible</div>\n          <div style={{fontSize:13}}>El administrador a\u00fan no ha configurado el marketplace.</div>\n        </div>\n      ) : !editing && (\n        <div style={{textAlign:'center',padding:'60px 20px',color:B.mid,background:'#f9fbff',borderRadius:12,border:'2px dashed #dce8ff'}}>\n          <div style={{fontSize:48,marginBottom:12}}>\ud83c\udfea</div>\n          <div style={{fontSize:15,fontWeight:700,color:B.primary,marginBottom:8}}>Configura tu Marketplace</div>\n          <div style={{fontSize:13,marginBottom:20}}>Pega la URL del marketplace y elige qu\u00e9 roles pueden verlo.</div>\n          <button onClick={()=>{setDraft({...config});setEditing(true)}} style={sty.btnP}>\n            \u2699\ufe0f Configurar ahora\n          </button>\n        </div>\n      )}\n    </div>\n  )\n}\n
+function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) {
+  const [editing, setEditing] = React.useState(false)
+  const [draft, setDraft] = React.useState({...config})
+  const [saving, setSaving] = React.useState(false)
+  const [iframeError, setIframeError] = React.useState(false)
+  const [iframeKey, setIframeKey] = React.useState(0)
+
+  const ROLES = ['admin','agent','partner','operaciones','finanzas']
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const next = { ...draft }
+      setConfig(next)
+      if (supabase && dbReady) {
+        await supabase.from('crm_settings').upsert({ key: 'marketplace_config', value: next })
+      }
+      setEditing(false)
+      setIframeError(false)
+      setIframeKey(k => k + 1)
+    } catch(e) { alert('Error guardando: ' + e.message) }
+    finally { setSaving(false) }
+  }
+
+  const label = config.label || 'Marketplace'
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
+        <div style={{fontSize:28}}>🏪</div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>{label}</div>
+          {config.url && <div style={{fontSize:11,color:B.mid,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:400}}>{config.url}</div>}
+        </div>
+        {isAdmin && (
+          <button onClick={()=>{setDraft({...config});setEditing(v=>!v)}}
+            style={{...sty.btn,fontSize:12}}>
+            {editing ? '✕ Cancelar' : '⚙️ Configurar'}
+          </button>
+        )}
+      </div>
+
+      {/* Admin config panel */}
+      {isAdmin && editing && (
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'20px',marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:B.primary,marginBottom:14}}>⚙️ Configuración del Marketplace</div>
+
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+            <div>
+              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>URL del marketplace</label>
+              <input value={draft.url||''} onChange={e=>setDraft(p=>({...p,url:e.target.value}))}
+                placeholder=\"https://app.tumarketplace.com\"
+                style={{...sty.inp,fontSize:12}}/>
+              <div style={{fontSize:10,color:B.mid,marginTop:3}}>El sitio se cargar\u00e1 dentro del CRM via iframe.</div>
+            </div>
+            <div>
+              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Nombre de la pestaña</label>
+              <input value={draft.label||''} onChange={e=>setDraft(p=>({...p,label:e.target.value}))}
+                placeholder=\"Marketplace\"
+                style={{...sty.inp,fontSize:12}}/>
+            </div>
+          </div>
+
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:8}}>Roles que pueden ver el marketplace</label>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {ROLES.map(role => {
+                const active = (draft.allowRoles||[]).includes(role)
+                return (
+                  <button key={role} onClick={()=>{
+                    const arr = draft.allowRoles||[]
+                    setDraft(p=>({...p, allowRoles: active ? arr.filter(r=>r!==role) : [...arr,role]}))
+                  }} style={{fontSize:12,padding:'5px 14px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,
+                    background:active?B.primary:'#f0f4ff',color:active?'#fff':B.mid}}>
+                    {role}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:16}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <button onClick={()=>setDraft(p=>({...p,enabled:!p.enabled}))}
+                style={{width:40,height:22,borderRadius:11,border:'none',cursor:'pointer',
+                  background:draft.enabled?B.primary:'#d1d5db',position:'relative',transition:'background .2s'}}>
+                <div style={{width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,
+                  left:draft.enabled?20:2,transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+              </button>
+              <span style={{fontSize:12,fontWeight:600,color:'#374151'}}>
+                {draft.enabled ? '\ud83d\udfe2 Pestaña visible para usuarios' : '\u26ab Pestaña oculta'}
+              </span>
+            </div>
+          </div>
+
+          <div style={{padding:'10px 14px',background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:8,fontSize:11,color:'#92400e',marginBottom:14}}>
+            \u26a0\ufe0f <strong>Importante:</strong> Algunos sitios bloquean cargarse dentro de iframes (X-Frame-Options). Si el marketplace muestra un error, contacta al soporte del marketplace para que habiliten el acceso por iframe, o usa una URL alternativa que lo permita.
+          </div>
+
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={save} disabled={saving||!draft.url}
+              style={{...sty.btnP,opacity:saving||!draft.url?0.5:1}}>
+              {saving ? 'Guardando...' : '\ud83d\udcbe Guardar configuración'}
+            </button>
+            {draft.url && (
+              <a href={draft.url} target=\"_blank\" rel=\"noopener noreferrer\"
+                style={{...sty.btn,textDecoration:'none',display:'flex',alignItems:'center',gap:4,fontSize:12}}>
+                \ud83d\udd17 Abrir en nueva pestaña
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Iframe area */}
+      {config.enabled && config.url ? (
+        <div style={{position:'relative',borderRadius:12,overflow:'hidden',border:'1px solid #E2E8F0',background:'#f9fbff'}}>
+          {iframeError && (
+            <div style={{padding:'32px',textAlign:'center',color:'#374151'}}>
+              <div style={{fontSize:40,marginBottom:12}}>\ud83d\udeab</div>
+              <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>Este sitio no permite cargarse en iframe</div>
+              <div style={{fontSize:13,color:B.mid,marginBottom:16}}>El marketplace bloqueó la carga dentro del CRM. Puedes abrirlo en una pestaña nueva.</div>
+              <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
+                <a href={config.url} target=\"_blank\" rel=\"noopener noreferrer\"
+                  style={{...sty.btnP,textDecoration:'none',display:'inline-flex',alignItems:'center',gap:6}}>
+                  \ud83d\udd17 Abrir {label} en nueva pestaña
+                </a>
+                {isAdmin && (
+                  <button onClick={()=>{setIframeError(false);setIframeKey(k=>k+1)}} style={sty.btn}>
+                    \ud83d\udd04 Reintentar
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          <iframe
+            key={iframeKey}
+            src={config.url}
+            title={label}
+            onError={() => setIframeError(true)}
+            onLoad={e => {
+              // Try to detect X-Frame-Options block
+              try {
+                const doc = e.target.contentDocument
+                if (!doc || doc.URL === 'about:blank') setIframeError(true)
+              } catch(_) {
+                // Cross-origin \u2014 can't read, but likely loaded OK
+              }
+            }}
+            style={{
+              width: '100%',
+              height: 'calc(100vh - 180px)',
+              border: 'none',
+              display: iframeError ? 'none' : 'block'
+            }}
+            allow=\"fullscreen; payment; clipboard-read; clipboard-write\"
+            sandbox=\"allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation\"
+          />
+        </div>
+      ) : !isAdmin ? (
+        <div style={{textAlign:'center',padding:'60px 20px',color:B.mid}}>
+          <div style={{fontSize:48,marginBottom:12}}>🏪</div>
+          <div style={{fontSize:15,fontWeight:600,marginBottom:8}}>Marketplace no disponible</div>
+          <div style={{fontSize:13}}>El administrador a\u00fan no ha configurado el marketplace.</div>
+        </div>
+      ) : !editing && (
+        <div style={{textAlign:'center',padding:'60px 20px',color:B.mid,background:'#f9fbff',borderRadius:12,border:'2px dashed #dce8ff'}}>
+          <div style={{fontSize:48,marginBottom:12}}>🏪</div>
+          <div style={{fontSize:15,fontWeight:700,color:B.primary,marginBottom:8}}>Configura tu Marketplace</div>
+          <div style={{fontSize:13,marginBottom:20}}>Pega la URL del marketplace y elige qu\u00e9 roles pueden verlo.</div>
+          <button onClick={()=>{setDraft({...config});setEditing(true)}} style={sty.btnP}>
+            ⚙️ Configurar ahora
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
