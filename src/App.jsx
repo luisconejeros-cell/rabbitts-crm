@@ -5802,9 +5802,37 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   const sendMessage = async () => {
     if (!newMsg.trim()||!activeConv||sending) return
     setSending(true)
-    const msg = {role:'assistant', content:newMsg.trim(), created_at:new Date().toISOString(), manual:true}
+    const msgText = newMsg.trim()
+    const msg = {role:'assistant', content:msgText, created_at:new Date().toISOString(), manual:true}
+
+    // 1. Guardar en Supabase
     await saveConvMessage(activeConv.id, msg)
-    await upsertConversation({...activeConv, last_message:newMsg.trim(), updated_at:new Date().toISOString()})
+    await upsertConversation({...activeConv, last_message:msgText, updated_at:new Date().toISOString()})
+
+    // 2. Enviar por WhatsApp via Evolution API
+    try {
+      const EVO_URL = 'https://wa.rabbittscapital.com'
+      const EVO_KEY = 'rabbitts2024'
+      // Obtener instanceName: del conv o del primer número conectado
+      let instance = activeConv.instanceName
+      if (!instance) {
+        const { data: numData } = await supabase.from('crm_settings').select('value').eq('key','wa_numeros').single()
+        const nums = numData?.value || []
+        instance = nums.find(n=>n.status==='open')?.instanceName || nums[0]?.instanceName
+      }
+      if (instance) {
+        const phone = activeConv.telefono?.replace(/[^0-9]/g,'') || ''
+        const r = await fetch(`${EVO_URL}/message/sendText/${instance}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
+          body: JSON.stringify({ number: phone, text: msgText, delay: 300 })
+        })
+        console.log('[CRM sendWA]', r.status, instance, phone)
+      } else {
+        console.warn('[CRM sendWA] No hay instancia conectada')
+      }
+    } catch(e) { console.error('[CRM sendWA] error:', e.message) }
+
     setNewMsg('')
     setSending(false)
   }
