@@ -4589,12 +4589,12 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
             setNewName('')
             setShowForm(false)
             setConnecting(false)
-            setStatusMsg({type:'success', text:`✅ ${newNum.nombre} conectado correctamente`})
-            // Configurar webhook
+            // Configurar webhook AUTOMÁTICAMENTE al conectar
             await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
               method: 'POST', headers: evoHeaders,
-              body: JSON.stringify({ url: WEBHOOK_URL, enabled: true, webhookByEvents: false, events: ['MESSAGES_UPSERT'] })
+              body: JSON.stringify({ url: WEBHOOK_URL, enabled: true, webhookByEvents: false, events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'] })
             })
+            setStatusMsg({type:'success', text:`✅ ${newNum.nombre} conectado y webhook configurado automáticamente`})
           }
         } catch(_) {}
       }, 3000)
@@ -4692,27 +4692,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
                 style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',color:B.primary,fontWeight:600}}>
                 {testing===num.id?'...':'Probar'}
               </button>
-              <button onClick={async ()=>{
-                try {
-                  setStatusMsg({type:'loading', text:'Reparando webhook...'})
-                  const r = await fetch(`${EVO_URL}/webhook/set/${num.instanceName}`, {
-                    method: 'POST', headers: evoHeaders,
-                    body: JSON.stringify({
-                      url: WEBHOOK_URL,
-                      enabled: true,
-                      webhookByEvents: false,
-                      events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'MESSAGES_UPDATE']
-                    })
-                  })
-                  const d = await r.json()
-                  console.log('webhook set:', d)
-                  setStatusMsg({type:'success', text:`✅ Webhook reparado para ${num.nombre}. Prueba mandando un WhatsApp ahora.`})
-                } catch(e) {
-                  setStatusMsg({type:'error', text:'Error: ' + e.message})
-                }
-              }} style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #f59e0b',background:'#FFF7ED',color:'#92400e',cursor:'pointer',fontWeight:600}}>
-                🔧 Reparar webhook
-              </button>
+
               <button onClick={()=>eliminarNumero(num)}
                 style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>✕</button>
             </div>
