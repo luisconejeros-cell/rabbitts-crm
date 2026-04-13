@@ -3263,6 +3263,7 @@ export default function App() {
             dbReady={dbReady}
             me={me}
             setConversations={setConversations}
+            setIaConfig={setIaConfig}
           />
         )}
 
@@ -5438,8 +5439,15 @@ function RabitoChat({iaConfig}) {
 }
 
 // ─── Conversaciones View ─────────────────────────────────────────────────────
-function ConversacionesView({conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, users, leads, setLeads, supabase, dbReady, me, setConversations}) {
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+function ConversacionesView({conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, setIaConfig, users, leads, setLeads, supabase, dbReady, me, setConversations}) {
+  const [winWidth, setWinWidth] = React.useState(typeof window !== 'undefined' ? window.innerWidth : 1200)
+  React.useEffect(() => {
+    const handle = () => setWinWidth(window.innerWidth)
+    window.addEventListener('resize', handle)
+    return () => window.removeEventListener('resize', handle)
+  }, [])
+  const isMobile = winWidth < 480   // solo teléfonos ocultan el panel izquierdo
+  const isNarrow = winWidth < 768   // tablets usan panel izquierdo más angosto
   const [tab, setTab] = useState('bandeja')       // bandeja | masivo
   const [newMsg, setNewMsg] = useState('')
   const [sending, setSending] = useState(false)
@@ -5452,6 +5460,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   const [masivo, setMasivo] = useState({msg:'', plantilla:'asignacion'})
   const [masivoSending, setMasivoSending] = useState(false)
   const [masivoResult, setMasivoResult] = useState(null)
+  const [trainModal, setTrainModal] = useState(null) // {original, corrected, razon, msgIdx}
   const [masivoTarget, setMasivoTarget] = useState('leads')
   const [selectedUsers, setSelectedUsers] = useState([])
 
@@ -5552,7 +5561,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     setSending(false)
   }
 
-  const sendFeedback = async (msgIdx, feedback, correction='') => {
+  const sendFeedback = async (msgIdx, feedback, correction='', razon='') => {
     if (!activeConv) return
     const msgs = convMessages[activeConv.id]||[]
     const msg = msgs[msgIdx]
@@ -5563,11 +5572,17 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
         conv_id: activeConv.id, msg_idx: msgIdx, msg_content: msg.content,
         feedback, correction, created_at: new Date().toISOString()
       })
-      // Update iaConfig entrenamiento if correction provided
+      // Save to iaConfig entrenamiento if correction provided
       if (correction && feedback==='correccion') {
-        // This would update the training data
+        // Build pregunta from previous user message as context
+        const prevUser = [...msgs].slice(0, msgIdx).reverse().find(m=>m.role==='user')
+        const pregunta = prevUser ? prevUser.content : msg.content
+        const nuevoPar = { pregunta, respuesta: correction, razon, fecha: new Date().toISOString() }
+        const entActual = iaConfig.entrenamiento || []
+        setIaConfig(prev => ({ ...prev, entrenamiento: [...entActual, nuevoPar] }))
+        alert('✅ ¡Entrenamiento guardado! Rabito aprenderá de esta corrección.')
       }
-    } catch(e) {}
+    } catch(e) { console.warn('feedback error', e) }
   }
 
   const createLead = async () => {
@@ -5639,7 +5654,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
       {/* TAB: BANDEJA */}
       {tab==='bandeja' && (
-        <div style={{display:'grid',gridTemplateColumns:isMobile?(activeConv?'0 1fr':'1fr 0'):'320px 1fr',gap:0,height:isMobile?'calc(100vh - 120px)':'calc(100vh - 200px)',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?(activeConv?'0 1fr':'1fr 0'):isNarrow?'240px 1fr':'320px 1fr',gap:0,height:isMobile?'calc(100vh - 120px)':'calc(100vh - 200px)',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
           {/* Left: conversation list */}
           <div style={{borderRight:'1px solid #dce8ff',display:'flex',flexDirection:'column',background:'#fff'}}>
             {/* Filters */}
@@ -5740,10 +5755,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                           <>
                             <button onClick={()=>sendFeedback(i,'bueno')} title="Buena respuesta"
                               style={{background:'none',border:'none',cursor:'pointer',fontSize:11,padding:'1px 4px',borderRadius:4,color:'#9ca3af'}}>👍</button>
-                            <button onClick={()=>{
-                              const cor = prompt('Escribe la respuesta correcta:')
-                              if (cor) sendFeedback(i,'correccion',cor)
-                            }} title="Corregir respuesta"
+                            <button onClick={()=>setTrainModal({msgIdx:i, original:m.content, corrected:m.content, razon:''})} title="Sugerir mejora"
                               style={{background:'none',border:'none',cursor:'pointer',fontSize:11,padding:'1px 4px',borderRadius:4,color:'#9ca3af'}}>✏️</button>
                           </>
                         )}
@@ -5946,6 +5958,71 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
             </button>
             <div style={{marginTop:10,padding:'8px 12px',background:'#FFF7ED',borderRadius:8,fontSize:11,color:'#92400e'}}>
               💡 Cuando conectes WhatsApp, el primer mensaje se enviará automáticamente usando la plantilla de mensaje inicial configurada en la pestaña IA.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Sugerir mensaje / Entrenar Rabito ─────────────────────── */}
+      {trainModal && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.45)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'0 16px'}}>
+          <div style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:'100%',maxWidth:780,maxHeight:'90vh',overflowY:'auto',boxShadow:'0 8px 40px rgba(0,0,0,0.18)',border:'1px solid #E2E8F0'}}>
+            {/* Header */}
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+              <div>
+                <div style={{fontSize:20,fontWeight:800,color:'#0F172A',marginBottom:4}}>✏️ Sugerir un mensaje</div>
+                <div style={{fontSize:13,color:'#6b7280'}}>Corrige la respuesta de Rabito para mejorar su entrenamiento.</div>
+              </div>
+              <button onClick={()=>setTrainModal(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#9ca3af',lineHeight:1,padding:'0 4px'}}>×</button>
+            </div>
+
+            {/* Two columns */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,marginBottom:20}}>
+              {/* Left: original */}
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:'#374151',marginBottom:8}}>Mensaje a mejorar</div>
+                <div style={{padding:'12px 14px',background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:10,fontSize:13,color:'#374151',lineHeight:1.6,minHeight:160,whiteSpace:'pre-wrap'}}>
+                  {trainModal.original}
+                </div>
+              </div>
+              {/* Right: editable corrected */}
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:'#374151',marginBottom:8}}>Mensaje mejorado</div>
+                <textarea
+                  value={trainModal.corrected}
+                  onChange={e=>setTrainModal(p=>({...p,corrected:e.target.value}))}
+                  style={{...sty.inp,width:'100%',minHeight:160,resize:'vertical',fontSize:13,lineHeight:1.6,boxSizing:'border-box'}}
+                />
+              </div>
+            </div>
+
+            {/* Explanation */}
+            <div style={{marginBottom:24}}>
+              <div style={{fontSize:12,fontWeight:700,color:'#374151',marginBottom:8}}>Explicación de por qué el mensaje es incorrecto</div>
+              <textarea
+                value={trainModal.razon}
+                onChange={e=>setTrainModal(p=>({...p,razon:e.target.value}))}
+                placeholder="Ej: Debería pedir la renta antes de proponer proyectos. El tono es demasiado largo."
+                style={{...sty.inp,width:'100%',minHeight:80,resize:'vertical',fontSize:12,boxSizing:'border-box'}}
+              />
+            </div>
+
+            {/* Actions */}
+            <div style={{display:'flex',gap:12,justifyContent:'flex-end'}}>
+              <button onClick={()=>setTrainModal(null)}
+                style={{padding:'10px 20px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',color:'#374151',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+                Cancelar
+              </button>
+              <button
+                disabled={!trainModal.corrected.trim()||trainModal.corrected===trainModal.original}
+                onClick={async ()=>{
+                  await sendFeedback(trainModal.msgIdx,'correccion',trainModal.corrected,trainModal.razon)
+                  setTrainModal(null)
+                }}
+                style={{padding:'10px 24px',borderRadius:8,border:'none',background:B.primary,color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',
+                  opacity:(!trainModal.corrected.trim()||trainModal.corrected===trainModal.original)?0.4:1}}>
+                🎓 Entrenar
+              </button>
             </div>
           </div>
         </div>
