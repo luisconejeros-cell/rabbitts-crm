@@ -9,7 +9,42 @@ export default async function handler(req, res) {
   const ANTHROPIC_KEY = process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_KEY
   if (!ANTHROPIC_KEY) return res.status(500).json({ error: 'VITE_ANTHROPIC_KEY no configurada en Vercel' })
 
-  const { message, conversationHistory = [], iaConfig = {}, leadData = {} } = req.body
+  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, action, file, mediaType, fileName } = req.body
+
+  // ── Extracción de documentos (PDF/Word) ─────────────────────────────────
+  if (action === 'extract' && file) {
+    try {
+      const extractRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'pdfs-2024-09-25'
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 4096,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'document', source: { type: 'base64', media_type: mediaType, data: file } },
+              { type: 'text', text: 'Extrae y devuelve TODO el texto de este documento exactamente como aparece, sin resúmenes ni comentarios. Solo el texto completo.' }
+            ]
+          }]
+        })
+      })
+      const extractData = await extractRes.json()
+      if (!extractRes.ok || extractData.error) throw new Error(extractData?.error?.message || 'Error extrayendo')
+      const text = extractData.content?.[0]?.text || ''
+      console.log('[Agent] Extracted', text.length, 'chars from', fileName)
+      return res.status(200).json({ text })
+    } catch(e) {
+      console.error('[Agent] Extract error:', e.message)
+      return res.status(200).json({ error: e.message, text: '' })
+    }
+  }
+
   if (!message) return res.status(400).json({ error: 'No message' })
 
   // ── Configuración desde CRM ───────────────────────────────────────────────
