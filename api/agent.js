@@ -8,17 +8,12 @@ export default async function handler(req, res) {
 
   const ANTHROPIC_KEY = process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_KEY
   if (!ANTHROPIC_KEY) {
-    return res.status(500).json({
-      error: 'API key no configurada. Ve a Vercel → Settings → Environment Variables → agrega VITE_ANTHROPIC_KEY'
-    })
+    return res.status(500).json({ error: 'API key no configurada. Agrega VITE_ANTHROPIC_KEY en Vercel.' })
   }
 
   const SUPABASE_URL = process.env.VITE_SUPABASE_URL
   const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY
-  const sbHeaders = {
-    'apikey': SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`
-  }
+  const sbHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
 
   const { message, conversationHistory = [], iaConfig = {}, leadData = {} } = req.body
   if (!message) return res.status(400).json({ error: 'No message provided' })
@@ -30,15 +25,15 @@ export default async function handler(req, res) {
   const rentaMin       = iaConfig.rentaMinima || 1500000
   const rentaMinPareja = iaConfig.rentaMinimaPareja || 2000000
 
-  // 2. Entrenamiento con razon
+  // 2. Entrenamiento con razón
   const entrenamiento = (iaConfig.entrenamiento || [])
     .map(p => {
-      let entry = `PREGUNTA: ${p.pregunta}\nRESPUESTA CORRECTA: ${p.respuesta}`
-      if (p.razon) entry += `\nPOR QUE: ${p.razon}`
-      return entry
+      let e = `PREGUNTA: ${p.pregunta}\nRESPUESTA CORRECTA: ${p.respuesta}`
+      if (p.razon) e += `\nPOR QUE: ${p.razon}`
+      return e
     }).join('\n\n---\n\n')
 
-  // 3. Drive - contenido REAL desde Supabase
+  // 3. Drive — contenido REAL desde Supabase
   let driveContext = ''
   if (iaConfig.driveConectado && SUPABASE_URL && SUPABASE_KEY) {
     try {
@@ -52,13 +47,11 @@ export default async function handler(req, res) {
         const syncedAt = driveInfo.synced_at ? new Date(driveInfo.synced_at).toLocaleString('es-CL') : 'desconocida'
         driveContext = `\n\nBASE DE CONOCIMIENTO (sincronizado: ${syncedAt}):\n` +
           driveInfo.files.map(f => `### ${f.name}\n${f.content}`).join('\n\n---\n\n')
-      } else {
-        driveContext = '\n\n[Drive conectado pero sin documentos sincronizados. Ir a IA > Drive > Sincronizar.]'
       }
     } catch (e) { console.warn('Drive fetch error:', e.message) }
   }
 
-  // 4. System prompt completo
+  // 4. System prompt
   const systemPrompt = `${personalidad}
 
 GUION DE VENTAS:
@@ -68,9 +61,7 @@ LINK CALENDLY: ${calendly}
 RENTA MINIMA INDIVIDUAL: $${rentaMin.toLocaleString('es-CL')}
 RENTA MINIMA EN PAREJA: $${rentaMinPareja.toLocaleString('es-CL')}
 ${driveContext}
-
-${entrenamiento ? `EJEMPLOS DE ENTRENAMIENTO (sigue estos patrones exactamente):
-${entrenamiento}` : ''}
+${entrenamiento ? `\nEJEMPLOS DE ENTRENAMIENTO (sigue estos patrones exactamente):\n${entrenamiento}` : ''}
 
 CONTEXTO DEL LEAD:
 ${leadData.nombre ? 'Nombre: ' + leadData.nombre : 'Lead nuevo'}
@@ -87,7 +78,10 @@ Al final de tu respuesta incluye si aplica:
     { role: 'user', content: message }
   ]
 
-  try {
+  // 5. Llamar a Claude con retry automático ante overload (529) o rate limit (529/529)
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+  const callClaude = async (attempt = 1) => {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -96,21 +90,42 @@ Al final de tu respuesta incluye si aplica:
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1500,
+        model: 'claude-haiku-4-5-20251001',  // Haiku: más rápido y menos propenso a overload
+        max_tokens: 1024,
         system: systemPrompt,
         messages
       })
     })
-    const data = await response.json()
-    if (data.error) throw new Error(data.error.message)
 
+    const data = await response.json()
+
+    // Overloaded o rate limit → retry con backoff
+    if (response.status === 529 || data?.error?.type === 'overloaded_error') {
+      if (attempt <= 3) {
+        const wait = attempt * 3000  // 3s, 6s, 9s
+        console.warn(`[Agent] Overloaded (attempt ${attempt}), retrying in ${wait}ms...`)
+        await sleep(wait)
+        return callClaude(attempt + 1)
+      }
+      throw new Error('Servicio temporalmente saturado. Intenta en unos segundos.')
+    }
+
+    if (!response.ok || data.error) {
+      throw new Error(data?.error?.message || `HTTP ${response.status}`)
+    }
+
+    return data
+  }
+
+  try {
+    const data = await callClaude()
     let reply = data.content?.[0]?.text || ''
     let action = null
     let leadUpdate = {}
 
     const am = reply.match(/\[ACCION:\s*([^\]]+)\]/)
     if (am) { action = am[1].trim(); reply = reply.replace(am[0], '').trim() }
+
     const dm = reply.match(/\[DATOS:\s*([^\]]+)\]/)
     if (dm) {
       dm[1].split(',').forEach(pair => {
@@ -119,9 +134,17 @@ Al final de tu respuesta incluye si aplica:
       })
       reply = reply.replace(dm[0], '').trim()
     }
+
     return res.status(200).json({ reply, action, leadUpdate })
+
   } catch (error) {
-    console.error('Agent error:', error.message)
-    return res.status(500).json({ error: error.message })
+    console.error('[Agent] Final error:', error.message)
+    return res.status(200).json({
+      error: error.message,
+      // Respuesta de fallback que llega al cliente por WhatsApp
+      reply: 'Hola, en este momento tengo alta demanda de consultas. Te respondo en unos minutos 🙏',
+      action: null,
+      leadUpdate: {}
+    })
   }
 }
