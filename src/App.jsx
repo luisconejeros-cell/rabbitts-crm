@@ -517,10 +517,11 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [installPrompt, setInstallPrompt] = useState(null)
   const [showInstallBanner, setShowInstallBanner] = useState(false)
-  const [gcalModal, setGcalModal] = useState(null)   // lead to schedule meeting for
+  const [gcalModal, setGcalModal] = useState(null)
   const [gcalForm, setGcalForm] = useState({fecha:'', hora:'09:00', duracion:60, notas:''})
   const [gcalLoading, setGcalLoading] = useState(false)
   const [gcalResult, setGcalResult] = useState(null)
+  const [marketplaceConfig, setMarketplaceConfig] = useState({ url: '', enabled: false, label: 'Marketplace', allowRoles: ['admin','agent','partner','operaciones','finanzas'] })
   // Responsive helper
   const R = (desktop, mobile) => isMobile ? mobile : desktop
   const [nav,    setNav]    = useState('kanban')
@@ -830,6 +831,11 @@ export default function App() {
       try {
         const { data: ia } = await supabase.from('crm_settings').select('value').eq('key','ia_config').single()
         if (ia?.value) setIaConfig(prev => ({...prev, ...ia.value}))
+      } catch(_) {}
+      // Load marketplace config
+      try {
+        const { data: mp } = await supabase.from('crm_settings').select('value').eq('key','marketplace_config').single()
+        if (mp?.value) setMarketplaceConfig(prev => ({...prev, ...mp.value}))
       } catch(_) {}
       // Load agendaSettings
       try {
@@ -1531,11 +1537,12 @@ export default function App() {
     : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
     : leads.filter(l => l.assigned_to===me.id)
 
-  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','ia','conversaciones','agenda','etapas','importar','extraer']
-            : isPartner  ? ['dashboard','pool']
-            : isOps      ? ['kanban','lista']
-            : isFinanzas ? ['dashboard_finanzas','comisiones']
-            : ['kanban','lista','mis comisiones','mi agenda','nuevo lead']
+  const mpVisible = marketplaceConfig.enabled && marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role)
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','ia','conversaciones','agenda','etapas','importar','extraer', ...(mpVisible?['marketplace']:[]) ]
+            : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
+            : isOps      ? ['kanban','lista',                                                                                                            ...(mpVisible?['marketplace']:[]) ]
+            : isFinanzas ? ['dashboard_finanzas','comisiones',                                                                                           ...(mpVisible?['marketplace']:[]) ]
+            :              ['kanban','lista','mis comisiones','mi agenda','nuevo lead',                                                                   ...(mpVisible?['marketplace']:[]) ]
 
   // ── AGENDA PÚBLICA — no requiere login ─────────────────────────────────────
   if (typeof window !== 'undefined' && window.location.pathname === '/agenda') {
@@ -1832,7 +1839,7 @@ export default function App() {
               </div>
             </div>
             {NAV.map(n => {
-              const icons = {dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬','mis comisiones':'💵','nuevo lead':'➕',etapas:'⚙️',importar:'📥',extraer:'🧠',dashboard_finanzas:'📊',comisiones:'💰',pool:'🌐'}
+              const icons = {dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬','mis comisiones':'💵','nuevo lead':'➕',etapas:'⚙️',importar:'📥',extraer:'🧠',dashboard_finanzas:'📊',comisiones:'💰',pool:'🌐',marketplace:'🏪'}
               return (
                 <button key={n} onClick={()=>{setNav(n);setMobileMenuOpen(false)}}
                   style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:10,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#374151',fontWeight:nav===n?700:400,fontSize:14,textAlign:'left',width:'100%'}}>
@@ -3247,6 +3254,18 @@ export default function App() {
         {/* IA CONFIG */}
         {nav==='ia' && isAdmin && (
           <IAConfigView iaConfig={iaConfig} setIaConfig={setIaConfig} users={users} leads={leads} supabase={supabase} dbReady={dbReady}/>
+        )}
+
+        {/* MARKETPLACE */}
+        {nav==='marketplace' && (
+          <MarketplaceView
+            config={marketplaceConfig}
+            setConfig={setMarketplaceConfig}
+            isAdmin={isAdmin}
+            supabase={supabase}
+            dbReady={dbReady}
+            me={me}
+          />
         )}
 
         {/* CONVERSACIONES */}
@@ -6807,6 +6826,187 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
           </div>
         )
       })()}
+    </div>
+  )
+}
+
+// ─── Marketplace View ────────────────────────────────────────────────────────
+function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) {
+  const [editing, setEditing] = React.useState(false)
+  const [draft, setDraft] = React.useState({...config})
+  const [saving, setSaving] = React.useState(false)
+  const [iframeError, setIframeError] = React.useState(false)
+  const [iframeKey, setIframeKey] = React.useState(0)
+
+  const ROLES = ['admin','agent','partner','operaciones','finanzas']
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const next = { ...draft }
+      setConfig(next)
+      if (supabase && dbReady) {
+        await supabase.from('crm_settings').upsert({ key: 'marketplace_config', value: next })
+      }
+      setEditing(false)
+      setIframeError(false)
+      setIframeKey(k => k + 1)
+    } catch(e) { alert('Error guardando: ' + e.message) }
+    finally { setSaving(false) }
+  }
+
+  const label = config.label || 'Marketplace'
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
+        <div style={{fontSize:28}}>🏪</div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>{label}</div>
+          {config.url && <div style={{fontSize:11,color:B.mid,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:400}}>{config.url}</div>}
+        </div>
+        {isAdmin && (
+          <button onClick={()=>{setDraft({...config});setEditing(v=>!v)}}
+            style={{...sty.btn,fontSize:12}}>
+            {editing ? '✕ Cancelar' : '⚙️ Configurar'}
+          </button>
+        )}
+      </div>
+
+      {/* Admin config panel */}
+      {isAdmin && editing && (
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'20px',marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:B.primary,marginBottom:14}}>⚙️ Configuración del Marketplace</div>
+
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+            <div>
+              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>URL del marketplace</label>
+              <input value={draft.url||''} onChange={e=>setDraft(p=>({...p,url:e.target.value}))}
+                placeholder="https://app.tumarketplace.com"
+                style={{...sty.inp,fontSize:12}}/>
+              <div style={{fontSize:10,color:B.mid,marginTop:3}}>El sitio se cargará dentro del CRM via iframe.</div>
+            </div>
+            <div>
+              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Nombre de la pestaña</label>
+              <input value={draft.label||''} onChange={e=>setDraft(p=>({...p,label:e.target.value}))}
+                placeholder="Marketplace"
+                style={{...sty.inp,fontSize:12}}/>
+            </div>
+          </div>
+
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:8}}>Roles que pueden ver el marketplace</label>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {ROLES.map(role => {
+                const active = (draft.allowRoles||[]).includes(role)
+                return (
+                  <button key={role} onClick={()=>{
+                    const arr = draft.allowRoles||[]
+                    setDraft(p=>({...p, allowRoles: active ? arr.filter(r=>r!==role) : [...arr,role]}))
+                  }} style={{fontSize:12,padding:'5px 14px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,
+                    background:active?B.primary:'#f0f4ff',color:active?'#fff':B.mid}}>
+                    {role}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:16}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <button onClick={()=>setDraft(p=>({...p,enabled:!p.enabled}))}
+                style={{width:40,height:22,borderRadius:11,border:'none',cursor:'pointer',
+                  background:draft.enabled?B.primary:'#d1d5db',position:'relative',transition:'background .2s'}}>
+                <div style={{width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,
+                  left:draft.enabled?20:2,transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+              </button>
+              <span style={{fontSize:12,fontWeight:600,color:'#374151'}}>
+                {draft.enabled ? '🟢 Pestaña visible para usuarios' : '⚫ Pestaña oculta'}
+              </span>
+            </div>
+          </div>
+
+          <div style={{padding:'10px 14px',background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:8,fontSize:11,color:'#92400e',marginBottom:14}}>
+            ⚠️ <strong>Importante:</strong> Algunos sitios bloquean cargarse dentro de iframes (X-Frame-Options). Si el marketplace muestra un error, contacta al soporte del marketplace para que habiliten el acceso por iframe, o usa una URL alternativa que lo permita.
+          </div>
+
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={save} disabled={saving||!draft.url}
+              style={{...sty.btnP,opacity:saving||!draft.url?0.5:1}}>
+              {saving ? 'Guardando...' : '💾 Guardar configuración'}
+            </button>
+            {draft.url && (
+              <a href={draft.url} target="_blank" rel="noopener noreferrer"
+                style={{...sty.btn,textDecoration:'none',display:'flex',alignItems:'center',gap:4,fontSize:12}}>
+                🔗 Abrir en nueva pestaña
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Iframe area */}
+      {config.enabled && config.url ? (
+        <div style={{position:'relative',borderRadius:12,overflow:'hidden',border:'1px solid #E2E8F0',background:'#f9fbff'}}>
+          {iframeError && (
+            <div style={{padding:'32px',textAlign:'center',color:'#374151'}}>
+              <div style={{fontSize:40,marginBottom:12}}>🚫</div>
+              <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>Este sitio no permite cargarse en iframe</div>
+              <div style={{fontSize:13,color:B.mid,marginBottom:16}}>El marketplace bloqueó la carga dentro del CRM. Puedes abrirlo en una pestaña nueva.</div>
+              <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
+                <a href={config.url} target="_blank" rel="noopener noreferrer"
+                  style={{...sty.btnP,textDecoration:'none',display:'inline-flex',alignItems:'center',gap:6}}>
+                  🔗 Abrir {label} en nueva pestaña
+                </a>
+                {isAdmin && (
+                  <button onClick={()=>{setIframeError(false);setIframeKey(k=>k+1)}} style={sty.btn}>
+                    🔄 Reintentar
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          <iframe
+            key={iframeKey}
+            src={config.url}
+            title={label}
+            onError={() => setIframeError(true)}
+            onLoad={e => {
+              // Try to detect X-Frame-Options block
+              try {
+                const doc = e.target.contentDocument
+                if (!doc || doc.URL === 'about:blank') setIframeError(true)
+              } catch(_) {
+                // Cross-origin — can't read, but likely loaded OK
+              }
+            }}
+            style={{
+              width: '100%',
+              height: 'calc(100vh - 180px)',
+              border: 'none',
+              display: iframeError ? 'none' : 'block'
+            }}
+            allow="fullscreen; payment; clipboard-read; clipboard-write"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+          />
+        </div>
+      ) : !isAdmin ? (
+        <div style={{textAlign:'center',padding:'60px 20px',color:B.mid}}>
+          <div style={{fontSize:48,marginBottom:12}}>🏪</div>
+          <div style={{fontSize:15,fontWeight:600,marginBottom:8}}>Marketplace no disponible</div>
+          <div style={{fontSize:13}}>El administrador aún no ha configurado el marketplace.</div>
+        </div>
+      ) : !editing && (
+        <div style={{textAlign:'center',padding:'60px 20px',color:B.mid,background:'#f9fbff',borderRadius:12,border:'2px dashed #dce8ff'}}>
+          <div style={{fontSize:48,marginBottom:12}}>🏪</div>
+          <div style={{fontSize:15,fontWeight:700,color:B.primary,marginBottom:8}}>Configura tu Marketplace</div>
+          <div style={{fontSize:13,marginBottom:20}}>Pega la URL del marketplace y elige qué roles pueden verlo.</div>
+          <button onClick={()=>{setDraft({...config});setEditing(true)}} style={sty.btnP}>
+            ⚙️ Configurar ahora
+          </button>
+        </div>
+      )}
     </div>
   )
 }
