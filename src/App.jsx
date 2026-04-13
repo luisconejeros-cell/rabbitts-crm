@@ -4643,11 +4643,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   return (
     <div>
       {/* Info */}
-      <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:12,color:'#0c4a6e',lineHeight:1.7}}>
-        <strong>Conexión via QR (WhatsApp Web)</strong> — igual que Vambe. Escanea con tu celular y listo.<br/>
-        <strong>Servidor:</strong> <code style={{fontSize:11}}>{EVO_URL}</code>
-      </div>
-
+      
       {/* Mensaje de estado */}
       {statusMsg && (
         <div style={{
@@ -4739,24 +4735,6 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
           </div>
         </div>
       )}
-
-      {!showForm && !qrData && (
-        <button onClick={()=>setShowForm(true)}
-          style={{
-            width:'100%', padding:'12px 16px', borderRadius:10, border:'none', cursor:'pointer',
-            background:'linear-gradient(135deg,#25D366,#128C7E)',
-            color:'#fff', fontWeight:700, fontSize:14, marginTop:4,
-            display:'flex', alignItems:'center', justifyContent:'center', gap:10,
-            boxShadow:'0 2px 8px rgba(37,211,102,0.3)'
-          }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-          📲 Conectar número WhatsApp
-        </button>
-      )}
-
-      <div style={{marginTop:10,padding:'8px 12px',background:'#F0FDF4',borderRadius:8,fontSize:11,color:'#14532d'}}>
-        💾 Las conexiones se guardan en Supabase — sin tokens ni configuración manual.
-      </div>
     </div>
   )
 }
@@ -4901,16 +4879,6 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
           </div>
 
           <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
-            {/* Header */}
-            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-              <div style={{flex:1}}>
-                <p style={{margin:0,fontSize:13,fontWeight:700,color:'#0F172A'}}>Meta WhatsApp Cloud API — Multi-número</p>
-                <p style={{margin:0,fontSize:11,color:B.mid}}>Agrega múltiples números. Las credenciales se guardan en Supabase, no en Vercel.</p>
-              </div>
-              <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:'#DCFCE7',color:'#14532d',fontWeight:700,border:'1px solid #86efac',flexShrink:0}}>✅ Oficial Meta</span>
-            </div>
-
             <WhatsAppNumerosPanel iaConfig={iaConfig} upd={upd} supabase={supabase} dbReady={dbReady}/>
           </div>
 
@@ -5040,277 +5008,6 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
             ))}
           </div>
 
-          {/* Google Drive — Base de conocimiento REAL */}
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
-            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6,flexWrap:'wrap'}}>
-              <img src="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" style={{width:24,height:24}} alt="Drive"/>
-              <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>Google Drive — Base de conocimiento</p>
-              {iaConfig.driveConectado && <span style={{fontSize:11,padding:'3px 10px',borderRadius:20,background:'#DCFCE7',color:'#14532d',fontWeight:600}}>✅ Activo · {(iaConfig.driveFiles||[]).length} docs</span>}
-              {/* Mode tabs */}
-              <div style={{marginLeft:'auto',display:'flex',gap:4}}>
-                {['folder','docs'].map(m=>(
-                  <button key={m} onClick={()=>setDriveMode(m)} style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'none',cursor:'pointer',fontWeight:600,
-                    background:driveMode===m?B.primary:'#f0f4ff',color:driveMode===m?'#fff':B.mid}}>
-                    {m==='folder'?'📁 Carpetas':'📄 Docs sueltos'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <p style={{margin:'0 0 12px',fontSize:11,color:B.mid}}>Rabito leerá el contenido real de tus documentos al responder.</p>
-
-            {/* ── MODO CARPETA (Apps Script) ─────────────────────────────── */}
-            {driveMode==='folder' && (
-              <div>
-                {/* Apps Script URL input */}
-                <div style={{marginBottom:10}}>
-                  <div style={{fontSize:12,fontWeight:600,color:'#374151',marginBottom:6}}>
-                    URL de tu Google Apps Script
-                    <button onClick={()=>setShowScriptGuide(v=>!v)} style={{marginLeft:8,fontSize:11,background:'#EEF2FF',border:'none',borderRadius:4,padding:'2px 8px',color:B.primary,cursor:'pointer',fontWeight:600}}>
-                      {showScriptGuide?'▲ Ocultar guía':'▼ Cómo configurar (5 min)'}
-                    </button>
-                  </div>
-                  <input value={iaConfig.driveScriptUrl||''} onChange={e=>upd(['driveScriptUrl'],e.target.value)}
-                    placeholder="https://script.google.com/macros/s/.../exec"
-                    style={{...sty.inp,fontSize:12}}/>
-                </div>
-
-                {/* Setup guide */}
-                {showScriptGuide && (
-                  <div style={{padding:'12px 14px',background:'#F0F9FF',border:'1px solid #BAE6FD',borderRadius:10,marginBottom:12,fontSize:12}}>
-                    <div style={{fontWeight:700,color:'#0369a1',marginBottom:8}}>📋 Configuración en 5 pasos (solo una vez):</div>
-                    <ol style={{margin:0,paddingLeft:20,lineHeight:2,color:'#0F172A'}}>
-                      <li>Abre <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" style={{color:B.primary,fontWeight:600}}>script.google.com</a> → Nuevo proyecto</li>
-                      <li>Borra todo el código y pega el código que está abajo</li>
-                      <li>Clic en <strong>Implementar → Nueva implementación</strong></li>
-                      <li>Tipo: <strong>Aplicación web</strong> · Quién tiene acceso: <strong>Cualquier persona</strong> → Implementar</li>
-                      <li>Copia la URL que aparece y pégala arriba</li>
-                    </ol>
-                    <div style={{marginTop:10,background:'#0F172A',borderRadius:8,padding:'10px 14px',fontFamily:'monospace',fontSize:11,color:'#a5f3fc',lineHeight:1.7,whiteSpace:'pre-wrap',overflowX:'auto'}}>
-{`function doGet(e) {
-  try {
-    var folderId = e.parameter.folderId;
-    var folder = DriveApp.getFolderById(folderId);
-    var results = [];
-    processFolder(folder, results);
-    return ContentService
-      .createTextOutput(JSON.stringify({ok:true, files:results, folder:folder.getName()}))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch(err) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ok:false, error:err.message}))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-function processFolder(folder, results) {
-  var files = folder.getFiles();
-  while (files.hasNext()) {
-    var file = files.next();
-    var mime = file.getMimeType();
-    var content = '';
-    try {
-      if (mime === 'application/vnd.google-apps.document') {
-        content = DocumentApp.openById(file.getId()).getBody().getText();
-      } else if (mime === 'application/vnd.google-apps.spreadsheet') {
-        var data = SpreadsheetApp.openById(file.getId())
-          .getActiveSheet().getDataRange().getValues();
-        content = data.map(function(r){return r.join('\\t');}).join('\\n');
-      }
-    } catch(err) { content = '[Error: ' + err.message + ']'; }
-    if (content) results.push({id:file.getId(), name:file.getName(), type:mime, content:content.substring(0,6000)});
-  }
-  var subs = folder.getFolders();
-  while (subs.hasNext()) { processFolder(subs.next(), results); }
-}`}
-                    </div>
-                    <button onClick={()=>{
-                      navigator.clipboard?.writeText(`function doGet(e) {
-  try {
-    var folderId = e.parameter.folderId;
-    var folder = DriveApp.getFolderById(folderId);
-    var results = [];
-    processFolder(folder, results);
-    return ContentService.createTextOutput(JSON.stringify({ok:true, files:results, folder:folder.getName()})).setMimeType(ContentService.MimeType.JSON);
-  } catch(err) {
-    return ContentService.createTextOutput(JSON.stringify({ok:false, error:err.message})).setMimeType(ContentService.MimeType.JSON);
-  }
-}
-function processFolder(folder, results) {
-  var files = folder.getFiles();
-  while (files.hasNext()) {
-    var file = files.next();
-    var mime = file.getMimeType();
-    var content = '';
-    try {
-      if (mime === 'application/vnd.google-apps.document') {
-        content = DocumentApp.openById(file.getId()).getBody().getText();
-      } else if (mime === 'application/vnd.google-apps.spreadsheet') {
-        var data = SpreadsheetApp.openById(file.getId()).getActiveSheet().getDataRange().getValues();
-        content = data.map(function(r){return r.join('\t');}).join('\n');
-      }
-    } catch(err) { content = '[Error: ' + err.message + ']'; }
-    if (content) results.push({id:file.getId(), name:file.getName(), type:mime, content:content.substring(0,6000)});
-  }
-  var subs = folder.getFolders();
-  while (subs.hasNext()) { processFolder(subs.next(), results); }
-}`)
-                      alert('✅ Código copiado al portapapeles')
-                    }} style={{marginTop:8,fontSize:11,padding:'4px 12px',borderRadius:6,border:'none',background:'#1e40af',color:'#fff',cursor:'pointer',fontWeight:600}}>
-                      📋 Copiar código
-                    </button>
-                  </div>
-                )}
-
-                {/* Folder list */}
-                {(iaConfig.driveFolderIds||[]).length > 0 && (
-                  <div style={{marginBottom:10}}>
-                    {(iaConfig.driveFolderIds||[]).map((fid,i)=>{
-                      const syncedFiles = (driveResults||iaConfig.driveFiles||[]).filter(f=>f.folder===fid||f.folderId===fid)
-                      return (
-                        <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',marginBottom:6,background:'#FAFBFF'}}>
-                          <span style={{fontSize:16}}>📁</span>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                              ID: {fid.slice(0,20)}...
-                            </div>
-                            {syncedFiles.length>0
-                              ? <div style={{fontSize:10,color:'#22c55e'}}>✓ {syncedFiles.length} documentos cargados</div>
-                              : <div style={{fontSize:10,color:'#9ca3af'}}>Sin sincronizar</div>}
-                          </div>
-                          <a href={`https://drive.google.com/drive/folders/${fid}`} target="_blank" rel="noopener noreferrer"
-                            style={{fontSize:10,color:B.primary,textDecoration:'underline',whiteSpace:'nowrap'}}>Abrir ↗</a>
-                          <button onClick={()=>{
-                            const arr=[...(iaConfig.driveFolderIds||[])]
-                            arr.splice(i,1)
-                            upd(['driveFolderIds'],arr)
-                          }} style={{background:'none',border:'none',cursor:'pointer',fontSize:16,color:'#9ca3af',padding:'0 2px',lineHeight:1}}>×</button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-
-                {/* Add folder URL input */}
-                <div style={{display:'flex',gap:8,marginBottom:10}}>
-                  <input value={newFolderUrl} onChange={e=>setNewFolderUrl(e.target.value)}
-                    onKeyDown={e=>{ if(e.key==='Enter'&&newFolderUrl.trim()){
-                      const m=newFolderUrl.match(/folders\/([a-zA-Z0-9_-]+)/)
-                      if(!m){alert('URL de carpeta no válida');return}
-                      const arr=[...(iaConfig.driveFolderIds||[]),m[1]]
-                      upd(['driveFolderIds'],arr); setNewFolderUrl('')
-                    }}}
-                    placeholder="https://drive.google.com/drive/folders/..."
-                    style={{...sty.inp,flex:1,fontSize:12}}/>
-                  <button onClick={()=>{
-                    const m=newFolderUrl.match(/folders\/([a-zA-Z0-9_-]+)/)
-                    if(!m){alert('URL de carpeta no válida');return}
-                    const arr=[...(iaConfig.driveFolderIds||[]),m[1]]
-                    upd(['driveFolderIds'],arr); setNewFolderUrl('')
-                  }} style={{...sty.btn,fontSize:12,whiteSpace:'nowrap'}}>+ Agregar carpeta</button>
-                </div>
-
-                {!iaConfig.driveScriptUrl && (
-                  <div style={{padding:'8px 12px',background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:8,fontSize:11,color:'#92400e',marginBottom:10}}>
-                    ⚠️ Necesitas configurar el Apps Script primero. Haz clic en "Cómo configurar" arriba.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── MODO DOCS SUELTOS ─────────────────────────────────────── */}
-            {driveMode==='docs' && (
-              <div>
-                {(iaConfig.driveFileUrls||[]).length > 0 && (
-                  <div style={{marginBottom:10}}>
-                    {(iaConfig.driveFileUrls||[]).map((url,i)=>{
-                      const syncedFile = (driveResults||iaConfig.driveFiles||[]).find(f=>f.url===url)
-                      const icon = url.includes('/document/') ? '📄' : url.includes('/spreadsheets/') ? '📊' : '📁'
-                      return (
-                        <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',marginBottom:6,background:'#FAFBFF'}}>
-                          <span style={{fontSize:16}}>{icon}</span>
-                          <div style={{flex:1,minWidth:0}}>
-                            {syncedFile?.ok
-                              ? <div style={{fontSize:12,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{syncedFile.name}</div>
-                              : <div style={{fontSize:11,color:'#6b7280',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{url}</div>}
-                            {syncedFile?.ok && <div style={{fontSize:10,color:'#22c55e'}}>✓ {syncedFile.chars?.toLocaleString()} caracteres</div>}
-                            {syncedFile?.error && <div style={{fontSize:10,color:'#ef4444'}}>✗ {syncedFile.error}</div>}
-                            {!syncedFile && <div style={{fontSize:10,color:'#9ca3af'}}>Sin sincronizar</div>}
-                          </div>
-                          <button onClick={()=>{const arr=[...(iaConfig.driveFileUrls||[])];arr.splice(i,1);upd(['driveFileUrls'],arr);setDriveResults(null)}}
-                            style={{background:'none',border:'none',cursor:'pointer',fontSize:16,color:'#9ca3af',padding:'0 2px',lineHeight:1}}>×</button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-                <div style={{display:'flex',gap:8,marginBottom:10}}>
-                  <input value={newDocUrl} onChange={e=>setNewDocUrl(e.target.value)}
-                    onKeyDown={e=>{ if(e.key==='Enter'&&newDocUrl.trim()){upd(['driveFileUrls'],[...(iaConfig.driveFileUrls||[]),newDocUrl.trim()]);setNewDocUrl('')}}}
-                    placeholder="URL de Google Doc o Google Sheet..." style={{...sty.inp,flex:1,fontSize:12}}/>
-                  <button onClick={()=>{if(!newDocUrl.trim())return;upd(['driveFileUrls'],[...(iaConfig.driveFileUrls||[]),newDocUrl.trim()]);setNewDocUrl('')}}
-                    style={{...sty.btn,fontSize:12,whiteSpace:'nowrap'}}>+ Agregar</button>
-                </div>
-                <div style={{padding:'8px 12px',background:'#F0F9FF',border:'1px solid #BAE6FD',borderRadius:8,fontSize:11,color:'#0369a1'}}>
-                  💡 Cada documento debe estar compartido como "Cualquiera con el link puede ver". Soporta Google Docs y Google Sheets.
-                </div>
-              </div>
-            )}
-
-            {/* ── Botón Sincronizar (compartido) ───────────────────────── */}
-            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:12,paddingTop:12,borderTop:'1px solid #f0f4ff'}}>
-              <button
-                disabled={driveSyncing || (driveMode==='folder'
-                  ? !iaConfig.driveScriptUrl||(iaConfig.driveFolderIds||[]).length===0
-                  : (iaConfig.driveFileUrls||[]).length===0)}
-                onClick={async ()=>{
-                  setDriveSyncing(true); setDriveResults(null)
-                  try {
-                    const body = driveMode==='folder'
-                      ? { scriptUrl: iaConfig.driveScriptUrl, folderIds: iaConfig.driveFolderIds||[], fileUrls: [] }
-                      : { fileUrls: iaConfig.driveFileUrls||[], scriptUrl:'', folderIds:[] }
-                    const r = await fetch('/api/drive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-                    const d = await r.json()
-                    if (d.ok) {
-                      setDriveResults(d.results)
-                      upd(['driveFiles'], d.results.filter(f=>f.ok))
-                      upd(['driveLastSync'], new Date().toISOString())
-                      upd(['driveConectado'], d.results.some(f=>f.ok))
-                      if (d.synced===0) alert('⚠️ Ningún documento sincronizado. Revisa la configuración.')
-                      else alert(`✅ ${d.synced} documentos sincronizados correctamente.`)
-                    } else alert('Error: ' + (d.error||'desconocido'))
-                  } catch(e) { alert('Error: ' + e.message) }
-                  finally { setDriveSyncing(false) }
-                }}
-                style={{...sty.btnP,fontSize:12,opacity:driveSyncing?0.5:1}}>
-                {driveSyncing ? '⏳ Sincronizando...' : '🔄 Sincronizar documentos'}
-              </button>
-              {iaConfig.driveLastSync && (
-                <span style={{fontSize:11,color:B.mid}}>
-                  Última sync: {new Date(iaConfig.driveLastSync).toLocaleString('es-CL')}
-                </span>
-              )}
-              {iaConfig.driveConectado && (
-                <button onClick={()=>{upd(['driveConectado'],false);upd(['driveFiles'],[]);upd(['driveLastSync'],null);setDriveResults(null)}}
-                  style={{fontSize:11,background:'none',border:'none',color:'#991b1b',cursor:'pointer',padding:0,marginLeft:'auto'}}>
-                  Desconectar
-                </button>
-              )}
-            </div>
-
-            {/* Preview de archivos sincronizados */}
-            {(driveResults||iaConfig.driveFiles||[]).filter(f=>f.ok).length > 0 && (
-              <div style={{marginTop:10,padding:'8px 12px',background:'#DCFCE7',border:'1px solid #86efac',borderRadius:8,fontSize:11}}>
-                <div style={{fontWeight:700,color:'#14532d',marginBottom:4}}>
-                  ✅ {(driveResults||iaConfig.driveFiles||[]).filter(f=>f.ok).length} documentos cargados en Rabito:
-                </div>
-                {(driveResults||iaConfig.driveFiles||[]).filter(f=>f.ok).map((f,i)=>(
-                  <div key={i} style={{color:'#166534',marginBottom:2}}>
-                    {f.type==='sheet'?'📊':'📄'} <strong>{f.name}</strong> — {f.chars?.toLocaleString()} caracteres{f.truncated?' (truncado)':''}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
       )}
 
@@ -5591,7 +5288,7 @@ function processFolder(folder, results) {
             <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:12,background:'#f9fbff',borderRadius:8}}>
               <div style={{fontSize:28,marginBottom:6}}>📱</div>
               Los mensajes enviados aparecerán aquí cuando actives la integración con WhatsApp.
-              <div style={{marginTop:8,fontSize:11}}>Compatible con Meta WhatsApp Cloud API (API oficial de Meta)</div>
+              
             </div>
           </div>
         </div>
