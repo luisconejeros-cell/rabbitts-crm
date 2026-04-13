@@ -4592,7 +4592,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
             // Configurar webhook AUTOMÁTICAMENTE al conectar
             await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
               method: 'POST', headers: evoHeaders,
-              body: JSON.stringify({ url: WEBHOOK_URL, enabled: true, webhookByEvents: false, events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'] })
+              body: JSON.stringify({ url: WEBHOOK_URL, enabled: true, webhookByEvents: false, events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_SET', 'SEND_MESSAGE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'CONTACTS_SET', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CHATS_SET', 'CHATS_UPSERT', 'CHATS_UPDATE'] })
             })
             setStatusMsg({type:'success', text:`✅ ${newNum.nombre} conectado y webhook configurado automáticamente`})
           }
