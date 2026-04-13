@@ -1044,12 +1044,12 @@ export default function App() {
   }
 
   async function loadConvMessages(convId) {
-    if (!dbReady || convMessages[convId]) return
+    if (!dbReady) return
     try {
       const { data } = await supabase.from('crm_conv_messages')
         .select('*').eq('conv_id',convId).order('created_at',{ascending:true})
       if (data) setConvMessages(prev => ({...prev, [convId]: data}))
-    } catch(e) {}
+    } catch(e) { console.warn('loadConvMessages error:', e) }
   }
 
   async function saveCommission(key, data) {
