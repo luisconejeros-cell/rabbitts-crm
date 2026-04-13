@@ -9359,14 +9359,14 @@ function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) 
             <div>
               <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>URL del marketplace</label>
               <input value={draft.url||''} onChange={e=>setDraft(p=>({...p,url:e.target.value}))}
-                placeholder=\"https://app.tumarketplace.com\"
+                placeholder="https://app.tumarketplace.com"
                 style={{...sty.inp,fontSize:12}}/>
-              <div style={{fontSize:10,color:B.mid,marginTop:3}}>El sitio se cargar\u00e1 dentro del CRM via iframe.</div>
+              <div style={{fontSize:10,color:B.mid,marginTop:3}}>El sitio se cargará dentro del CRM via iframe.</div>
             </div>
             <div>
               <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Nombre de la pestaña</label>
               <input value={draft.label||''} onChange={e=>setDraft(p=>({...p,label:e.target.value}))}
-                placeholder=\"Marketplace\"
+                placeholder="Marketplace"
                 style={{...sty.inp,fontSize:12}}/>
             </div>
           </div>
@@ -9413,7 +9413,7 @@ function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) 
               {saving ? 'Guardando...' : '\ud83d\udcbe Guardar configuración'}
             </button>
             {draft.url && (
-              <a href={draft.url} target=\"_blank\" rel=\"noopener noreferrer\"
+              <a href={draft.url} target="_blank" rel="noopener noreferrer"
                 style={{...sty.btn,textDecoration:'none',display:'flex',alignItems:'center',gap:4,fontSize:12}}>
                 \ud83d\udd17 Abrir en nueva pestaña
               </a>
@@ -9431,7 +9431,7 @@ function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) 
               <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>Este sitio no permite cargarse en iframe</div>
               <div style={{fontSize:13,color:B.mid,marginBottom:16}}>El marketplace bloqueó la carga dentro del CRM. Puedes abrirlo en una pestaña nueva.</div>
               <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
-                <a href={config.url} target=\"_blank\" rel=\"noopener noreferrer\"
+                <a href={config.url} target="_blank" rel="noopener noreferrer"
                   style={{...sty.btnP,textDecoration:'none',display:'inline-flex',alignItems:'center',gap:6}}>
                   \ud83d\udd17 Abrir {label} en nueva pestaña
                 </a>
@@ -9463,21 +9463,21 @@ function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) 
               border: 'none',
               display: iframeError ? 'none' : 'block'
             }}
-            allow=\"fullscreen; payment; clipboard-read; clipboard-write\"
-            sandbox=\"allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation\"
+            allow="fullscreen; payment; clipboard-read; clipboard-write"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
           />
         </div>
       ) : !isAdmin ? (
         <div style={{textAlign:'center',padding:'60px 20px',color:B.mid}}>
           <div style={{fontSize:48,marginBottom:12}}>🏪</div>
           <div style={{fontSize:15,fontWeight:600,marginBottom:8}}>Marketplace no disponible</div>
-          <div style={{fontSize:13}}>El administrador a\u00fan no ha configurado el marketplace.</div>
+          <div style={{fontSize:13}}>El administrador aún no ha configurado el marketplace.</div>
         </div>
       ) : !editing && (
         <div style={{textAlign:'center',padding:'60px 20px',color:B.mid,background:'#f9fbff',borderRadius:12,border:'2px dashed #dce8ff'}}>
           <div style={{fontSize:48,marginBottom:12}}>🏪</div>
           <div style={{fontSize:15,fontWeight:700,color:B.primary,marginBottom:8}}>Configura tu Marketplace</div>
-          <div style={{fontSize:13,marginBottom:20}}>Pega la URL del marketplace y elige qu\u00e9 roles pueden verlo.</div>
+          <div style={{fontSize:13,marginBottom:20}}>Pega la URL del marketplace y elige qué roles pueden verlo.</div>
           <button onClick={()=>{setDraft({...config});setEditing(true)}} style={sty.btnP}>
             ⚙️ Configurar ahora
           </button>
