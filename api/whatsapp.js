@@ -77,19 +77,26 @@ export default async function handler(req, res) {
     let conv = rows && rows.length > 0 ? rows[0] : null
 
     if (!conv) {
-      const { data: ins, error: ie } = await sb.from('crm_conversations').insert({
+      const newConv = {
         id: 'wa-' + Date.now(), telefono: tel, nombre: name || phone,
         mode: 'ia', status: 'activo', last_message: text || '[multimedia]',
         lead_id: null,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString()
-      }).select().single()
+      }
+      // UPSERT igual que el frontend CRM
+      const { data: ins, error: ie } = await sb
+        .from('crm_conversations')
+        .upsert(newConv, { onConflict: 'id' })
+        .select().single()
 
       if (ie) {
-        console.error('[WA] INSERT conv FAILED:', ie.message, ie.code, ie.hint)
-        return res.status(200).json({ ok: false, error: ie.message, code: ie.code })
+        console.error('[WA] UPSERT FAILED:', ie.message, '|code:', ie.code, '|hint:', ie.hint, '|details:', ie.details)
+        // Seguir con objeto local para que Rabito igual responda
+        conv = newConv
+      } else {
+        conv = ins
+        console.log('[WA] Conv nueva:', conv.id)
       }
-      conv = ins
-      console.log('[WA] Conv nueva:', conv.id)
     } else {
       console.log('[WA] Conv existente:', conv.id)
     }
