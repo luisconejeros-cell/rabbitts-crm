@@ -58,7 +58,8 @@ export default async function handler(req, res) {
   // Extraer datos del mensaje
   const data = body?.data
   const msg  = Array.isArray(data) ? data[0] : data
-  if (!msg || msg.key?.fromMe) return res.status(200).json({ ok: true })
+  const fromMe = msg?.key?.fromMe || false
+  // Si es mensaje enviado DESDE Rabito: guardar en CRM pero no responder con IA
   const jid = msg.key?.remoteJid || ''
   if (jid.includes('@g.us')) return res.status(200).json({ ok: true })
 
@@ -68,7 +69,7 @@ export default async function handler(req, res) {
   const tel    = '+' + phone
   const sendTo = jid.endsWith('@s.whatsapp.net') ? phone : jid
 
-  console.log('[WA] de:', tel, '| nombre:', name, '| texto:', text.slice(0,60))
+  console.log('[WA] de:', tel, '| nombre:', name, '| fromMe:', fromMe, '| texto:', text.slice(0,60))
   if (!phone) return res.status(200).json({ ok: true })
 
   try {
@@ -112,7 +113,19 @@ export default async function handler(req, res) {
     // 3. Actualizar last_message
     await sb.from('crm_conversations').update({ last_message: text || conv.last_message, updated_at: new Date().toISOString() }).eq('id', conv.id)
 
-    // 4. Si modo humano o sin texto: responder y terminar
+    // 4. Si fromMe: guardar como mensaje del asistente y terminar (sin responder con IA)
+    if (fromMe) {
+      if (text) {
+        await sb.from('crm_conv_messages').insert({
+          conv_id: conv.id, role: 'assistant', content: text,
+          created_at: new Date().toISOString(), manual: true
+        })
+        await sb.from('crm_conversations').update({ last_message: text, updated_at: new Date().toISOString() }).eq('id', conv.id)
+      }
+      return res.status(200).json({ ok: true, saved: 'fromMe' })
+    }
+
+    // Si modo humano o sin texto: terminar sin IA
     if (conv.mode === 'humano' || !text) return res.status(200).json({ ok: true, mode: conv.mode })
 
     // 5. Verificar IA activa
