@@ -86,7 +86,7 @@ export default async function handler(req, res) {
         const r = await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
-          body: JSON.stringify({ number: sendNumber, text, delay: 500 })
+          body: JSON.stringify({ number: sendNumber, options: { delay: 500 }, textMessage: { text } })
         })
         const rb = await r.text()
         console.log('sendWA status:', r.status, rb.slice(0, 100))
