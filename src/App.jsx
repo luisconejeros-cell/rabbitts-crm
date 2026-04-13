@@ -5886,11 +5886,21 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
       {/* TAB: BANDEJA */}
       {tab==='bandeja' && (
-        <div style={{display:'grid',gridTemplateColumns:isMobile?(activeConv?'0 1fr':'1fr 0'):isNarrow?'240px 1fr':'320px 1fr',gap:0,height:isMobile?'calc(100vh - 120px)':'calc(100vh - 200px)',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
-          {/* Left: conversation list */}
-          <div style={{borderRight:'1px solid #dce8ff',display:'flex',flexDirection:'column',background:'#fff'}}>
-            {/* Filters */}
-            <div style={{padding:'10px 12px',borderBottom:'1px solid #f0f4ff',display:'flex',flexDirection:'column',gap:6}}>
+        <div style={{display:'flex',height:'calc(100vh - 185px)',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
+
+          {/* ── LEFT PANEL: lista de conversaciones ─── */}
+          <div style={{
+            width: isMobile && activeConv ? 0 : (isNarrow ? 240 : 320),
+            minWidth: isMobile && activeConv ? 0 : (isNarrow ? 240 : 320),
+            maxWidth: isMobile && activeConv ? 0 : (isNarrow ? 240 : 320),
+            overflow:'hidden',
+            display:'flex', flexDirection:'column',
+            borderRight:'1px solid #dce8ff',
+            background:'#fff',
+            transition:'width .2s, min-width .2s'
+          }}>
+            {/* Filters — fixed */}
+            <div style={{flexShrink:0,padding:'10px 12px',borderBottom:'1px solid #f0f4ff',display:'flex',flexDirection:'column',gap:6}}>
               <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por nombre o teléfono..."
                 style={{...sty.inp,fontSize:12}}/>
               <div style={{display:'flex',gap:4}}>
@@ -5903,8 +5913,8 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                 ))}
               </div>
             </div>
-            {/* List */}
-            <div style={{flex:1,overflowY:'auto'}}>
+            {/* List — scrollable */}
+            <div style={{flex:1,overflowY:'auto',minHeight:0}}>
               {filtered.length===0 && <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:12}}>Sin conversaciones{search?' con ese filtro':' aún'}</div>}
               {filtered.map(conv=>{
                 const isActive = activeConv?.id===conv.id
@@ -5913,7 +5923,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                   <div key={conv.id} onClick={()=>setActiveConv(conv)}
                     style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:isActive?B.light:'#fff',transition:'background .15s'}}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:3}}>
-                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A'}}>{conv.nombre||conv.telefono}</div>
+                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{conv.nombre||conv.telefono}</div>
                       <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
                         <span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:conv.mode==='ia'?'#E8EFFE':'#FEF9C3',color:conv.mode==='ia'?B.primary:'#713f12',fontWeight:700}}>
                           {conv.mode==='ia'?'🤖':'👤'}
@@ -5929,11 +5939,12 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
             </div>
           </div>
 
-          {/* Right: conversation detail */}
+          {/* ── RIGHT PANEL: detalle conversación ─── */}
+          <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
           {activeConv ? (
-            <div style={{display:'flex',flexDirection:'column',background:'#f9fbff'}}>
-              {/* Conv header */}
-              <div style={{padding:'10px 16px',borderBottom:'1px solid #dce8ff',background:'#fff',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+            <div style={{display:'flex',flexDirection:'column',height:'100%',background:'#f9fbff'}}>
+              {/* Header */}
+              <div style={{flexShrink:0,padding:'10px 16px',borderBottom:'1px solid #dce8ff',background:'#fff',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
                 {isMobile && <button onClick={()=>setActiveConv(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:'#6366f1',padding:'0 4px'}}>←</button>}
                 <AV name={activeConv.nombre||activeConv.telefono} size={36}/>
                 <div style={{flex:1,minWidth:0}}>
@@ -5941,14 +5952,12 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                   <div style={{fontSize:11,color:'#6b7280'}}><WaLink phone={activeConv.telefono}/>{activeConv.renta?' · Renta: '+activeConv.renta:''}{activeConv.modelo?' · '+activeConv.modelo:''}</div>
                 </div>
                 <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap'}}>
-                  {/* IA/Humano toggle */}
                   <button onClick={()=>toggleMode(activeConv)}
                     style={{fontSize:11,padding:'5px 12px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:700,
                       background:activeConv.mode==='ia'?'#E8EFFE':'#FEF9C3',
                       color:activeConv.mode==='ia'?B.primary:'#713f12'}}>
                     {activeConv.mode==='ia'?'🤖 IA':'👤 Humano'}
                   </button>
-                  {/* Create lead */}
                   {!activeConv.lead_id && (
                     <button onClick={createLead}
                       style={{fontSize:11,padding:'5px 12px',borderRadius:8,border:`1px solid ${B.primary}`,background:B.light,color:B.primary,cursor:'pointer',fontWeight:600}}>
@@ -5956,7 +5965,6 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                     </button>
                   )}
                   {activeConv.lead_id && <span style={{fontSize:11,padding:'5px 10px',borderRadius:8,background:'#DCFCE7',color:'#14532d',fontWeight:600}}>✅ Lead en CRM</span>}
-                  {/* Status */}
                   <select value={activeConv.status||'activo'} onChange={e=>upsertConversation({...activeConv,status:e.target.value,updated_at:new Date().toISOString()})}
                     style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
                     <option value="activo">Activo</option>
@@ -5967,8 +5975,8 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                 </div>
               </div>
 
-              {/* Messages */}
-              <div style={{flex:1,overflowY:'auto',padding:'12px 16px',display:'flex',flexDirection:'column',gap:8}}>
+              {/* Messages — scrollable */}
+              <div style={{flex:1,overflowY:'auto',minHeight:0,padding:'12px 16px',display:'flex',flexDirection:'column',gap:8}}>
                 {msgs.length===0 && <div style={{textAlign:'center',color:'#9ca3af',fontSize:12,padding:'20px'}}>Sin mensajes aún. Cuando conectes WhatsApp aparecerán aquí.</div>}
                 {msgs.map((m,i)=>(
                   <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-start':'flex-end',gap:6,alignItems:'flex-end'}}>
@@ -5999,8 +6007,8 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                 <div ref={messagesEndRef}/>
               </div>
 
-              {/* Input */}
-              <div style={{padding:'10px 16px',borderTop:'1px solid #dce8ff',background:'#fff'}}>
+              {/* Input — fixed */}
+              <div style={{flexShrink:0,padding:'10px 16px',borderTop:'1px solid #dce8ff',background:'#fff'}}>
                 {activeConv.mode==='ia'&&<div style={{fontSize:11,color:B.mid,marginBottom:6,textAlign:'center'}}>🤖 Rabito está respondiendo automáticamente · <button onClick={()=>toggleMode(activeConv)} style={{background:'none',border:'none',color:B.primary,cursor:'pointer',fontSize:11,fontWeight:600,padding:0}}>Tomar control</button></div>}
                 <div style={{display:'flex',gap:8}}>
                   <textarea value={newMsg} onChange={e=>setNewMsg(e.target.value)}
@@ -6013,15 +6021,12 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
               </div>
             </div>
           ) : (
-            <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#f9fbff',color:'#9ca3af'}}>
+            <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#f9fbff',color:'#9ca3af'}}>
               <div style={{fontSize:40,marginBottom:12}}>💬</div>
               <div style={{fontSize:14,fontWeight:600}}>Selecciona una conversación</div>
               <div style={{fontSize:12,marginTop:4}}>Las conversaciones de WhatsApp aparecerán aquí</div>
             </div>
           )}
-        </div>
-      )}
-
       {/* TAB: MASIVO */}
       {tab==='masivo' && (
           <div>
