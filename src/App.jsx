@@ -3661,9 +3661,6 @@ export default function App() {
               <option value="admin">Administrador</option>
             </select>
           </Fld>
-          <Fld label="Teléfono WhatsApp (con código país)">
-            <input value={newUser.phone||''} onChange={e=>setNewUser(u=>({...u,phone:e.target.value}))} placeholder="+56912345678" style={sty.inp}/>
-          </Fld>
           <button onClick={createUser} style={{...sty.btnP,width:'100%',padding:'10px 16px'}}>Crear usuario</button>
         </Modal>
       )}
