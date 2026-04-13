@@ -5495,33 +5495,23 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     if (activeConv) loadConvMessages(activeConv.id)
   }, [activeConv])
 
-  // Supabase Realtime — actualizar conversaciones automáticamente
+  // Polling automático cada 5 segundos para nuevas conversaciones y mensajes
   useEffect(() => {
     if (!supabase || !dbReady) return
-    const channel = supabase
-      .channel('crm_conversations_realtime')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'crm_conversations'
-      }, (payload) => {
-        if (payload.eventType === 'INSERT') {
-          setConversations(prev => {
-            if (prev.find(c => c.id === payload.new.id)) return prev
-            return [payload.new, ...prev]
-          })
-        } else if (payload.eventType === 'UPDATE') {
-          setConversations(prev => prev.map(c => c.id === payload.new.id ? payload.new : c)
-            .sort((a,b) => new Date(b.updated_at||0) - new Date(a.updated_at||0)))
-        }
-        // Si hay conversación activa y llega mensaje nuevo, recargar mensajes
-        if (activeConv && payload.new?.id === activeConv.id) {
-          loadConvMessages(activeConv.id)
-        }
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [supabase, dbReady])
+    const interval = setInterval(async () => {
+      try {
+        const { data: convs } = await supabase
+          .from('crm_conversations')
+          .select('*')
+          .order('updated_at', {ascending: false})
+          .limit(200)
+        if (convs) setConversations(convs)
+        // Si hay conversación activa, recargar sus mensajes también
+        if (activeConv) loadConvMessages(activeConv.id)
+      } catch(_) {}
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [supabase, dbReady, activeConv])
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -5649,7 +5639,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
       {/* TAB: BANDEJA */}
       {tab==='bandeja' && (
-        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'320px 1fr',gap:0,height:isMobile?'calc(100vh - 120px)':'calc(100vh - 200px)',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?(activeConv?'0 1fr':'1fr 0'):'320px 1fr',gap:0,height:isMobile?'calc(100vh - 120px)':'calc(100vh - 200px)',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
           {/* Left: conversation list */}
           <div style={{borderRight:'1px solid #dce8ff',display:'flex',flexDirection:'column',background:'#fff'}}>
             {/* Filters */}
@@ -5697,6 +5687,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
             <div style={{display:'flex',flexDirection:'column',background:'#f9fbff'}}>
               {/* Conv header */}
               <div style={{padding:'10px 16px',borderBottom:'1px solid #dce8ff',background:'#fff',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                {isMobile && <button onClick={()=>setActiveConv(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:'#6366f1',padding:'0 4px'}}>←</button>}
                 <AV name={activeConv.nombre||activeConv.telefono} size={36}/>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{activeConv.nombre||activeConv.telefono}</div>
