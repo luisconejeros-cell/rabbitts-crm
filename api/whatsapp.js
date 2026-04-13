@@ -2,6 +2,47 @@
 // TODO se procesa ANTES de responder (60s timeout en Vercel Hobby, suficiente)
 import { createClient } from '@supabase/supabase-js'
 
+
+// Auto-crear leads para convs calificadas hace 2+ horas sin lead_id
+async function autoCreateLeads(sb) {
+  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() // hace 2 horas
+  const { data: pending } = await sb
+    .from('crm_conversations')
+    .select('*')
+    .eq('status', 'calificado')
+    .is('lead_id', null)
+    .lt('updated_at', cutoff)
+    .limit(5)
+
+  if (!pending?.length) return
+
+  for (const conv of pending) {
+    const { data: existing } = await sb.from('crm_leads')
+      .select('id').eq('telefono', conv.telefono).limit(1)
+    if (existing?.length) {
+      await sb.from('crm_conversations').update({ lead_id: existing[0].id }).eq('id', conv.id)
+      continue
+    }
+    const newLead = {
+      id: 'l-auto-' + Date.now() + '-' + conv.id.slice(-4),
+      nombre: conv.nombre || conv.telefono,
+      telefono: conv.telefono || '',
+      email: conv.email || '',
+      tag: 'lead', stage: 'nuevo',
+      fecha: new Date().toISOString(),
+      notas: `Auto-creado desde WhatsApp (calificó pero no agendó). ${conv.last_message ? 'Último mensaje: ' + conv.last_message.slice(0,100) : ''}`,
+      fuente: 'whatsapp_auto'
+    }
+    const { data: lead, error } = await sb.from('crm_leads').insert(newLead).select().single()
+    if (!error && lead) {
+      await sb.from('crm_conversations').update({ lead_id: lead.id }).eq('id', conv.id)
+      console.log('[WA] Auto-lead creado para:', conv.telefono, lead.id)
+    } else if (error) {
+      console.error('[WA] Auto-lead error:', error.message)
+    }
+  }
+}
+
 export default async function handler(req, res) {
   // GET: diagnóstico
   if (req.method === 'GET') {
@@ -178,6 +219,10 @@ export default async function handler(req, res) {
     await sb.from('crm_conversations').update(upd).eq('id', conv.id)
 
     console.log('[WA] ✅ OK →', tel)
+
+    // ── Auto-crear lead si calificado hace 2+ horas sin agendar ─────────────
+    autoCreateLeads(sb).catch(e => console.warn('[WA] autoLead error:', e.message))
+
     return res.status(200).json({ ok: true, replied: true, convId: conv.id })
 
   } catch(e) {
