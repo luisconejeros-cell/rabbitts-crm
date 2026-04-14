@@ -344,27 +344,55 @@ async function loadSettings(sb = null) {
   } catch (_) { return {} }
 }
 
-async function loadFeedbackLearnings(sb = null, message = '', history = []) {
-  if (!sb) return []
-  try {
-    const { data, error } = await sb
-      .from('crm_conv_feedback')
-      .select('msg_content,feedback,correction,created_at')
-      .order('created_at', { ascending: false })
-      .limit(120)
-    if (error || !Array.isArray(data)) return []
-    const query = `${message}\n${history.filter(h => h.role === 'user').slice(-4).map(h => h.content).join('\n')}`
-    return data
-      .filter(item => cleanText(item.correction) || cleanText(item.feedback))
-      .map(item => ({
-        original: cleanText(item.msg_content).slice(0, 500),
-        correction: cleanText(item.correction || item.feedback).slice(0, 900),
-        created_at: item.created_at,
-        score: similarity(query, `${item.msg_content || ''} ${item.feedback || ''} ${item.correction || ''}`)
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 6)
-  } catch (_) { return [] }
+async function loadFeedbackLearnings(sb = null, message = '', history = [], settings = {}) {
+  const query = `${message}\n${history.filter(h => h.role === 'user').slice(-4).map(h => h.content).join('\n')}`
+  const items = []
+
+  // Aprendizajes permanentes guardados desde el panel/modal de feedback
+  const persistent = settings?.agent_training?.items || settings?.agent_training?.value?.items || []
+  if (Array.isArray(persistent)) {
+    for (const item of persistent) {
+      if (item?.active === false) continue
+      const improved = cleanText(item.improved || item.correction || item.respuesta || '')
+      const reason = cleanText(item.reason || item.razon || '')
+      const context = cleanText(item.context || item.original || item.pregunta || '')
+      if (!improved && !reason) continue
+      items.push({
+        original: context.slice(0, 500),
+        correction: `${reason ? 'Regla: ' + reason + '\n' : ''}${improved ? 'Respuesta modelo: ' + improved : ''}`.slice(0, 1100),
+        created_at: item.created_at || item.fecha || '',
+        source: 'agent_training',
+        score: Math.max(0.75, similarity(query, `${context} ${reason} ${improved}`))
+      })
+    }
+  }
+
+  if (sb) {
+    try {
+      const { data, error } = await sb
+        .from('crm_conv_feedback')
+        .select('msg_content,feedback,correction,created_at')
+        .order('created_at', { ascending: false })
+        .limit(120)
+      if (!error && Array.isArray(data)) {
+        for (const item of data) {
+          if (!cleanText(item.correction) && !cleanText(item.feedback)) continue
+          items.push({
+            original: cleanText(item.msg_content).slice(0, 500),
+            correction: cleanText(item.correction || item.feedback).slice(0, 900),
+            created_at: item.created_at,
+            source: 'crm_conv_feedback',
+            score: similarity(query, `${item.msg_content || ''} ${item.feedback || ''} ${item.correction || ''}`)
+          })
+        }
+      }
+    } catch (_) {}
+  }
+
+  return items
+    .filter(item => item.correction)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8)
 }
 
 function getMemoryKey(leadData = {}) {
@@ -625,7 +653,7 @@ export default async function handler(req, res) {
   const mergedIaConfig = { ...(settings?.ia_config || {}), ...(iaConfig || {}) }
   const agendaLink = getAgendaLink(mergedIaConfig, settings)
   const oldMemory = await loadConversationMemory(sb, leadData)
-  const feedbackItems = await loadFeedbackLearnings(sb, message, safeHistory)
+  const feedbackItems = await loadFeedbackLearnings(sb, message, safeHistory, settings)
   const chunks = extractChunksFromSources({ settings, iaConfig: mergedIaConfig })
   const relevantChunks = rankKnowledgeChunks({ message, history: safeHistory, leadData, memory: oldMemory, chunks })
   const panelContext = buildPanelContext(mergedIaConfig)
@@ -638,7 +666,7 @@ export default async function handler(req, res) {
     panelLoaded: Boolean(panelContext),
     chunksAvailable: chunks.length,
     chunksUsed: relevantChunks.map(c => ({ id: c.id, docName: c.docName, categoria: c.categoria, score: Number(c.score?.toFixed?.(2) || c.score || 0) })),
-    feedbackUsed: feedbackItems.map(f => ({ score: Number(f.score?.toFixed?.(2) || f.score || 0), correction: f.correction.slice(0, 160) })),
+    feedbackUsed: feedbackItems.map(f => ({ score: Number(f.score?.toFixed?.(2) || f.score || 0), source: f.source || 'feedback', correction: f.correction.slice(0, 180) })),
     agendaConfigured: Boolean(agendaLink),
     memoryLoaded: Boolean(Object.keys(oldMemory || {}).length)
   }
