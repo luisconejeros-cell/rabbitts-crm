@@ -1,11 +1,13 @@
-// api/agent.js — Rabito anti-loop con memoria comercial y agenda configurable
-// Agente comercial conversacional para Rabbitts Capital.
-// Backend puro para Vercel. No pegar JSX/HTML en este archivo.
+// api/agent.js — Rabito guiado por panel IA, conocimiento y feedback
+// Diseñado para Vercel. Sin JSX/HTML.
 
-const DEFAULT_AGENDA_LINK = 'https://crm.rabbittscapital.com/agenda'
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001'
+const DEFAULT_AGENDA = 'https://crm.rabbittscapital.com/agenda'
 
-const ALLOWED_LEAD_KEYS = new Set(['nombre', 'renta', 'modelo', 'email'])
+const ALLOWED_LEAD_KEYS = new Set([
+  'nombre', 'email', 'renta', 'modelo', 'objetivo', 'ubicacion',
+  'propiedades', 'experiencia', 'pie', 'agenda_link'
+])
 
 const FORBIDDEN_PHRASES = [
   'alta demanda',
@@ -14,127 +16,370 @@ const FORBIDDEN_PHRASES = [
   'estoy con alta demanda',
   'estoy ocupado',
   'estamos ocupados',
-  'cuando pueda',
   'soy una ia',
   'soy inteligencia artificial',
   'como modelo de lenguaje',
-  'no tengo acceso',
   'no puedo ayudarte',
-  'no puedo ayudar',
-  'no tengo la capacidad',
-  'mis capacidades',
-  'mis limitaciones',
-  'debes esperar',
-  'un ejecutivo te respondera',
-  'un ejecutivo te responderá',
-  'en breve te contacto',
-  'más tarde te respondo',
-  'mas tarde te respondo'
+  'no tengo acceso',
+  'responderé después',
+  'responderé mas tarde',
+  'te responderé después',
+  'te responderé más tarde'
 ]
 
 const ROBOTIC_PATTERNS = [
   /como\s+asistente\s+virtual/i,
   /como\s+modelo\s+de\s+lenguaje/i,
-  /no\s+puedo\s+proporcionar/i,
-  /no\s+tengo\s+informaci[oó]n\s+suficiente/i,
-  /lamento\s+la\s+confusi[oó]n/i,
+  /lamento\s+la\s+confusion/i,
   /gracias\s+por\s+tu\s+consulta/i,
-  /es\s+importante\s+destacar\s+que/i,
-  /te\s+recomiendo\s+consultar\s+con\s+un\s+profesional/i
+  /es\s+importante\s+destacar/i,
+  /consulta\s+con\s+un\s+profesional/i,
+  /no\s+tengo\s+acceso/i,
+  /no\s+puedo\s+ayudarte/i
 ]
 
 function cleanText(value = '') {
-  return String(value || '').trim()
+  return String(value ?? '').trim()
 }
 
-function cleanUrl(url = '') {
-  return cleanText(url)
-    .replace(/[).,;]+$/g, '')
-    .replace(/^<|>$/g, '')
-}
-
-function findAgendaUrlInText(text = '') {
-  const raw = String(text || '')
-  const matches = raw.match(/https?:\/\/[^\s\]}")<>]+/gi) || []
-  if (!matches.length) return ''
-
-  const preferred = matches.find(url => {
-    const idx = raw.indexOf(url)
-    const window = normalizeForCheck(raw.slice(Math.max(0, idx - 90), idx + url.length + 90))
-    return /(agenda|agendar|reunion|reunión|llamada|cita|calendario|calendar|booking|book|meet|calendly)/.test(window)
-  })
-
-  return cleanUrl(preferred || matches[0])
-}
-
-function resolveAgendaLink(iaConfig = {}, knowledgeContext = '') {
-  const direct = [
-    iaConfig.agendaLink,
-    iaConfig.linkAgenda,
-    iaConfig.reunionLink,
-    iaConfig.linkReunion,
-    iaConfig.meetingLink,
-    iaConfig.bookingLink,
-    iaConfig.urlAgenda,
-    iaConfig.calendlyLink // compatibilidad con versiones anteriores del CRM
-  ].map(cleanUrl).find(Boolean)
-  if (direct) return direct
-
-  const textSources = [
-    iaConfig.reglasRabito,
-    iaConfig.pasosRabito,
-    iaConfig.guion,
-    iaConfig.productosRabito,
-    iaConfig.objecionesRabito,
-    Array.isArray(iaConfig.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento.map(r => `${r?.title || ''}\n${r?.content || ''}`).join('\n') : '',
-    Array.isArray(iaConfig.entrenamiento) ? iaConfig.entrenamiento.map(r => `${r?.pregunta || ''}\n${r?.respuesta || ''}`).join('\n') : '',
-    knowledgeContext
-  ].join('\n\n')
-
-  return findAgendaUrlInText(textSources) || DEFAULT_AGENDA_LINK
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-function normalizeForCheck(text = '') {
+function normalize(text = '') {
   return String(text || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
 }
 
-function containsForbiddenReply(text = '') {
-  const t = normalizeForCheck(text)
-  return FORBIDDEN_PHRASES.some(phrase => t.includes(normalizeForCheck(phrase)))
+function unique(arr = []) {
+  return [...new Set(arr.filter(Boolean))]
 }
 
-function looksRobotic(text = '') {
-  return ROBOTIC_PATTERNS.some(pattern => pattern.test(text || ''))
-}
-
-function removeAgentMetadata(reply = '') {
-  return String(reply || '')
-    .replace(/\[ACCION:[\s\S]*?\]/gi, '')
-    .replace(/\[DATOS:[\s\S]*?\]/gi, '')
-    .replace(/\[MEMORIA:[\s\S]*?\]/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function safeJsonParse(text, fallback = null) {
   try { return text ? JSON.parse(text) : fallback } catch (_) { return fallback }
 }
 
+function formatCLP(n = 0) {
+  const value = Number(n || 0)
+  if (!value) return ''
+  return '$' + value.toLocaleString('es-CL')
+}
+
+function formatCompactCLP(n = 0) {
+  const value = Number(n || 0)
+  if (!value) return ''
+  if (value >= 1000000) {
+    const m = Math.round((value / 1000000) * 10) / 10
+    return `$${String(m).replace(/\.0$/, '')}M`
+  }
+  if (value >= 1000) return formatCLP(value)
+  return `$${value}`
+}
+
+function containsForbiddenReply(text = '') {
+  const t = normalize(text)
+  return FORBIDDEN_PHRASES.some(phrase => t.includes(normalize(phrase)))
+}
+
+function looksRobotic(text = '') {
+  return ROBOTIC_PATTERNS.some(pattern => pattern.test(text || ''))
+}
+
+function removeInternalMarkers(text = '') {
+  return String(text || '')
+    .replace(/\[(?:ACCION|DATOS|MEMORIA|SLOT):[\s\S]*?\]/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function onlyAllowedLeadUpdate(update = {}) {
-  const clean = {}
+  const out = {}
   for (const [key, value] of Object.entries(update || {})) {
     const k = cleanText(key)
     const v = cleanText(value)
-    if (ALLOWED_LEAD_KEYS.has(k) && v && v.toLowerCase() !== 'x') clean[k] = v
+    if (ALLOWED_LEAD_KEYS.has(k) && v && v.toLowerCase() !== 'x') out[k] = v
   }
-  return clean
+  return out
+}
+
+function getFirstName(name = '') {
+  const cleaned = cleanText(name)
+  if (!cleaned || cleaned.startsWith('+')) return ''
+  return cleaned.split(/\s+/)[0]
+}
+
+function parseMoneyToNumber(text = '') {
+  const raw = normalize(text)
+    .replace(/\$/g, '')
+    .replace(/\./g, '')
+    .replace(/,/g, '.')
+
+  const millionMatch = raw.match(/\b(\d+(?:\.\d+)?)\s*(mm|millon(?:es)?|m\b)/i)
+  if (millionMatch) return Math.round(Number(millionMatch[1]) * 1000000)
+
+  const thousandMatch = raw.match(/\b(\d+(?:\.\d+)?)\s*(mil|k)\b/i)
+  if (thousandMatch) return Math.round(Number(thousandMatch[1]) * 1000)
+
+  const numberMatch = raw.match(/\b(\d{6,8})\b/)
+  if (numberMatch) return Number(numberMatch[1])
+
+  const shortMonthlyMatch = raw.match(/\b(\d{3,5})\b/)
+  if (shortMonthlyMatch && /(mensual|liquido|liquida|renta|sueldo|gano|ingreso|hacemos|sumamos|pareja|entre\s+los\s+dos)/.test(raw)) {
+    const value = Number(shortMonthlyMatch[1])
+    if (value >= 500 && value <= 99999) return value * 1000
+  }
+
+  return 0
+}
+
+function parseSavingsToNumber(text = '') {
+  const n = normalize(text)
+  if (!/(pie|ahorro|ahorros|capital|invertir|inversion|inversiones)/.test(n)) return 0
+  return parseMoneyToNumber(text)
+}
+
+function extractEmail(text = '') {
+  const match = String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
+  return match ? match[0] : ''
+}
+
+function extractNameCandidate(text = '') {
+  const lines = String(text || '')
+    .split(/\n+/)
+    .map(line => cleanText(line))
+    .filter(Boolean)
+
+  for (const line of lines) {
+    if (/@/.test(line)) continue
+    if (/\d/.test(line)) continue
+    if (/[?!.:,;]/.test(line)) continue
+    if (line.split(/\s+/).length > 4) continue
+    const n = normalize(line)
+    if (/^(hola|si|no|renta|airbnb|booking|quiero|gano|inversion|invertir|para invertir|para vivir|renta corta|renta tradicional|tienes|stgo|santiago|ya)\b/.test(n)) continue
+    if (/(quiero|santiago|stgo|renta|invertir|inversion|airbnb|booking)/.test(n)) continue
+    if (/^[a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){1,3}$/i.test(line)) return line
+  }
+  return ''
+}
+
+function inferIntent(message = '', history = []) {
+  const m = normalize(message)
+  const lastAssistant = [...history].reverse().find(item => item?.role === 'assistant')?.content || ''
+  const la = normalize(lastAssistant)
+
+  if (/\b(agendar|agenda|reunion|reunion|llamada|calendario|horario|link)\b/.test(m)) return 'agenda'
+  if (/\b(humano|asesor|persona|ejecutivo|luis)\b/.test(m)) return 'humano'
+  if (/\b(no me interesa|no quiero seguir|dejame tranquilo|déjame tranquilo|deja de escribir|chao|adios|adiós)\b/.test(m)) return 'no_interesado'
+  if (/\b(que es|como funciona|explicame|explícame)\b/.test(m)) return 'explicacion'
+  if (/\b(precio|valor|cuanto|cuánto|uf)\b/.test(m)) return 'precio'
+  if (/\b(renta corta|airbnb|booking|diaria)\b/.test(m)) return 'renta_corta'
+  if (/\b(renta tradicional|arriendo tradicional)\b/.test(m)) return 'renta_tradicional'
+  if (/\b(credito|crédito|hipotecario|banco|preaprob)\b/.test(m)) return 'credito'
+  if (/\b(iva|27 bis|dfl2|tribut)\b/.test(m)) return 'tributario'
+  if (/\b(paraguay|miami|orlando|florida|chile|santiago|nunoa|ñunoa|stgo)\b/.test(m)) return 'ubicacion'
+  if (/\b(si|sí|dale|ok|okay|perfecto|ya)\b/.test(m)) {
+    if (la.includes('agend')) return 'agenda'
+    return 'afirmacion'
+  }
+  if (/\b(hola|buenas|buenos dias|buenas tardes)\b/.test(m)) return 'saludo'
+  if (/\b(me preguntas lo mismo|otra vez|de nuevo lo mismo|seguirás preguntando lo mismo|seguirás preguntando|a cada rato lo mismo)\b/.test(m)) return 'reclamo_repeticion'
+  if (/\b(eres muy|eres penca|wn|weon|weón)\b/.test(m)) return 'molesto'
+  if (/\b(inversion|invertir|para invertir|comprar para vivir|vivir)\b/.test(m)) return 'objetivo'
+  return 'general'
+}
+
+function sanitizeConversationHistory(history = []) {
+  return (Array.isArray(history) ? history : [])
+    .filter(item => item?.role && item?.content)
+    .slice(-40)
+    .map(item => ({
+      role: item.role === 'assistant' ? 'assistant' : 'user',
+      content: removeInternalMarkers(cleanText(item.content))
+    }))
+    .filter(item => item.content)
+}
+
+function inferAskedSlotsFromAssistant(text = '') {
+  const n = normalize(text)
+  const slots = []
+  if (/(invertir|generar renta|comprar para vivir|para vivir)/.test(n)) slots.push('objetivo')
+  if (/(renta corta|renta tradicional|modelo de renta|airbnb|booking)/.test(n)) slots.push('modelo')
+  if (/(comuna|ciudad|pais|país|zona|donde|dónde)/.test(n)) slots.push('ubicacion')
+  if (/(renta liquida|renta líquida|renta mensual|gano|ingreso|liquido suman|suman entre los dos)/.test(n)) slots.push('renta')
+  if (/(pie|ahorros|capital disponible|capital para invertir)/.test(n)) slots.push('pie')
+  if (/(propiedades a tu nombre|tienes propiedades)/.test(n)) slots.push('propiedades')
+  if (/(experiencia.*airbnb|booking|primera vez)/.test(n)) slots.push('experiencia')
+  if (/(correo|mail|email)/.test(n)) slots.push('email')
+  if (/(agenda|reunion|llamada|link)/.test(n)) slots.push('agenda')
+  return unique(slots)
+}
+
+function countAskedSlots(history = []) {
+  const counts = {}
+  for (const item of history || []) {
+    if (item.role !== 'assistant') continue
+    for (const slot of inferAskedSlotsFromAssistant(item.content)) {
+      counts[slot] = (counts[slot] || 0) + 1
+    }
+  }
+  return counts
+}
+
+function extractProfile(leadData = {}, history = [], currentMessage = '') {
+  const profile = {
+    nombre: cleanText(leadData.nombre),
+    email: cleanText(leadData.email),
+    telefono: cleanText(leadData.telefono),
+    rentaIndividual: 0,
+    rentaPareja: 0,
+    rentaTexto: cleanText(leadData.renta),
+    objetivo: cleanText(leadData.objetivo),
+    modelo: cleanText(leadData.modelo),
+    ubicacion: cleanText(leadData.ubicacion),
+    propiedades: cleanText(leadData.propiedades),
+    experiencia: cleanText(leadData.experiencia),
+    pie: cleanText(leadData.pie),
+    quiereAgenda: false,
+    quiereHumano: false,
+    noInteresado: false,
+    molesto: false,
+    reclamoRepeticion: false,
+    interesReal: false,
+    resumenHechos: []
+  }
+
+  const userMessages = [...history, { role: 'user', content: String(currentMessage || '') }]
+    .filter(item => item.role === 'user')
+
+  for (const item of userMessages) {
+    const text = String(item.content || '')
+    const n = normalize(text)
+
+    const email = extractEmail(text)
+    if (email) profile.email = email
+
+    const nameCandidate = extractNameCandidate(text)
+    if (nameCandidate && (!profile.nombre || profile.nombre.startsWith('+'))) profile.nombre = nameCandidate
+
+    const income = parseMoneyToNumber(text)
+    if (income) {
+      const couple = /(pareja|entre los dos|entre\s+los\s+dos|juntos|sumamos|hacemos|familia|conyuge|cónyuge|esposa|esposo)/.test(n)
+      if (couple) profile.rentaPareja = Math.max(profile.rentaPareja, income)
+      else profile.rentaIndividual = Math.max(profile.rentaIndividual, income)
+    }
+
+    const savings = parseSavingsToNumber(text)
+    if (savings) profile.pie = formatCLP(Math.max(parseMoneyToNumber(profile.pie), savings))
+    if (/\b(no|nada|cero)\b/.test(n) && /(pie|ahorro|ahorros|capital)/.test(n)) profile.pie = 'No tiene pie/ahorros por ahora'
+
+    if (/\b(inversion|invertir|para invertir|generar renta)\b/.test(n)) profile.objetivo = 'invertir'
+    if (/\b(vivir|para vivir|habitacional|primera vivienda)\b/.test(n)) profile.objetivo = 'vivir'
+
+    if (/\b(renta corta|airbnb|booking|diaria)\b/.test(n)) profile.modelo = 'renta_corta'
+    if (/\b(renta tradicional|arriendo tradicional)\b/.test(n)) profile.modelo = 'renta_tradicional'
+    if (/\b(retiro|jubilacion|jubilación)\b/.test(n)) profile.modelo = 'retiro_inmobiliario'
+
+    if (/no quiero santiago|ya no quiero santiago|no quiero stgo|ya no quiero stgo/.test(n)) profile.ubicacion = ''
+    else if (/stgo\s*centro|santiago\s*centro/.test(n)) profile.ubicacion = 'Santiago Centro'
+    else if (/nunoa|ñunoa/.test(n)) profile.ubicacion = 'Ñuñoa'
+    else if (/paraguay/.test(n)) profile.ubicacion = 'Paraguay'
+    else if (/florida|miami|orlando/.test(n)) profile.ubicacion = 'Florida / USA'
+    else if (/chile/.test(n) && !profile.ubicacion) profile.ubicacion = 'Chile'
+
+    if (/no\s+tengo\s+propiedades|sin\s+propiedades|no\s+tengo\s+ninguna\s+propiedad/.test(n)) profile.propiedades = 'No tiene propiedades'
+    else if (/tengo\s+propiedad|tengo\s+depto|tengo\s+departamento/.test(n)) profile.propiedades = cleanText(text)
+
+    if (/no\s+tengo\s+experiencia|sin\s+experiencia|primera\s+vez/.test(n)) profile.experiencia = 'Sin experiencia'
+    else if (/tengo\s+experiencia|ya\s+manejo\s+airbnb|manejo\s+airbnb/.test(n)) profile.experiencia = 'Con experiencia'
+
+    if (/agendar|agenda|reunion|reunión|llamada|horario|link/.test(n)) profile.quiereAgenda = true
+    if (/humano|asesor|ejecutivo|persona|luis/.test(n)) profile.quiereHumano = true
+    if (/no me interesa|chao|adios|adiós|deja de escribir|no quiero seguir/.test(n)) profile.noInteresado = true
+    if (/me preguntas lo mismo|otra vez|de nuevo lo mismo|a cada rato lo mismo|seguir[aá]s preguntando lo mismo/.test(n)) profile.reclamoRepeticion = true
+    if (/eres muy|eres penca|wn|weon|weón/.test(n)) profile.molesto = true
+
+    if (/(invertir|inversion|renta corta|renta tradicional|airbnb|booking|credito|crédito|iva|dfl2|proyecto|departamento|depto|agenda|reunion|llamada)/.test(n)) {
+      profile.interesReal = true
+    }
+  }
+
+  if (!profile.rentaTexto) {
+    if (profile.rentaPareja) profile.rentaTexto = `${formatCLP(profile.rentaPareja)} conjunta`
+    else if (profile.rentaIndividual) profile.rentaTexto = formatCLP(profile.rentaIndividual)
+  }
+
+  if (profile.nombre) profile.resumenHechos.push(`Nombre: ${profile.nombre}`)
+  if (profile.objetivo) profile.resumenHechos.push(`Objetivo: ${profile.objetivo}`)
+  if (profile.modelo) profile.resumenHechos.push(`Modelo: ${profile.modelo}`)
+  if (profile.ubicacion) profile.resumenHechos.push(`Zona: ${profile.ubicacion}`)
+  if (profile.rentaTexto) profile.resumenHechos.push(`Renta: ${profile.rentaTexto}`)
+  if (profile.pie) profile.resumenHechos.push(`Pie/ahorros: ${profile.pie}`)
+  if (profile.propiedades) profile.resumenHechos.push(`Propiedades: ${profile.propiedades}`)
+  if (profile.experiencia) profile.resumenHechos.push(`Experiencia: ${profile.experiencia}`)
+  if (profile.email) profile.resumenHechos.push(`Correo: ${profile.email}`)
+
+  return profile
+}
+
+function isQualified(profile = {}, rentaMin = 1500000, rentaMinPareja = 2000000) {
+  const rentaOk = (profile.rentaIndividual || 0) >= rentaMin || (profile.rentaPareja || 0) >= rentaMinPareja
+  const hasPie = !!profile.pie && !/no tiene/i.test(profile.pie)
+  return rentaOk || hasPie
+}
+
+function isSoftQualified(profile = {}, rentaMin = 1500000, rentaMinPareja = 2000000) {
+  const rentaOk = (profile.rentaIndividual || 0) >= Math.round(rentaMin * 0.8) || (profile.rentaPareja || 0) >= Math.round(rentaMinPareja * 0.8)
+  return rentaOk || !!profile.pie || profile.quiereAgenda
+}
+
+function getMissingSlots(profile = {}) {
+  const missing = []
+  if (!profile.objetivo) missing.push('objetivo')
+  if (profile.objetivo === 'invertir' && !profile.modelo) missing.push('modelo')
+  if (profile.objetivo === 'invertir' && !profile.ubicacion) missing.push('ubicacion')
+  if (!profile.rentaIndividual && !profile.rentaPareja && !profile.pie) missing.push('renta')
+  return missing
+}
+
+function summarizeProfile(profile = {}) {
+  return profile.resumenHechos.join(' · ') || 'Sin datos relevantes todavía.'
+}
+
+function buildQuestionForSlot(slot, profile = {}) {
+  switch (slot) {
+    case 'objetivo':
+      return '¿Esto lo estás viendo como inversión o para vivir?'
+    case 'modelo':
+      return 'Perfecto. ¿Te interesa más renta corta o renta tradicional?'
+    case 'ubicacion':
+      return profile.modelo === 'renta_corta'
+        ? 'Perfecto. ¿Qué comuna, ciudad o país quieres evaluar para renta corta?'
+        : 'Perfecto. ¿Qué comuna, ciudad o país quieres evaluar?'
+    case 'renta':
+      return 'Para ver capacidad real, ¿con qué renta líquida comprarías? Si es con pareja, dime la suma de ambos.'
+    case 'pie':
+      return '¿Tienes pie o ahorros para partir, aunque sea en cuotas?'
+    case 'propiedades':
+      return '¿Tienes alguna propiedad actualmente a tu nombre?'
+    case 'experiencia':
+      return '¿Ya has manejado Airbnb o sería primera vez?'
+    case 'email':
+      return '¿Me compartes tu correo para dejarte el caso bien tomado?'
+    default:
+      return 'Cuéntame un poco más para orientarte mejor.'
+  }
+}
+
+function pickNextSlot(profile = {}, askedCounts = {}, complaintMode = false) {
+  const missing = getMissingSlots(profile)
+  const candidates = complaintMode ? missing.filter(slot => (askedCounts[slot] || 0) === 0) : missing
+  if (candidates.length) return candidates[0]
+
+  if (!profile.pie && (askedCounts.pie || 0) === 0 && profile.objetivo === 'invertir' && !complaintMode) return 'pie'
+  if (!profile.experiencia && (askedCounts.experiencia || 0) === 0 && profile.modelo === 'renta_corta' && !complaintMode) return 'experiencia'
+  return ''
 }
 
 function extractActionAndData(rawReply = '') {
@@ -159,598 +404,195 @@ function extractActionAndData(rawReply = '') {
     reply = reply.replace(dataMatch[0], '').trim()
   }
 
-  if (!['calificado', 'escalar', 'no_interesado', 'conversando'].includes(action)) {
-    action = 'conversando'
-  }
+  if (!['calificado', 'escalar', 'no_interesado', 'conversando'].includes(action)) action = 'conversando'
 
-  return { reply: removeAgentMetadata(reply), action, leadUpdate: onlyAllowedLeadUpdate(leadUpdate) }
+  return { reply: removeInternalMarkers(reply), action, leadUpdate: onlyAllowedLeadUpdate(leadUpdate) }
 }
 
-function parseMoneyToNumber(text = '') {
-  const raw = normalizeForCheck(text)
-    .replace(/\$/g, '')
-    .replace(/\./g, '')
-    .replace(/,/g, '.')
-
-  // 2.5m, 2,5 millones, 2 millones. No confundir la "m" de "mensual" con millones.
-  const millionMatch = raw.match(/\b(\d+(?:\.\d+)?)\s*(mm|millon(?:es)?|m\b)/i)
-  if (millionMatch) return Math.round(Number(millionMatch[1]) * 1000000)
-
-  // 900 mil, 2500 mil, 900k.
-  const thousandMatch = raw.match(/\b(\d+(?:\.\d+)?)\s*(mil|k)\b/i)
-  if (thousandMatch) return Math.round(Number(thousandMatch[1]) * 1000)
-
-  const numberMatch = raw.match(/\b(\d{6,8})\b/)
-  if (numberMatch) return Number(numberMatch[1])
-
-  // En WhatsApp muchos escriben "2500 mensual" para decir $2.500.000.
-  const shortMonthlyMatch = raw.match(/\b(\d{3,5})\b/)
-  if (shortMonthlyMatch && /(mensual|liquido|líquido|renta|sueldo|gano|ingreso|hacemos|sumamos|pareja)/.test(raw)) {
-    const value = Number(shortMonthlyMatch[1])
-    if (value >= 500 && value <= 99999) return value * 1000
-  }
-
-  return 0
+function buildLeadUpdate(profile = {}, localUpdate = {}, agendaLink = '') {
+  return onlyAllowedLeadUpdate({
+    ...localUpdate,
+    nombre: profile.nombre,
+    email: profile.email,
+    renta: profile.rentaTexto,
+    modelo: profile.modelo,
+    objetivo: profile.objetivo,
+    ubicacion: profile.ubicacion,
+    propiedades: profile.propiedades,
+    experiencia: profile.experiencia,
+    pie: profile.pie,
+    agenda_link: agendaLink
+  })
 }
 
-function formatCLP(n = 0) {
-  if (!n) return ''
-  return '$' + Number(n).toLocaleString('es-CL')
-}
-
-function getFirstName(name = '') {
-  const cleaned = cleanText(name)
-  if (!cleaned || cleaned.startsWith('+')) return ''
-  return cleaned.split(/\s+/)[0]
-}
-
-function inferLocalIntent(message = '', conversationHistory = []) {
-  const m = normalizeForCheck(message)
-  const lastAssistant = [...conversationHistory]
-    .reverse()
-    .find(item => item?.role === 'assistant')?.content || ''
-  const lastA = normalizeForCheck(lastAssistant)
-
-  if (/me\s+preguntas|otra\s+vez|a\s+cada\s+rato|de\s+nuevo\s+lo\s+mismo|sigues\s+preguntando|seguiras\s+preguntando|seguirás\s+preguntando|penca|wn|weon|weón|funciona\s+mejor/i.test(message)) return 'frustracion'
-
-  if (/\b(donde|dónde|por\s+d[oó]nde|link|enlace)\b/i.test(message)) {
-    if (lastA.includes('agendar') || lastA.includes('agenda') || lastA.includes('reunion') || lastA.includes('reunión') || lastA.includes('proyectos') || lastA.includes('opciones')) return 'pide_link'
-  }
-
-  if (/\b(si|sí|dale|ok|okay|perfecto|ya|agendemos|agenda|llamame|llámame|llamada|reunion|reunión|quiero\s+agendar)\b/i.test(message)) {
-    if (lastA.includes('agendar') || lastA.includes('calendly') || lastA.includes('calendario') || lastA.includes('llamada') || lastA.includes('reunion') || lastA.includes('reunión')) return 'acepta_agendar'
-    return 'afirmacion'
-  }
-
-  if (/\b(inversion|inversi[oó]n|invertir|inversionista|generar\s+renta|comprar\s+para\s+invertir|para\s+invertir)\b/i.test(message)) return 'invertir'
-  if (m.includes('precio') || m.includes('valor') || m.includes('cuanto') || m.includes('cuánto') || m.includes('uf')) return 'precio'
-  if (m.includes('renta corta') || m.includes('airbnb') || m.includes('booking') || m.includes('diaria')) return 'renta_corta'
-  if (m.includes('renta') || m.includes('sueldo') || m.includes('gano') || m.includes('ingreso') || m.includes('liquido') || m.includes('líquido')) return 'renta'
-  if (m.includes('credito') || m.includes('crédito') || m.includes('hipotecario') || m.includes('banco') || m.includes('preaprob')) return 'credito'
-  if (m.includes('iva') || m.includes('27 bis') || m.includes('dfl2') || m.includes('impuesto') || m.includes('tribut')) return 'tributario'
-  if (m.includes('paraguay') || m.includes('florida') || m.includes('orlando') || m.includes('miami') || m.includes('chile')) return 'pais'
-  if (m.includes('humano') || m.includes('ejecutivo') || m.includes('asesor') || m.includes('luis') || m.includes('persona')) return 'humano'
-  if (m.includes('no me interesa') || m.includes('no quiero') || m.includes('dejen de escribir') || m.includes('eliminar')) return 'no_interesado'
-  if (m.includes('hola') || m.includes('buenas') || m.includes('buenos dias') || m.includes('buenos días') || m.includes('buenas tardes')) return 'saludo'
-  return 'general'
-}
-
-function deriveLeadUpdateFromMessage(message = {}) {
-  const text = String(message || '')
-  const n = normalizeForCheck(text)
+function deriveLeadUpdateFromMessage(message = '') {
+  const n = normalize(message)
   const update = {}
-
-  const income = parseMoneyToNumber(text)
+  const income = parseMoneyToNumber(message)
   if (income) update.renta = formatCLP(income)
-
-  if (n.includes('renta corta') || n.includes('airbnb') || n.includes('booking')) update.modelo = 'renta_corta'
-  else if (n.includes('renta tradicional') || n.includes('arriendo tradicional')) update.modelo = 'renta_tradicional'
-  else if (n.includes('vivir') || n.includes('habitacional')) update.modelo = 'vivir'
-  else if (n.includes('retiro') || n.includes('jubilacion') || n.includes('jubilación')) update.modelo = 'retiro_inmobiliario'
-  else if (n.includes('multicredito') || n.includes('multicrédito') || n.includes('varios departamentos')) update.modelo = 'multicredito'
-  else if (/\b(inversion|inversi[oó]n|invertir|inversionista|generar\s+renta|para\s+invertir)\b/.test(n)) update.modelo = 'inversion'
-
-  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
-  if (emailMatch) update.email = emailMatch[0]
-
+  const pie = parseSavingsToNumber(message)
+  if (pie) update.pie = formatCLP(pie)
+  const email = extractEmail(message)
+  if (email) update.email = email
+  if (/\b(inversion|invertir|para invertir)\b/.test(n)) update.objetivo = 'invertir'
+  if (/\b(vivir|para vivir)\b/.test(n)) update.objetivo = 'vivir'
+  if (/\b(renta corta|airbnb|booking)\b/.test(n)) update.modelo = 'renta_corta'
+  if (/\b(renta tradicional|arriendo tradicional)\b/.test(n)) update.modelo = 'renta_tradicional'
   return onlyAllowedLeadUpdate(update)
 }
 
-function buildMemorySummary(leadData = {}, conversationHistory = []) {
-  const all = conversationHistory.map(m => m.content).join(' \n ')
-  const n = normalizeForCheck(all)
-  const items = []
+function buildRuleDrivenReply({ message, profile, history, agendaLink, rentaMin, rentaMinPareja }) {
+  const intent = inferIntent(message, history)
+  const askedCounts = countAskedSlots(history)
+  const complaintMode = profile.reclamoRepeticion || intent === 'reclamo_repeticion'
+  const qualified = isQualified(profile, rentaMin, rentaMinPareja)
+  const softQualified = isSoftQualified(profile, rentaMin, rentaMinPareja)
+  const firstName = getFirstName(profile.nombre)
+  const intro = firstName ? `${firstName}, ` : ''
 
-  if (leadData?.nombre) items.push(`Nombre conocido: ${leadData.nombre}`)
-  if (leadData?.telefono) items.push(`Teléfono: ${leadData.telefono}`)
-  if (leadData?.renta) items.push(`Renta ya informada: ${leadData.renta}`)
-  if (leadData?.modelo) items.push(`Modelo/interés registrado: ${leadData.modelo}`)
-
-  if (n.includes('renta corta') || n.includes('airbnb') || n.includes('booking')) items.push('Interés detectado: renta corta')
-  if (n.includes('renta tradicional')) items.push('Interés detectado: renta tradicional')
-  if (n.includes('iva') || n.includes('27 bis')) items.push('Tema detectado: recuperación de IVA / 27 bis')
-  if (n.includes('dfl2')) items.push('Tema detectado: DFL2')
-  if (n.includes('paraguay')) items.push('País detectado: Paraguay')
-  if (n.includes('florida') || n.includes('miami') || n.includes('orlando')) items.push('País detectado: Florida / USA')
-  if (n.includes('chile') || n.includes('santiago')) items.push('País/mercado detectado: Chile')
-  if (n.includes('agendar') || n.includes('llamada') || n.includes('reunion')) items.push('El cliente ya mostró apertura a llamada/reunión')
-
-  return [...new Set(items)].join('\n') || 'Sin memoria comercial suficiente todavía.'
-}
-
-function extractNameCandidate(text = '') {
-  const lines = String(text || '')
-    .split(/\n+/)
-    .map(line => cleanText(line))
-    .filter(Boolean)
-
-  for (const line of lines) {
-    if (/@/.test(line)) continue
-    if (/\d/.test(line)) continue
-    const n = normalizeForCheck(line)
-    if (/^(no|si|sí|renta|airbnb|booking|stgo|santiago|quiero|gano|pero|responde)\b/.test(n)) continue
-    if (/^[a-záéíóúñ]+\s+[a-záéíóúñ]+/i.test(line)) return line
-  }
-  return ''
-}
-
-function extractNumberedAnswers(text = '') {
-  const n = normalizeForCheck(text)
-  const result = {}
-  const incomeMatch = n.match(/\b(?:2|renta)\s*[:.-]?\s*(\d{3,8})(?:\s*(mil|k|m|mm|millones?)\b)?/i)
-  if (incomeMatch) {
-    const raw = `${incomeMatch[1]} ${incomeMatch[2] || ''}`.trim()
-    let value = parseMoneyToNumber(raw)
-    if (!value) {
-      const num = Number(incomeMatch[1])
-      value = num < 100000 ? num * 1000 : num
+  if (profile.noInteresado || intent === 'no_interesado') {
+    return {
+      reply: `${intro}perfecto. No te molesto más. Si más adelante quieres revisar una inversión con números reales, me escribes por acá.`,
+      action: 'no_interesado'
     }
-    if (value) result.renta = value
-  }
-  if (/\b1\s*[:.-]?\s*no\b/.test(n) || /experiencia\s*[:.-]?\s*no\b/.test(n)) result.experiencia = 'Sin experiencia en Airbnb/Booking'
-  if (/\b3\s*[:.-]?\s*no\b/.test(n) || /propiedades?\s*[:.-]?\s*no\b/.test(n)) result.propiedades = 'No tiene propiedades'
-  return result
-}
-
-function extractLeadProfileFromHistory(leadData = {}, conversationHistory = [], currentMessage = '') {
-  const profile = {
-    nombre: cleanText(leadData.nombre),
-    telefono: cleanText(leadData.telefono),
-    email: cleanText(leadData.email),
-    rentaIndividual: 0,
-    rentaPareja: 0,
-    rentaTexto: cleanText(leadData.renta),
-    modelo: cleanText(leadData.modelo),
-    ubicacion: '',
-    propiedades: '',
-    experiencia: '',
-    quiereAgendar: false,
-    interesReal: false
   }
 
-  const allMessages = [
-    ...(Array.isArray(conversationHistory) ? conversationHistory : []),
-    { role: 'user', content: String(currentMessage || '') }
-  ]
-  const allUserText = normalizeForCheck(allMessages.filter(m => m?.role === 'user').map(m => m.content || '').join(' '))
-
-  for (const item of allMessages) {
-    if (item?.role !== 'user') continue
-    const text = String(item.content || '')
-    const n = normalizeForCheck(text)
-
-    const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
-    if (emailMatch) profile.email = emailMatch[0]
-
-    const nameCandidate = extractNameCandidate(text)
-    if (nameCandidate && (!profile.nombre || profile.nombre.startsWith('+'))) profile.nombre = nameCandidate
-
-    const income = parseMoneyToNumber(text)
-    if (income) {
-      const isCouple = /(pareja|esposa|esposo|conyuge|c[oó]nyuge|entre\s+los\s+dos|juntos|sumamos|hacemos|familiar|familia)/i.test(n)
-      const contextSaysCouple = /pareja|entre\s+los\s+dos|juntos|hacemos|sumamos/.test(allUserText)
-      if (isCouple || (income >= 2000000 && contextSaysCouple)) {
-        profile.rentaPareja = Math.max(profile.rentaPareja || 0, income)
-      } else {
-        profile.rentaIndividual = Math.max(profile.rentaIndividual || 0, income)
-      }
+  if (profile.quiereHumano || intent === 'humano') {
+    return {
+      reply: `${intro}perfecto. Te conviene verlo directo en reunión para no perder tiempo por chat. Te dejo el link para elegir horario:\n${agendaLink}`,
+      action: 'escalar'
     }
+  }
 
-    if (/renta\s+corta|airbnb|booking|diaria/.test(n)) profile.modelo = 'renta_corta'
-    else if (/renta\s+tradicional|arriendo\s+tradicional/.test(n)) profile.modelo = 'renta_tradicional'
-    else if (/retiro|jubilacion|jubilación/.test(n)) profile.modelo = 'retiro_inmobiliario'
-    else if (/vivir|primera\s+vivienda/.test(n)) profile.modelo = 'vivir'
-    else if (/\b(inversion|inversi[oó]n|invertir|inversionista|generar\s+renta|para\s+invertir)\b/.test(n)) {
-      if (!profile.modelo || profile.modelo === 'vivir') profile.modelo = 'inversion'
+  if ((profile.quiereAgenda || intent === 'agenda') && (qualified || softQualified || profile.interesReal)) {
+    return {
+      reply: `${intro}perfecto. Lo mejor es verlo en reunión y aterrizar proyectos, crédito, pie y estrategia según tu caso. Agenda aquí:\n${agendaLink}`,
+      action: 'calificado'
     }
-
-    const numbered = extractNumberedAnswers(text)
-    if (numbered.renta) profile.rentaIndividual = Math.max(profile.rentaIndividual || 0, numbered.renta)
-    if (numbered.experiencia) profile.experiencia = numbered.experiencia
-    if (numbered.propiedades) profile.propiedades = numbered.propiedades
-
-    if (/stgo\s*centro|santiago\s*centro/.test(n)) profile.ubicacion = 'Santiago centro'
-    else if (/nunoa|ñuñoa/.test(n)) profile.ubicacion = 'Ñuñoa'
-    else if (/florida|miami|orlando/.test(n)) profile.ubicacion = 'Florida / USA'
-    else if (/paraguay/.test(n)) profile.ubicacion = 'Paraguay'
-
-    if (/no\s+tengo\s+propiedades|sin\s+propiedades|no\s+tengo\s+ninguna\s+propiedad/.test(n)) profile.propiedades = 'No tiene propiedades'
-    else if (/tengo\s+\d+\s+propiedad|tengo\s+\d+\s+dpto|tengo\s+\d+\s+departamento/.test(n)) profile.propiedades = text
-
-    if (/no\s+tengo\s+experiencia|sin\s+experiencia|primera\s+vez/.test(n)) profile.experiencia = 'Sin experiencia en Airbnb/Booking'
-    else if (/tengo\s+experiencia|manejo\s+airbnb|ya\s+arriendo\s+por\s+airbnb/.test(n)) profile.experiencia = 'Con experiencia en Airbnb/Booking'
-
-    if (/agendar|agenda|reuni[oó]n|llamada|quiero\s+hablar|calendly/.test(n)) profile.quiereAgendar = true
-    if (/renta\s+corta|airbnb|booking|dpto|departamento|invertir|stgo\s*centro|santiago\s*centro|iva|dfl2|credito|cr[eé]dito/.test(n)) profile.interesReal = true
   }
 
-  if (!profile.rentaTexto) {
-    if (profile.rentaPareja) profile.rentaTexto = `${formatCLP(profile.rentaPareja)} conjunta`
-    else if (profile.rentaIndividual) profile.rentaTexto = formatCLP(profile.rentaIndividual)
-  }
-
-  return profile
-}
-
-function isProfileQualified(profile = {}, rentaMin = 1500000, rentaMinPareja = 2000000) {
-  return (
-    Number(profile.rentaIndividual || 0) >= rentaMin ||
-    Number(profile.rentaPareja || 0) >= rentaMinPareja ||
-    (profile.quiereAgendar && (profile.rentaIndividual || profile.rentaPareja || profile.email))
-  )
-}
-
-function missingMeetingFields(profile = {}) {
-  const missing = []
-  if (!profile.nombre || profile.nombre.startsWith('+')) missing.push('nombre completo')
-  if (!profile.email) missing.push('correo')
-  if (!profile.rentaIndividual && !profile.rentaPareja && !profile.rentaTexto) missing.push('renta líquida')
-  if (!profile.propiedades) missing.push('si tienes propiedades')
-  if (!profile.modelo) missing.push('modelo de inversión')
-  return missing
-}
-
-function buildProfileSummary(profile = {}) {
-  const rows = []
-  if (profile.nombre) rows.push(`Nombre: ${profile.nombre}`)
-  if (profile.email) rows.push(`Correo: ${profile.email}`)
-  if (profile.rentaIndividual) rows.push(`Renta individual detectada: ${formatCLP(profile.rentaIndividual)}`)
-  if (profile.rentaPareja) rows.push(`Renta conjunta/pareja detectada: ${formatCLP(profile.rentaPareja)}`)
-  if (profile.rentaTexto && !profile.rentaIndividual && !profile.rentaPareja) rows.push(`Renta declarada: ${profile.rentaTexto}`)
-  if (profile.modelo) rows.push(`Modelo/interés: ${profile.modelo}`)
-  if (profile.ubicacion) rows.push(`Zona/país de interés: ${profile.ubicacion}`)
-  if (profile.propiedades) rows.push(`Propiedades: ${profile.propiedades}`)
-  if (profile.experiencia) rows.push(`Experiencia: ${profile.experiencia}`)
-  if (profile.quiereAgendar) rows.push('El cliente pidió agendar reunión')
-  return rows.join('\n') || 'Sin perfil consolidado aún.'
-}
-
-function buildCoherentDeterministicReply({ message, leadData, agendaLink, conversationHistory, profile, rentaMin, rentaMinPareja }) {
-  const intent = inferLocalIntent(message, conversationHistory)
-  const n = normalizeForCheck(message)
-  const name = getFirstName(profile?.nombre || leadData?.nombre)
-  const saludo = name ? `${name}, ` : ''
-  const qualified = isProfileQualified(profile, rentaMin, rentaMinPareja)
-  const missing = missingMeetingFields(profile)
-  const hasContactAndMoney = !!profile.email && !!profile.nombre && (!!profile.rentaIndividual || !!profile.rentaPareja || !!profile.rentaTexto)
-  const hasInvestmentDirection = profile.modelo && profile.modelo !== 'vivir'
-  const knownFacts = [
-    hasInvestmentDirection ? `inversión${profile.modelo === 'renta_corta' ? ' para renta corta' : ''}` : '',
-    profile.ubicacion || '',
-    profile.rentaTexto ? `renta ${profile.rentaTexto}` : '',
-    profile.propiedades || '',
-    profile.experiencia || ''
-  ].filter(Boolean).join(', ')
-
-  if (intent === 'frustracion') {
-    if (qualified) {
+  if ((complaintMode || profile.molesto || intent === 'molesto') && (qualified || softQualified || profile.interesReal)) {
+    const nextSlot = pickNextSlot(profile, askedCounts, true)
+    if (!nextSlot || (askedCounts[nextSlot] || 0) >= 1) {
       return {
-        reply: `${saludo}tienes razón, me estaba repitiendo. Ya tengo claro: ${knownFacts || 'quieres invertir'}.
-
-El siguiente paso es revisar opciones reales y números en reunión. Agenda acá:
-${agendaLink}`,
-        action: 'calificado',
-        leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+        reply: `${intro}tienes razón. Ya no te voy a repetir lo mismo. Con lo que ya me diste, lo mejor es avanzar a reunión para mostrarte opciones reales. Te dejo el link:\n${agendaLink}`,
+        action: qualified || softQualified ? 'calificado' : 'conversando'
       }
     }
     return {
-      reply: `${saludo}tienes razón, voy directo. Ya entendí que buscas invertir. Para avanzar sin vueltas, dime solo tu renta líquida aproximada o si vas a complementar con pareja.`,
-      action: 'conversando',
-      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+      reply: `${intro}tienes razón. Voy directo. Ya tengo esto: ${summarizeProfile(profile)}.\n\nSolo me falta esto para orientarte mejor: ${buildQuestionForSlot(nextSlot, profile)}`,
+      action: 'conversando'
     }
   }
 
-  if (intent === 'pide_link' && qualified) {
+  if (profile.objetivo === 'invertir' && profile.modelo && (profile.rentaIndividual || profile.rentaPareja || profile.pie) && (qualified || softQualified)) {
     return {
-      reply: `${saludo}agenda por acá y lo vemos con números reales:
-${agendaLink}`,
-      action: 'calificado',
-      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+      reply: `${intro}perfecto. Ya tengo lo principal: ${summarizeProfile(profile)}.\n\nCon eso sí conviene revisar alternativas contigo en reunión. Agenda acá:\n${agendaLink}`,
+      action: 'calificado'
     }
   }
 
-  if (/^chao|adios|adiós|bye/i.test(n)) {
+  const nextSlot = pickNextSlot(profile, askedCounts, false)
+  if (nextSlot && (askedCounts[nextSlot] || 0) < 2) {
     return {
-      reply: qualified
-        ? `${saludo}dale, no te molesto más. Te dejo el link por si después quieres revisar opciones reales:
-${agendaLink}`
-        : `${saludo}dale, gracias por escribir. Si más adelante quieres revisar una inversión inmobiliaria, me escribes por acá.`,
-      action: qualified ? 'calificado' : 'no_interesado',
-      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+      reply: `${intro}${buildQuestionForSlot(nextSlot, profile)}`,
+      action: 'conversando'
     }
   }
 
-  if ((intent === 'invertir' || /para\s+invertir|inversion|inversi[oó]n/.test(n)) && (profile.rentaTexto || profile.ubicacion || profile.modelo)) {
-    if (qualified && (profile.ubicacion || profile.modelo === 'renta_corta')) {
-      return {
-        reply: `${saludo}perfecto, ya quedó claro que es inversión${profile.ubicacion ? ' en ' + profile.ubicacion : ''}. Con ${profile.rentaTexto || 'tu perfil'} podemos revisar alternativas reales.
-
-Agendemos y vemos proyectos, crédito y números:
-${agendaLink}`,
-        action: 'calificado',
-        leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
-      }
-    }
-
-    const nextQuestion = !profile.modelo || profile.modelo === 'inversion'
-      ? '¿La quieres para renta corta o renta tradicional?'
-      : !profile.ubicacion
-        ? '¿Qué comuna o país te interesa evaluar?'
-        : !profile.rentaTexto
-          ? '¿Cuál es tu renta líquida mensual aproximada?'
-          : '¿Quieres que agendemos una llamada para revisar opciones?'
+  if (profile.interesReal) {
     return {
-      reply: `${saludo}perfecto, ya quedó claro que es para invertir. ${nextQuestion}`,
-      action: qualified ? 'calificado' : 'conversando',
-      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
-    }
-  }
-
-  if ((profile.quiereAgendar || intent === 'acepta_agendar') && qualified && hasContactAndMoney && missing.length <= 1) {
-    const rentaLine = profile.rentaPareja
-      ? `renta conjunta de ${formatCLP(profile.rentaPareja)}`
-      : profile.rentaIndividual
-        ? `renta de ${formatCLP(profile.rentaIndividual)}`
-        : `renta declarada de ${profile.rentaTexto}`
-    const zona = profile.ubicacion ? ` en ${profile.ubicacion}` : ''
-    const modelo = profile.modelo === 'renta_corta' ? 'renta corta' : (profile.modelo || 'inversión inmobiliaria')
-    return {
-      reply: `${saludo}perfecto. Con ${rentaLine}, ${profile.propiedades ? profile.propiedades.toLowerCase() : 'tu perfil'} y foco en ${modelo}${zona}, sí corresponde agendar.
-
-En la reunión revisamos crédito, pie, proyectos y números reales. Agenda acá:
-${agendaLink}`,
-      action: 'calificado',
-      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
-    }
-  }
-
-  if ((profile.quiereAgendar || intent === 'acepta_agendar') && qualified && missing.length > 0 && missing.length <= 3) {
-    return {
-      reply: `${saludo}vamos bien. Para dejar la reunión bien tomada solo me falta: ${missing.join(', ')}.
-
-Me lo mandas por acá y te paso el link para agendar.`,
-      action: 'conversando',
-      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
-    }
-  }
-
-  if (/no\s+tengo\s+experiencia|sin\s+experiencia|por\s+eso\s+quiero\s+que\s+me\s+orienten/.test(n) && qualified && (profile.quiereAgendar || profile.email || profile.interesReal)) {
-    return {
-      reply: `${saludo}justamente para eso es la asesoría. No necesitas experiencia previa: revisamos si el edificio permite renta corta, números reales, costos y cómo se administraría.
-
-Agenda acá y lo vemos con calma:
-${agendaLink}`,
-      action: 'calificado',
-      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
-    }
-  }
-
-  if (/^responde\b|me\s+respondes|contesta/.test(n)) {
-    if (profile.rentaIndividual || profile.rentaPareja || profile.modelo || profile.ubicacion) {
-      return {
-        reply: `${saludo}sí, te sigo. Ya tengo esto: ${knownFacts || 'quieres invertir'}.
-
-¿Quieres que lo llevemos a una reunión para revisar proyectos y números reales?`,
-        action: qualified ? 'calificado' : 'conversando',
-        leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
-      }
-    }
-  }
-
-  if (profile.email && (profile.rentaIndividual || profile.rentaPareja) && profile.interesReal && qualified) {
-    return {
-      reply: `${saludo}perfecto, con esos datos ya puedo orientarte mejor. Calzas para revisar alternativas de ${profile.modelo === 'renta_corta' ? 'renta corta' : 'inversión'}${profile.ubicacion ? ' en ' + profile.ubicacion : ''}.
-
-Te dejo el link para agendar y revisar números reales:
-${agendaLink}`,
-      action: 'calificado',
-      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
+      reply: `${intro}ya tengo buen contexto: ${summarizeProfile(profile)}.\n\nPara no hacerte perder tiempo por chat, te dejo el link y lo revisamos con calma:\n${agendaLink}`,
+      action: softQualified ? 'calificado' : 'conversando'
     }
   }
 
   return null
 }
 
-function buildSafeFallback(message = '', leadData = {}, agendaLink = DEFAULT_AGENDA_LINK, conversationHistory = []) {
-  const intent = inferLocalIntent(message, conversationHistory)
-  const name = getFirstName(leadData?.nombre)
-  const saludo = name ? `${name}, ` : ''
-  const calendarLine = agendaLink ? `\n${agendaLink}` : ''
-  const fallbackProfile = extractLeadProfileFromHistory(leadData, conversationHistory, message)
-  const alreadyInvestment = fallbackProfile.modelo && fallbackProfile.modelo !== 'vivir'
-  const alreadyQualified = isProfileQualified(fallbackProfile)
-
-  if (intent === 'frustracion') {
-    return alreadyQualified
-      ? `${saludo}tienes razón, no te vuelvo a preguntar lo mismo. Ya tengo claro que buscas invertir${fallbackProfile.ubicacion ? ' en ' + fallbackProfile.ubicacion : ''}. Agendemos y revisamos opciones reales:${calendarLine}`.trim()
-      : `${saludo}tienes razón, voy directo. Ya entendí que buscas invertir. Para avanzar, dime solo tu renta líquida aproximada o si complementas con pareja.`.trim()
-  }
-
-  if (intent === 'pide_link') {
-    return `${saludo}por acá puedes agendar y lo revisamos con números reales:${calendarLine}`.trim()
-  }
-
-  if (intent === 'acepta_agendar') {
-    return `${saludo}perfecto. Agendemos y revisamos tu caso con números reales: renta, crédito, pie y proyectos que calcen contigo.${calendarLine}`.trim()
-  }
-
-  if (intent === 'invertir') {
-    if (fallbackProfile.rentaTexto || fallbackProfile.ubicacion || fallbackProfile.modelo) {
-      return `${saludo}perfecto, ya quedó claro que es para invertir${fallbackProfile.ubicacion ? ' en ' + fallbackProfile.ubicacion : ''}. ¿Prefieres enfocarlo en renta corta o renta tradicional?`.trim()
-    }
-    return `${saludo}perfecto, inversión. ¿Buscas renta corta, renta tradicional o plusvalía?`.trim()
-  }
-
-  if (intent === 'afirmacion') {
-    if (alreadyInvestment) return `${saludo}buenísimo. Sigamos con inversión. ¿Prefieres renta corta o renta tradicional?`.trim()
-    return `${saludo}buenísimo. Para avanzar bien, dime una cosa: ¿buscas renta corta, renta tradicional o plusvalía?`.trim()
-  }
-
-  if (intent === 'precio') {
-    return `${saludo}depende del proyecto, entrega y estrategia. Para no tirarte un número al aire, ¿lo buscas para renta corta, renta tradicional o para vivir?`.trim()
-  }
-
-  if (intent === 'renta_corta') {
-    return `${saludo}para renta corta hay que revisar edificio, reglamento, demanda real, costos y ocupación anual. ¿Estás mirando Santiago centro u otra comuna?`.trim()
-  }
-
-  if (intent === 'renta') {
-    const income = parseMoneyToNumber(message)
-    if (income >= 1500000) {
-      return `${saludo}con ${formatCLP(income)} líquido ya podemos revisar alternativas. ¿Comprarías solo o complementarías renta con pareja/familia?`.trim()
-    }
-    return `${saludo}perfecto. Para orientarte bien, ¿esa renta es individual o estás pensando complementar con pareja/familia?`.trim()
-  }
-
-  if (intent === 'credito') {
-    return `${saludo}lo clave es revisar renta, deuda actual, pie y timing de entrega. ¿Ya tienes preaprobación o aún no has evaluado crédito?`.trim()
-  }
-
-  if (intent === 'tributario') {
-    return `${saludo}eso hay que estructurarlo bien, porque DFL2, IVA 27 bis y renta corta no aplican igual en todos los casos. ¿Ya tienes propiedades a tu nombre?`.trim()
-  }
-
-  if (intent === 'pais') {
-    return `${saludo}trabajamos oportunidades en Chile y también alternativas internacionales como Florida y Paraguay. ¿Qué país te interesa evaluar primero?`.trim()
-  }
-
-  if (intent === 'humano') {
-    return `${saludo}claro. Te dejo avanzado el diagnóstico y lo puede tomar el equipo. ¿Quieres que agendemos una llamada?${calendarLine}`.trim()
-  }
-
-  if (intent === 'no_interesado') {
-    return `${saludo}perfecto, no te molesto más. Si más adelante quieres evaluar una inversión inmobiliaria con números reales, me escribes por acá.`.trim()
-  }
-
-  if (intent === 'saludo') {
-    return `Hola${name ? ' ' + name : ''}. Soy Rabito de Rabbitts Capital. Para orientarte bien, ¿buscas renta corta, renta tradicional o plusvalía?`.trim()
-  }
-
-  if (alreadyInvestment) {
-    if (alreadyQualified) return `${saludo}ya tengo claro tu perfil. El siguiente paso es revisar opciones y números reales en reunión:${calendarLine}`.trim()
-    return `${saludo}ya tengo claro que buscas invertir. Para recomendarte bien, dime tu renta líquida aproximada o si comprarías con renta complementaria.`.trim()
-  }
-
-  return `${saludo}te sigo. Para ayudarte bien, dime si quieres renta corta, renta tradicional o plusvalía.`.trim()
-}
-
-function sanitizeConversationHistory(conversationHistory = []) {
-  return (Array.isArray(conversationHistory) ? conversationHistory : [])
-    .filter(item => item?.role && item?.content)
-    .slice(-28)
-    .map(item => {
-      const role = item.role === 'assistant' ? 'assistant' : 'user'
-      let content = cleanText(item.content)
-
-      if (role === 'assistant' && containsForbiddenReply(content)) {
-        content = 'Mensaje técnico omitido. Rabito continuó disponible y mantuvo la conversación comercial.'
-      }
-
-      return { role, content }
-    })
-    .filter(item => item.content)
-}
-
-function stripDuplicateGreeting(out = '', safeHistory = []) {
-  const hasPreviousAssistant = safeHistory.some(m => m.role === 'assistant')
-  if (!hasPreviousAssistant) return out
-
-  return out
-    .replace(/^hola\s+[a-záéíóúñ]+[,!\.\s]+/i, '')
-    .replace(/^hola[,!\.\s]+/i, '')
-    .trim()
-}
-
-function sanitizeFinalReply(reply = '', message = '', leadData = {}, agendaLink = DEFAULT_AGENDA_LINK, conversationHistory = []) {
-  let out = removeAgentMetadata(reply)
+function sanitizeFinalReply(reply = '', message = '', profile = {}, agendaLink = DEFAULT_AGENDA, history = []) {
+  let out = removeInternalMarkers(reply)
     .replace(/\*\*/g, '')
     .replace(/^[\s"']+|[\s"']+$/g, '')
     .trim()
 
   if (!out || containsForbiddenReply(out) || looksRobotic(out)) {
-    out = buildSafeFallback(message, leadData, agendaLink, conversationHistory)
+    const fallback = buildRuleDrivenReply({
+      message,
+      profile,
+      history,
+      agendaLink,
+      rentaMin: 1500000,
+      rentaMinPareja: 2000000
+    })
+    out = fallback?.reply || 'Cuéntame qué estás buscando y te oriento de forma directa.'
   }
 
-  const replacements = [
-    [/hola\s*👋\s*estoy con alta demanda.*$/gi, 'Hola. Estoy aquí. Cuéntame, ¿buscas invertir para renta corta, renta tradicional o comprar para vivir?'],
-    [/estoy con alta demanda.*$/gi, 'Estoy aquí. Cuéntame qué estás buscando y te oriento.'],
-    [/te respondo en unos minutos\.?/gi, 'te respondo ahora.'],
-    [/soy una ia/gi, 'soy Rabito, el asistente comercial de Rabbitts Capital'],
-    [/soy inteligencia artificial/gi, 'soy Rabito, el asistente comercial de Rabbitts Capital'],
-    [/como modelo de lenguaje[^\.]*\.?/gi, ''],
-    [/no tengo acceso[^\.]*\.?/gi, '']
-  ]
+  out = out
+    .replace(/hola\s*👋\s*estoy con alta demanda.*$/gi, 'Hola. Estoy aquí. Cuéntame qué estás buscando y te oriento.')
+    .replace(/estoy con alta demanda.*$/gi, 'Estoy aquí. Cuéntame qué estás buscando y te oriento.')
+    .replace(/te respondo en unos minutos\.?/gi, 'te respondo ahora.')
+    .replace(/soy una ia/gi, 'soy Rabito, el asistente comercial de Rabbitts Capital')
+    .replace(/soy inteligencia artificial/gi, 'soy Rabito, el asistente comercial de Rabbitts Capital')
+    .replace(/como modelo de lenguaje[^\.]*\.?/gi, '')
+    .trim()
 
-  for (const [pattern, replacement] of replacements) {
-    out = out.replace(pattern, replacement).trim()
-  }
-
-  if (containsForbiddenReply(out) || looksRobotic(out)) {
-    out = buildSafeFallback(message, leadData, agendaLink, conversationHistory)
-  }
-
-  out = stripDuplicateGreeting(out, conversationHistory)
-
-  // WhatsApp natural: máximo 5 líneas, máximo 850 caracteres.
   const lines = out.split('\n').map(line => line.trim()).filter(Boolean)
   if (lines.length > 5) out = lines.slice(0, 5).join('\n')
-  if (out.length > 850) out = out.slice(0, 820).replace(/\s+\S*$/, '') + '...'
+  if (out.length > 900) out = out.slice(0, 860).replace(/\s+\S*$/, '') + '...'
 
   return out.trim()
 }
 
-async function loadKnowledgeContext(iaConfig = {}) {
+function buildLeadContext(profile = {}) {
+  return [
+    profile.nombre ? `Nombre: ${profile.nombre}` : '',
+    profile.email ? `Correo: ${profile.email}` : '',
+    profile.objetivo ? `Objetivo: ${profile.objetivo}` : '',
+    profile.modelo ? `Modelo: ${profile.modelo}` : '',
+    profile.ubicacion ? `Zona: ${profile.ubicacion}` : '',
+    profile.rentaTexto ? `Renta: ${profile.rentaTexto}` : '',
+    profile.pie ? `Pie/ahorros: ${profile.pie}` : '',
+    profile.propiedades ? `Propiedades: ${profile.propiedades}` : '',
+    profile.experiencia ? `Experiencia: ${profile.experiencia}` : '',
+    profile.quiereAgenda ? 'Pidió agenda/reunión' : '',
+    profile.reclamoRepeticion ? 'Se quejó por repetición' : ''
+  ].filter(Boolean).join('\n') || 'Sin datos consolidados todavía.'
+}
+
+async function getSupabaseClient() {
+  const SB_URL = cleanText(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
+  const SB_KEY = cleanText(process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
+  if (!SB_URL || !SB_KEY) return null
+
+  const { createClient } = await import('@supabase/supabase-js')
+  return createClient(SB_URL, SB_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  })
+}
+
+async function loadKnowledgeContext(iaConfig = {}, sb = null) {
   const blocks = []
 
   if (Array.isArray(iaConfig.driveFiles) && iaConfig.driveFiles.length) {
     const txt = iaConfig.driveFiles
       .filter(file => file?.content || file?.text)
       .slice(0, 8)
-      .map(file => `📄 ${file.name || 'Documento'}:\n${String(file.content || file.text || '').slice(0, 8000)}`)
+      .map(file => `📄 ${file.name || 'Documento'}:\n${String(file.content || file.text || '').slice(0, 5000)}`)
       .join('\n\n───────────\n\n')
-    if (txt) blocks.push('═══ DOCUMENTOS CARGADOS EN CONFIGURACIÓN ═══\n' + txt)
+    if (txt) blocks.push('═══ DOCUMENTOS CARGADOS EN LA CONFIGURACIÓN ═══\n' + txt)
   }
 
-  const SB_URL = cleanText(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
-  const SB_KEY = cleanText(process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
-  if (!SB_URL || !SB_KEY) return blocks.join('\n\n')
+  if (!sb) return blocks.join('\n\n')
 
   try {
-    const { createClient } = await import('@supabase/supabase-js')
-    const sb = createClient(SB_URL, SB_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false }
-    })
-
     const keys = ['drive_content', 'rabito_knowledge', 'ia_knowledge']
     const { data, error } = await sb
       .from('crm_settings')
       .select('key,value')
       .in('key', keys)
 
-    if (error) {
-      console.warn('[Agent] Knowledge config error:', error.message)
-      return blocks.join('\n\n')
-    }
+    if (error) return blocks.join('\n\n')
 
     for (const row of data || []) {
       const value = row?.value
@@ -758,26 +600,151 @@ async function loadKnowledgeContext(iaConfig = {}) {
 
       if (row.key === 'drive_content' && Array.isArray(value.files)) {
         const txt = value.files
-          .slice(0, 10)
-          .map(file => `📄 ${file.name || 'Documento'}${file.categoria ? ' · Categoría: ' + file.categoria : ''}${file.carpeta ? ' · Carpeta: ' + file.carpeta : ''}:\n${String(file.content || '').slice(0, 9000)}`)
+          .slice(0, 12)
+          .map(file => `📄 ${file.name || 'Documento'}${file.carpeta ? ' · Carpeta: ' + file.carpeta : ''}:\n${String(file.content || '').slice(0, 7000)}`)
           .join('\n\n───────────\n\n')
-        if (txt) blocks.push('═══ BASE DE CONOCIMIENTO INTERNA ═══\n' + txt)
+        if (txt) blocks.push('═══ BASE DE CONOCIMIENTO ═══\n' + txt)
       }
 
       if ((row.key === 'rabito_knowledge' || row.key === 'ia_knowledge') && Array.isArray(value.items)) {
         const txt = value.items
           .filter(item => item?.title || item?.content)
-          .slice(0, 20)
-          .map(item => `• ${item.title || 'Regla'}: ${String(item.content || '').slice(0, 2500)}`)
+          .slice(0, 24)
+          .map(item => `• ${item.title || 'Regla'}: ${String(item.content || '').slice(0, 1800)}`)
           .join('\n')
         if (txt) blocks.push(`═══ ${row.key.toUpperCase()} ═══\n${txt}`)
       }
     }
-  } catch (error) {
-    console.warn('[Agent] Knowledge error:', error.message)
+  } catch (_) {
+    // noop
   }
 
   return blocks.join('\n\n')
+}
+
+async function loadFeedbackLearnings(sb = null) {
+  if (!sb) return ''
+  try {
+    const { data, error } = await sb
+      .from('crm_conv_feedback')
+      .select('msg_content,feedback,correction,created_at')
+      .eq('feedback', 'correccion')
+      .order('created_at', { ascending: false })
+      .limit(60)
+
+    if (error || !Array.isArray(data)) return ''
+
+    const blocks = data
+      .filter(item => cleanText(item.correction))
+      .slice(0, 50)
+      .map((item, idx) => `[CORRECCION APRENDIDA ${idx + 1}] Si una situación se parece a esto: "${cleanText(item.msg_content).slice(0, 350)}" entonces una mejor respuesta o línea de acción es: "${cleanText(item.correction).slice(0, 500)}"`)
+
+    return blocks.join('\n\n')
+  } catch (_) {
+    return ''
+  }
+}
+
+function buildTrainingBlocks(iaConfig = {}, feedbackLearnings = '') {
+  const permanentRules = Array.isArray(iaConfig.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento : []
+  const entrenamiento = Array.isArray(iaConfig.entrenamiento) ? iaConfig.entrenamiento : []
+
+  const rules = permanentRules
+    .filter(item => item?.title && item?.content)
+    .slice(0, 80)
+    .map((item, index) => `[REGLA PERMANENTE ${index + 1}] ${item.title}: ${item.content}`)
+
+  const qa = entrenamiento
+    .filter(item => item?.pregunta && item?.respuesta)
+    .slice(0, 80)
+    .map((item, index) => {
+      let block = `[ENTRENAMIENTO ${index + 1}] Si el cliente pregunta o plantea algo parecido a: "${item.pregunta}", responde siguiendo esta idea: "${item.respuesta}"`
+      if (item.razon) block += `\nContexto extra: ${item.razon}`
+      return block
+    })
+
+  return [feedbackLearnings, ...rules, ...qa].filter(Boolean).join('\n\n')
+}
+
+function buildSystemPrompt({ iaConfig, agendaLink, rentaMin, rentaMinPareja, trainingBlocks, knowledgeContext, profile, history, nextSlot, currentIntent }) {
+  const personalidad = cleanText(iaConfig.personalidad || 'Eres Rabito, asistente comercial de Rabbitts Capital.')
+  const productosRabito = cleanText(iaConfig.productosRabito)
+  const pasosRabito = cleanText(iaConfig.pasosRabito)
+  const reglasRabito = cleanText(iaConfig.reglasRabito)
+  const objecionesRabito = cleanText(iaConfig.objecionesRabito)
+  const guion = cleanText(iaConfig.guion)
+  const askedCounts = countAskedSlots(history)
+
+  return `${personalidad}
+
+═══ PRINCIPIO OPERATIVO ═══
+Tu conducta no se basa en conversaciones pregrabadas. Debes responder usando:
+1. Lo que el usuario ya dijo en esta conversación.
+2. Las reglas del panel IA.
+3. El entrenamiento y correcciones aprendidas.
+4. La base de conocimiento cargada.
+
+Si un dato ya existe en PERFIL CONSOLIDADO, NO lo vuelvas a pedir.
+Si el cliente reclama por repetición, NO repitas preguntas. Resume lo que ya sabes y avanza.
+Si ya tienes objetivo + modelo + renta o pie, invita a reunión. No sigas interrogando.
+
+═══ OFERTA / CONTEXTO DE NEGOCIO ═══
+${productosRabito || 'Sin oferta cargada. Usa el contexto general de Rabbitts Capital.'}
+
+═══ PASOS A SEGUIR ═══
+${pasosRabito || 'Entender objetivo → calificar → orientar → invitar a reunión si corresponde.'}
+
+═══ REGLAS DURAS DEL PANEL ═══
+${reglasRabito || 'Mensajes cortos, una pregunta por mensaje, sin inventar información.'}
+
+═══ OBJECIONES Y RESPUESTAS ═══
+${objecionesRabito || 'Responde con criterio comercial y sin prometer resultados.'}
+
+═══ GUION / PROCESO ═══
+${guion || 'No usar guion rígido. Conversar natural y avanzar con criterio.'}
+
+═══ CRITERIOS DE CALIFICACIÓN ═══
+- Renta individual mínima: ${formatCLP(rentaMin)}
+- Renta conjunta mínima: ${formatCLP(rentaMinPareja)}
+- También puede avanzar si tiene pie/ahorros o si quiere agendar y ya mostró interés real.
+
+═══ PERFIL CONSOLIDADO ═══
+${buildLeadContext(profile)}
+
+═══ ESTADO DE LA CONVERSACIÓN ═══
+Intención local detectada: ${currentIntent}
+Próximo slot sugerido si falta algo: ${nextSlot || 'ninguno'}
+Slots ya preguntados por el asistente: ${JSON.stringify(askedCounts)}
+
+Regla obligatoria: si un slot ya fue preguntado 2 veces o más, NO lo preguntes otra vez.
+Regla obligatoria: si el cliente dice "ya no quiero Santiago" u otro cambio, respeta el cambio y actualiza el foco.
+Regla obligatoria: si el cliente quiere reunión y ya hay señales suficientes, entrega el link de agenda: ${agendaLink}
+
+═══ BASE DE CONOCIMIENTO ═══
+${knowledgeContext || 'Sin base adicional cargada.'}
+
+═══ ENTRENAMIENTO Y APRENDIZAJES ═══
+${trainingBlocks || 'Sin entrenamiento adicional cargado.'}
+
+═══ ESTILO DE RESPUESTA ═══
+- WhatsApp real.
+- 1 a 4 líneas.
+- Máximo una pregunta.
+- Tono humano, comercial, claro y directo.
+- Sin sonar bot.
+- No usar listas largas salvo que sea imprescindible.
+- No repetir frases exactas usadas por el asistente antes.
+- Si el cliente está molesto, reconoce eso en una línea y corrige el rumbo.
+
+═══ PROHIBIDO ═══
+Nunca escribas ni insinúes: alta demanda, responder después, estoy ocupado, soy IA, como modelo de lenguaje, no puedo ayudarte.
+No inventes precios, stock, rentabilidades, subsidios ni beneficios tributarios.
+No pidas de nuevo renta, modelo, objetivo, ubicación o experiencia si ya están en el perfil.
+
+═══ FORMATO INTERNO OBLIGATORIO ═══
+Al final agrega estas marcas internas. El cliente NO las verá:
+[ACCION: calificado|escalar|no_interesado|conversando]
+[DATOS: nombre=X, email=X, renta=X, modelo=X, objetivo=X, ubicacion=X, propiedades=X, experiencia=X, pie=X]`
 }
 
 async function callClaude({ anthropicKey, model, systemPrompt, messages, attempt = 1 }) {
@@ -791,7 +758,7 @@ async function callClaude({ anthropicKey, model, systemPrompt, messages, attempt
     body: JSON.stringify({
       model,
       max_tokens: 900,
-      temperature: 0.38,
+      temperature: 0.35,
       system: systemPrompt,
       messages
     })
@@ -799,7 +766,6 @@ async function callClaude({ anthropicKey, model, systemPrompt, messages, attempt
 
   const text = await response.text()
   const data = safeJsonParse(text)
-
   if (!data) throw new Error(`Anthropic devolvió respuesta no JSON: ${text.slice(0, 180)}`)
 
   if (response.status === 529 || data?.error?.type === 'overloaded_error') {
@@ -810,14 +776,11 @@ async function callClaude({ anthropicKey, model, systemPrompt, messages, attempt
     throw new Error('Anthropic saturado')
   }
 
-  if (!response.ok || data?.error) {
-    throw new Error(data?.error?.message || `Anthropic HTTP ${response.status}`)
-  }
-
+  if (!response.ok || data?.error) throw new Error(data?.error?.message || `Anthropic HTTP ${response.status}`)
   return data
 }
 
-async function extractDocument({ anthropicKey, file, mediaType, fileName }) {
+async function extractDocument({ anthropicKey, file, mediaType }) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -833,7 +796,7 @@ async function extractDocument({ anthropicKey, file, mediaType, fileName }) {
         role: 'user',
         content: [
           { type: 'document', source: { type: 'base64', media_type: mediaType, data: file } },
-          { type: 'text', text: 'Extrae y devuelve TODO el texto de este documento exactamente como aparece, sin resúmenes ni comentarios. Solo el texto completo.' }
+          { type: 'text', text: 'Extrae y devuelve TODO el texto de este documento exactamente como aparece, sin resumir.' }
         ]
       }]
     })
@@ -841,158 +804,9 @@ async function extractDocument({ anthropicKey, file, mediaType, fileName }) {
 
   const textBody = await response.text()
   const data = safeJsonParse(textBody)
-
   if (!data) throw new Error(`Anthropic devolvió respuesta no JSON: ${textBody.slice(0, 180)}`)
   if (!response.ok || data?.error) throw new Error(data?.error?.message || 'Error extrayendo documento')
-
-  const text = data?.content?.[0]?.text || ''
-  console.log('[Agent] Extracted', text.length, 'chars from', fileName || 'documento')
-  return text
-}
-
-function buildLeadContext(leadData = {}) {
-  return [
-    leadData.nombre ? `Nombre: ${leadData.nombre}` : 'Nombre: desconocido',
-    leadData.telefono ? `Teléfono: ${leadData.telefono}` : '',
-    leadData.renta ? `Renta declarada: ${leadData.renta}` : 'Renta: no informada',
-    leadData.modelo ? `Modelo/interés: ${leadData.modelo}` : '',
-    leadData.status ? `Estado conversación: ${leadData.status}` : ''
-  ].filter(Boolean).join('\n')
-}
-
-function buildTrainingBlocks(iaConfig = {}) {
-  const qa = Array.isArray(iaConfig.entrenamiento) ? iaConfig.entrenamiento : []
-  const permanentRules = Array.isArray(iaConfig.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento : []
-
-  const qaBlocks = qa
-    .filter(item => item?.pregunta && item?.respuesta)
-    .slice(0, 60)
-    .map((item, index) => {
-      let block = `[FAQ ${index + 1}] SI EL CLIENTE PREGUNTA O DICE ALGO SIMILAR A: "${item.pregunta}"
-RESPONDE CON ESTA IDEA: "${item.respuesta}"`
-      if (item.razon) block += `
-CONTEXTO: ${item.razon}`
-      return block
-    })
-
-  const ruleBlocks = permanentRules
-    .filter(item => item?.title && item?.content)
-    .slice(0, 80)
-    .map((item, index) => `[REGLA PERMANENTE ${index + 1}] ${item.title}: ${item.content}`)
-
-  return [...ruleBlocks, ...qaBlocks].join('\n\n')
-}
-
-function getSystemPrompt({ iaConfig, agendaLink, rentaMin, rentaMinPareja, entrenamientoBlocks, knowledgeContext, memorySummary, leadData, currentIntent }) {
-  const personalidad = cleanText(iaConfig.personalidad || 'Eres Rabito, asistente comercial de Rabbitts Capital Chile.')
-  const guion = cleanText(iaConfig.guion)
-  const productosRabito = cleanText(iaConfig.productosRabito)
-  const pasosRabito = cleanText(iaConfig.pasosRabito)
-  const reglasRabito = cleanText(iaConfig.reglasRabito)
-  const objecionesRabito = cleanText(iaConfig.objecionesRabito)
-
-  return `${personalidad}
-
-═══ MODO RABITO — ESTILO VAMBE, PERO PARA RABBITTS ═══
-Funcionas como un asistente comercial conversacional de WhatsApp: rápido, natural, con memoria de conversación y orientado a cerrar reunión. No das discursos. No pareces bot. Avanzas la conversación de forma simple.
-
-No finjas ser Luis ni otra persona del equipo. Si preguntan qué eres, responde: "Soy Rabito, el asistente comercial de Rabbitts Capital". Si no preguntan, no lo menciones.
-
-═══ OBJETIVO PRINCIPAL ═══
-1. Entender si el cliente quiere invertir o comprar para vivir.
-2. Detectar interés: renta corta, renta tradicional, plusvalía, retiro, Chile, Paraguay, Florida u otro.
-3. Calificar con pocas preguntas: renta, pie/ahorros, comuna/país, timing y si compra solo o con renta complementaria.
-4. Si existe interés real, llevar a llamada/reunión.
-5. Mantener siempre la conversación activa. Nunca suenes caído, saturado o robótico.
-
-═══ CAPACITACIÓN RABITO DESDE CRM ═══
-${productosRabito ? `PRODUCTOS/SERVICIOS:
-${productosRabito}
-` : ''}
-${pasosRabito ? `PASOS A SEGUIR:
-${pasosRabito}
-` : ''}
-${reglasRabito ? `REGLAS DURAS:
-${reglasRabito}
-` : ''}
-${objecionesRabito ? `MANEJO DE OBJECIONES:
-${objecionesRabito}
-` : ''}
-
-═══ CRITERIOS DE CALIFICACIÓN ═══
-Califica si cumple AL MENOS UNO:
-- Renta individual igual o superior a $${rentaMin.toLocaleString('es-CL')} mensuales.
-- Renta en pareja/familiar igual o superior a $${rentaMinPareja.toLocaleString('es-CL')} mensuales combinados.
-- Tiene pie, ahorros o capacidad de inversión.
-- Quiere comprar dentro de los próximos 6 meses.
-- Pregunta por proyecto, precio, condiciones, crédito o rentabilidad.
-
-No descartes rápido. Si falta información, pregunta solo una cosa.
-
-═══ FLUJO COMERCIAL OBLIGATORIO ═══
-${guion || `- Si saluda: responde cálido y pregunta objetivo.
-- Si pregunta algo general: responde breve y termina con una pregunta útil.
-- Si pregunta precio/proyecto: pide objetivo o comuna antes de dar números exactos si no están en contexto.
-- Si dice "sí", "dale", "ok" o acepta avanzar: ofrece agendar.
-- Si entrega renta o capacidad: valida y pregunta si compra solo o con renta complementaria.
-- Si ya hay 3 mensajes positivos: invita a reunión.`}
-
-═══ ESTILO HUMANO PARA WHATSAPP ═══
-- Mensajes de 1 a 4 líneas.
-- Máximo una pregunta por mensaje.
-- Tono chileno, comercial, claro, cercano y seguro.
-- No uses lenguaje corporativo pesado.
-- No repitas exactamente respuestas anteriores.
-- Antes de preguntar algo, revisa la memoria comercial y el perfil consolidado. Si el dato ya aparece, NO lo vuelvas a pedir.
-- Si el cliente dice "inversión", "invertir" o "para invertir", eso YA responde la pregunta comprar para vivir vs invertir. Nunca vuelvas a preguntar eso.
-- Si el cliente reclama que repites preguntas, pide disculpas una sola vez y avanza con lo ya conocido. No vuelvas a preguntar datos ya entregados.
-- La falta de experiencia en Airbnb NO bloquea la reunión; es una razón para orientar y agendar.
-- Si el cliente ya entregó nombre, correo, renta y modelo, el siguiente paso es agendar, no seguir preguntando.
-- No hables como chatbot.
-- No uses listas largas salvo que el cliente las pida.
-- No prometas rentabilidades garantizadas.
-- No inventes precios, stock ni condiciones si no están en contexto.
-- Evita emojis. Solo usa uno si ayuda mucho y no se ve infantil.
-
-═══ PROHIBIDO ABSOLUTO ═══
-Nunca escribas ni insinúes:
-- "alta demanda"
-- "te respondo en unos minutos"
-- "estoy ocupado"
-- "no tengo acceso"
-- "no puedo ayudarte"
-- "soy una IA"
-- "como modelo de lenguaje"
-- "consulta con un profesional" como salida genérica
-Si hay error, incertidumbre o falta información, respondes igual con una pregunta útil.
-
-═══ CUÁNDO AGENDAR ═══
-Usa el link de agenda configurable del CRM o el que esté escrito en la base de conocimiento: ${agendaLink}
-No lo llames Calendly salvo que el link realmente sea de Calendly. Si mañana se cambia de proveedor, usas el nuevo link sin mencionar la marca.
-Invita con naturalidad, por ejemplo:
-"Perfecto. Agendemos y revisamos tu caso con números reales: renta, crédito, pie y proyectos que calcen contigo.\n${agendaLink}"
-
-═══ MEMORIA COMERCIAL DE ESTA CONVERSACIÓN ═══
-${memorySummary}
-
-═══ LEAD ACTUAL ═══
-${buildLeadContext(leadData)}
-
-Intención detectada localmente: ${currentIntent}
-${knowledgeContext ? `\n${knowledgeContext}` : ''}
-
-═══ ENTRENAMIENTO CARGADO EN CRM ═══
-${entrenamientoBlocks || 'Sin entrenamiento específico cargado. Usa el criterio comercial Rabbitts.'}
-
-═══ FORMATO INTERNO OBLIGATORIO ═══
-Al final de tu respuesta agrega estas líneas internas. El cliente NO las verá:
-[ACCION: calificado] si invitaste a reunión o el cliente cumple criterio.
-[ACCION: escalar] si pide hablar con humano, reclamo o caso complejo.
-[ACCION: no_interesado] si dice claramente que no quiere seguir.
-[ACCION: conversando] si todavía estás calificando.
-
-[DATOS: nombre=X, renta=X, modelo=X]
-Solo usa datos realmente entregados por el cliente. Si no hay datos nuevos, usa X.`
+  return data?.content?.[0]?.text || ''
 }
 
 export default async function handler(req, res) {
@@ -1005,10 +819,7 @@ export default async function handler(req, res) {
 
   const ANTHROPIC_KEY = cleanText(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY)
   const ANTHROPIC_MODEL = cleanText(process.env.ANTHROPIC_MODEL || DEFAULT_MODEL)
-
-  if (!ANTHROPIC_KEY) {
-    return res.status(500).json({ ok: false, error: 'ANTHROPIC_KEY no configurada en Vercel' })
-  }
+  if (!ANTHROPIC_KEY) return res.status(500).json({ ok: false, error: 'ANTHROPIC_KEY no configurada en Vercel' })
 
   const body = req.body || {}
   const {
@@ -1018,78 +829,66 @@ export default async function handler(req, res) {
     leadData = {},
     action,
     file,
-    mediaType,
-    fileName
+    mediaType
   } = body
 
   if (action === 'extract' && file) {
     try {
-      const text = await extractDocument({ anthropicKey: ANTHROPIC_KEY, file, mediaType, fileName })
+      const text = await extractDocument({ anthropicKey: ANTHROPIC_KEY, file, mediaType })
       return res.status(200).json({ ok: true, text })
     } catch (error) {
-      console.error('[Agent] Extract error:', error.message)
       return res.status(200).json({ ok: false, error: error.message, text: '' })
     }
   }
 
-  if (!message) {
-    return res.status(400).json({ ok: false, error: 'No message' })
-  }
+  if (!message) return res.status(400).json({ ok: false, error: 'No message' })
 
+  const safeHistory = sanitizeConversationHistory(conversationHistory)
+  const localUpdate = deriveLeadUpdateFromMessage(message)
+  const agendaLink = cleanText(iaConfig.agendaLink || iaConfig.calendlyLink || process.env.DEFAULT_AGENDA_LINK || DEFAULT_AGENDA)
   const rentaMin = Number(iaConfig.rentaMinima) || 1500000
   const rentaMinPareja = Number(iaConfig.rentaMinimaPareja) || 2000000
-  const entrenamientoBlocks = buildTrainingBlocks(iaConfig)
-  const safeHistory = sanitizeConversationHistory(conversationHistory)
-  const currentIntent = inferLocalIntent(message, safeHistory)
-  const localUpdate = deriveLeadUpdateFromMessage(message)
-  const profile = extractLeadProfileFromHistory({ ...leadData, ...localUpdate }, safeHistory, message)
-  const profileLeadData = {
-    ...leadData,
-    ...localUpdate,
-    nombre: profile.nombre || leadData.nombre,
-    email: profile.email || leadData.email,
-    renta: profile.rentaTexto || leadData.renta || localUpdate.renta,
-    modelo: profile.modelo || leadData.modelo || localUpdate.modelo
-  }
-  const memorySummary = [
-    buildMemorySummary(profileLeadData, [...safeHistory, { role: 'user', content: String(message) }]),
-    '═══ PERFIL CONSOLIDADO DESDE TODA LA CONVERSACIÓN ═══',
-    buildProfileSummary(profile)
-  ].filter(Boolean).join('\n')
-  const knowledgeContext = await loadKnowledgeContext(iaConfig)
-  const agendaLink = cleanText(resolveAgendaLink(iaConfig, knowledgeContext))
+  const profile = extractProfile({ ...leadData, ...localUpdate }, safeHistory, message)
+  const nextSlot = pickNextSlot(profile, countAskedSlots(safeHistory), profile.reclamoRepeticion)
+  const currentIntent = inferIntent(message, safeHistory)
+  const sb = await getSupabaseClient()
+  const [knowledgeContext, feedbackLearnings] = await Promise.all([
+    loadKnowledgeContext(iaConfig, sb),
+    loadFeedbackLearnings(sb)
+  ])
+  const trainingBlocks = buildTrainingBlocks(iaConfig, feedbackLearnings)
+  const leadUpdate = buildLeadUpdate(profile, localUpdate, agendaLink)
 
-  const deterministic = buildCoherentDeterministicReply({
+  const deterministic = buildRuleDrivenReply({
     message,
-    leadData: profileLeadData,
-    agendaLink,
-    conversationHistory: safeHistory,
     profile,
+    history: safeHistory,
+    agendaLink,
     rentaMin,
     rentaMinPareja
   })
 
   if (deterministic) {
-    console.log('[Agent] deterministic reply | action:', deterministic.action, '| profile:', JSON.stringify(profile))
     return res.status(200).json({
       ok: true,
-      reply: sanitizeFinalReply(deterministic.reply, message, profileLeadData, agendaLink, safeHistory),
+      reply: sanitizeFinalReply(deterministic.reply, message, profile, agendaLink, safeHistory),
       action: deterministic.action,
-      leadUpdate: deterministic.leadUpdate || onlyAllowedLeadUpdate(localUpdate),
-      memory: memorySummary,
+      leadUpdate,
+      memory: summarizeProfile(profile),
       deterministic: true
     })
   }
 
-  const systemPrompt = getSystemPrompt({
+  const systemPrompt = buildSystemPrompt({
     iaConfig,
     agendaLink,
     rentaMin,
     rentaMinPareja,
-    entrenamientoBlocks,
+    trainingBlocks,
     knowledgeContext,
-    memorySummary,
-    leadData: profileLeadData,
+    profile,
+    history: safeHistory,
+    nextSlot,
     currentIntent
   })
 
@@ -1108,31 +907,35 @@ export default async function handler(req, res) {
 
     const rawReply = data?.content?.[0]?.text || ''
     const parsed = extractActionAndData(rawReply)
-    const finalReply = sanitizeFinalReply(parsed.reply, message, profileLeadData, agendaLink, safeHistory)
-    const leadUpdate = onlyAllowedLeadUpdate({ ...localUpdate, ...parsed.leadUpdate, nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
+    const finalReply = sanitizeFinalReply(parsed.reply, message, profile, agendaLink, safeHistory)
 
     let finalAction = parsed.action || 'conversando'
     if (currentIntent === 'no_interesado') finalAction = 'no_interesado'
     if (currentIntent === 'humano') finalAction = 'escalar'
-    if (currentIntent === 'acepta_agendar') finalAction = 'calificado'
-
-    console.log('[Agent] intent:', currentIntent, '| action:', finalAction, '| leadUpdate:', JSON.stringify(leadUpdate))
+    if (currentIntent === 'agenda' && isSoftQualified(profile, rentaMin, rentaMinPareja)) finalAction = 'calificado'
 
     return res.status(200).json({
       ok: true,
       reply: finalReply,
       action: finalAction,
-      leadUpdate,
-      memory: memorySummary
+      leadUpdate: onlyAllowedLeadUpdate({ ...leadUpdate, ...parsed.leadUpdate }),
+      memory: summarizeProfile(profile)
     })
   } catch (error) {
-    console.error('[Agent] Error:', error?.stack || error?.message || error)
+    const fallback = buildRuleDrivenReply({
+      message,
+      profile,
+      history: safeHistory,
+      agendaLink,
+      rentaMin,
+      rentaMinPareja
+    })
 
     return res.status(200).json({
       ok: true,
-      reply: buildSafeFallback(message, profileLeadData, agendaLink, safeHistory),
-      action: currentIntent === 'humano' ? 'escalar' : currentIntent === 'no_interesado' ? 'no_interesado' : 'conversando',
-      leadUpdate: onlyAllowedLeadUpdate({ ...localUpdate, nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo }),
+      reply: sanitizeFinalReply(fallback?.reply || 'Cuéntame qué estás buscando y te oriento de forma directa.', message, profile, agendaLink, safeHistory),
+      action: fallback?.action || (currentIntent === 'humano' ? 'escalar' : currentIntent === 'no_interesado' ? 'no_interesado' : 'conversando'),
+      leadUpdate,
       fallback: true,
       error: error?.message || 'agent_error'
     })
