@@ -283,7 +283,7 @@ async function loadSettings(sb = null) {
       map[row.key] = row.value
       const value = flattenConfigValue(row.value)
       return value ? `### ${row.key}\n${value}` : ''
-    }).filter(Boolean).join('\n\n').slice(0, 60000)
+    }).filter(Boolean).join('\n\n').slice(0, 35000)
     return { text, map }
   } catch (_) {
     return { text: '', map: {} }
@@ -320,7 +320,7 @@ async function loadFeedback(sb = null, query = '') {
     .filter(item => cleanText(item.correction) || cleanText(item.feedback))
     .map(item => ({ ...item, score: Math.max(similarity(query, item.msg_content || ''), similarity(query, item.feedback || ''), similarity(query, item.correction || '')) }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, 18)
+    .slice(0, 8)
 
   const text = ranked.map((item, idx) => {
     const original = cleanText(item.msg_content).slice(0, 450)
@@ -376,7 +376,7 @@ async function retrieveKnowledge(sb = null, query = '', settingsText = '', setti
       const { data } = await sb.from('crm_knowledge_chunks')
         .select('id,doc_id,title,titulo,content,contenido,tags,producto,canal,activo,created_at')
         .or('activo.is.null,activo.eq.true')
-        .limit(600)
+        .limit(250)
       if (Array.isArray(data)) chunks.push(...data)
     } catch (_) {}
   }
@@ -420,12 +420,12 @@ async function retrieveKnowledge(sb = null, query = '', settingsText = '', setti
     .map(c => ({ ...c, _score: scoreChunk(query, c) }))
     .sort((a, b) => b._score - a._score)
 
-  const selected = ranked.filter(c => c._score > 0).slice(0, 10)
-  const finalSelected = selected.length ? selected : ranked.slice(0, 6)
+  const selected = ranked.filter(c => c._score > 0).slice(0, 6)
+  const finalSelected = selected.length ? selected : ranked.slice(0, 4)
 
   const text = finalSelected.map((c, i) => {
     const title = cleanText(c.title || c.titulo || c.docName || `Documento ${i + 1}`)
-    const content = cleanText(c.content || c.contenido || '').slice(0, 3000)
+    const content = cleanText(c.content || c.contenido || '').slice(0, 1800)
     return `### Fragmento ${i + 1}: ${title}\n${content}`
   }).join('\n\n').slice(0, 35000)
 
@@ -506,21 +506,38 @@ RESPONDE SOLO JSON VÁLIDO, sin markdown:
 }
 
 async function callClaude({ anthropicKey, model, systemPrompt, messages, attempt = 1 }) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': anthropicKey,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({ model, max_tokens: 900, temperature: 0.18, system: systemPrompt, messages })
-  })
+  const controller = new AbortController()
+  const timeoutMs = Number(process.env.AGENT_TIMEOUT_MS || 14000)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  let response
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 520),
+        temperature: Number(process.env.AGENT_TEMPERATURE || 0.14),
+        system: systemPrompt,
+        messages
+      })
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+
   const text = await response.text()
   const data = safeJsonParse(text)
   if (!data) throw new Error(`Anthropic devolvió respuesta no JSON: ${text.slice(0, 180)}`)
   if (response.status === 529 || data?.error?.type === 'overloaded_error') {
-    if (attempt <= 2) {
-      await new Promise(resolve => setTimeout(resolve, attempt * 1000))
+    if (attempt <= 1) {
+      await new Promise(resolve => setTimeout(resolve, 700))
       return callClaude({ anthropicKey, model, systemPrompt, messages, attempt: attempt + 1 })
     }
     throw new Error('Anthropic saturado')
@@ -550,9 +567,15 @@ function getExtraBlockedPhrases(iaConfig = {}) {
 
   return values.flatMap(value => {
     if (!value) return []
-    if (Array.isArray(value)) return value.map(flattenConfigValue).filter(Boolean)
-    if (typeof value === 'object') return flattenConfigValue(value).split('\n').filter(Boolean)
-    return String(value).split('\n').filter(Boolean)
+    const lines = Array.isArray(value)
+      ? value.map(flattenConfigValue)
+      : typeof value === 'object'
+        ? flattenConfigValue(value).split('\n')
+        : String(value).split('\n')
+    return lines
+      .map(x => cleanText(x))
+      .filter(x => x.length >= 4 && x.length <= 180)
+      .filter(x => /no decir|prohibid|bloquead|nunca digas|evitar|no uses|frase/i.test(x) ? true : x.split(' ').length <= 8)
   })
 }
 
@@ -684,7 +707,7 @@ export default async function handler(req, res) {
     let parsed = parseAssistantJson(rawText)
     let reply = sanitizeReply(parsed.reply, { iaConfig: effectiveIaConfig, history: safeHistory })
 
-    if (!reply) {
+    if (!reply && process.env.AGENT_ENABLE_REPAIR === 'true') {
       const repaired = await repairReplyWithModel({
         anthropicKey: ANTHROPIC_KEY,
         model: ANTHROPIC_MODEL,
