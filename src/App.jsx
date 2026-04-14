@@ -1068,7 +1068,10 @@ export default function App() {
       const ids = Array.from(new Set([convId, ...((conv && conv._mergedIds) || [])].filter(Boolean)))
       const query = supabase.from('crm_conv_messages').select('*').order('created_at',{ascending:true})
       const { data } = ids.length > 1 ? await query.in('conv_id', ids) : await query.eq('conv_id', convId)
-      if (data) setConvMessages(prev => ({...prev, [convId]: data}))
+      if (data) {
+        const visible = data.filter(m => !m.internal && !String(m.content || '').startsWith('[Sistema]'))
+        setConvMessages(prev => ({...prev, [convId]: visible}))
+      }
     } catch(e) { console.warn('loadConvMessages error:', e) }
   }
 
@@ -5611,7 +5614,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     messagesEndRef.current?.scrollIntoView({behavior:'smooth'})
   }, [convMessages, activeConv])
 
-  const msgs = activeConv ? (convMessages[activeConv.id]||[]) : []
+  const msgs = activeConv ? (convMessages[activeConv.id]||[]).filter(m => !m.internal && !String(m.content || '').startsWith('[Sistema]')) : []
 
   const filtered = conversations.filter(c => {
     if (filterStatus!=='all' && c.status!==filterStatus) return false
