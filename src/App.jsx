@@ -99,6 +99,39 @@ const daysIn = l => {
   return Math.floor((Date.now() - m) / 86400000)
 }
 
+const safeJsonParseUi = (text, fallback=null) => { try { return text ? JSON.parse(text) : fallback } catch(_) { return fallback } }
+const stripCodeFenceUi = (text='') => String(text || '').replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+const jsonStringValueFromKeyUi = (text='', key='reply') => {
+  const src = String(text || '')
+  const rx = new RegExp('"' + key + '"\\s*:\\s*"', 'i')
+  const m = rx.exec(src)
+  if (!m) return ''
+  let i = m.index + m[0].length, out = '', escaped = false
+  for (; i < src.length; i++) {
+    const ch = src[i]
+    if (escaped) { out += '\\' + ch; escaped = false; continue }
+    if (ch === '\\') { escaped = true; continue }
+    if (ch === '"') break
+    out += ch
+  }
+  try { return JSON.parse('"' + out + '"') } catch(_) { return out.replace(/\\n/g, '\n').replace(/\\"/g, '"') }
+}
+const extractVisibleMessageContent = (text='') => {
+  const raw = String(text || '').trim()
+  if (!raw) return ''
+  const low = raw.toLowerCase()
+  if (low.startsWith('[sistema]') || low.includes('rabito no generó respuesta visible') || low.includes('rabito no genero respuesta visible') || low.includes('agent_no_reply')) return ''
+  if (raw.startsWith('{')) {
+    const parsed = safeJsonParseUi(stripCodeFenceUi(raw))
+    if (parsed && typeof parsed === 'object') {
+      const inner = parsed.reply || parsed.message || parsed.text || ''
+      return extractVisibleMessageContent(typeof inner === 'object' ? (inner.reply || inner.text || inner.message || '') : inner)
+    }
+    const innerReply = jsonStringValueFromKeyUi(raw, 'reply')
+    return innerReply ? String(innerReply).trim() : ''
+  }
+  return raw
+}
 const isInternalSystemContent = (text='') => {
   const value = String(text || '').trim().toLowerCase()
   return value.startsWith('[sistema]') ||
@@ -107,10 +140,11 @@ const isInternalSystemContent = (text='') => {
     value.includes('revisar entrenamiento/conocimiento') ||
     value.includes('no generó respuesta visible') ||
     value.includes('no genero respuesta visible') ||
-    value.includes('agent_no_reply')
+    value.includes('agent_no_reply') ||
+    (String(text || '').trim().startsWith('{') && !extractVisibleMessageContent(text))
 }
 
-const cleanVisibleLastMessage = (text='') => isInternalSystemContent(text) ? '' : String(text || '')
+const cleanVisibleLastMessage = (text='') => extractVisibleMessageContent(text)
 
 // ─── Mini components ─────────────────────────────────────────────────────────
 // ─── WhatsApp Link Component ─────────────────────────────────────────────────
@@ -1038,6 +1072,7 @@ export default function App() {
   async function upsertConversation(conv) {
     if (!dbReady || !conv?.id) return null
     const cleanConv = Object.fromEntries(Object.entries(conv).filter(([k]) => !String(k).startsWith('_')))
+    if (cleanConv.last_message) cleanConv.last_message = extractVisibleMessageContent(cleanConv.last_message) || cleanConv.last_message
     try {
       const { data, error } = await supabase.from('crm_conversations').upsert(cleanConv, { onConflict:'id' }).select().single()
       if (error) throw error
@@ -1060,7 +1095,7 @@ export default function App() {
     if (!dbReady || !convId || !message?.content) return false
     const cleanMessage = {
       role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: String(message.content || ''),
+      content: extractVisibleMessageContent(message.content) || String(message.content || ''),
       created_at: message.created_at || new Date().toISOString()
     }
 
@@ -1090,7 +1125,9 @@ export default function App() {
       const query = supabase.from('crm_conv_messages').select('*').order('created_at',{ascending:true})
       const { data } = ids.length > 1 ? await query.in('conv_id', ids) : await query.eq('conv_id', convId)
       if (data) {
-        const visible = data.filter(m => !m.internal && !isInternalSystemContent(m.content))
+        const visible = data
+          .map(m => ({...m, content: extractVisibleMessageContent(m.content)}))
+          .filter(m => !m.internal && m.content && !isInternalSystemContent(m.content))
         setConvMessages(prev => ({...prev, [convId]: visible}))
       }
     } catch(e) { console.warn('loadConvMessages error:', e) }
@@ -5635,7 +5672,9 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     messagesEndRef.current?.scrollIntoView({behavior:'smooth'})
   }, [convMessages, activeConv])
 
-  const msgs = activeConv ? (convMessages[activeConv.id]||[]).filter(m => !m.internal && !isInternalSystemContent(m.content)) : []
+  const msgs = activeConv ? (convMessages[activeConv.id]||[])
+    .map(m => ({...m, content: extractVisibleMessageContent(m.content)}))
+    .filter(m => !m.internal && m.content && !isInternalSystemContent(m.content)) : []
 
   const filtered = conversations.filter(c => {
     if (filterStatus!=='all' && c.status!==filterStatus) return false
