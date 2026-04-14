@@ -114,6 +114,16 @@ function getPushName(obj = {}) {
   )
 }
 
+function getMessageId(obj = {}) {
+  return clean(
+    obj?.key?.id ||
+    obj?.id ||
+    obj?.messageId ||
+    obj?.data?.key?.id ||
+    ''
+  )
+}
+
 function jidToPhone(jid = '') {
   const base = clean(jid).replace(/@[^@]+$/, '').replace(/:\d+$/, '')
   return base.replace(/[^0-9]/g, '')
@@ -168,8 +178,11 @@ async function findOrCreateConversation(sb, { tel, phone, name, text, instance }
       .select('*')
       .eq('telefono', tel)
       .order('updated_at', { ascending: false })
-      .limit(1)
-    if (!error && data?.length) conv = data[0]
+      .limit(10)
+    if (!error && data?.length) {
+      const real = data.find(c => c.last_message && c.last_message !== '[mensaje]' && c.last_message !== '[mensaje multimedia]')
+      conv = real || data[0]
+    }
   } catch (error) {
     console.warn('[WA] search conv error:', error.message)
   }
@@ -190,7 +203,7 @@ async function findOrCreateConversation(sb, { tel, phone, name, text, instance }
   }
 
   const base = {
-    id: makeId('wa'),
+    id: phone ? `wa-${phone}` : makeId('wa'),
     telefono: tel,
     nombre: name || tel || phone,
     mode: 'ia',
@@ -226,21 +239,46 @@ async function findOrCreateConversation(sb, { tel, phone, name, text, instance }
 
 async function saveMessage(sb, convId, role, content, extra = {}) {
   if (!convId || !content) return false
-  try {
-    const { error } = await sb.from('crm_conv_messages').insert({
-      conv_id: convId,
-      role,
-      content,
-      created_at: nowIso(),
-      ...extra
-    })
-    if (error) {
-      console.warn('[WA] saveMessage error:', error.message)
-      return false
+
+  const base = {
+    conv_id: convId,
+    role: role === 'assistant' ? 'assistant' : 'user',
+    content: clean(content),
+    created_at: extra.created_at || nowIso()
+  }
+
+  // Instancias antiguas pueden no tener columnas extra como manual/internal/masivo.
+  // Guardamos el mensaje mínimo si falla el intento completo para que nunca desaparezca del panel.
+  const attempts = [
+    { ...base, ...extra, conv_id: convId, role: base.role, content: base.content, created_at: base.created_at },
+    base
+  ]
+
+  for (const payload of attempts) {
+    try {
+      const { error } = await sb.from('crm_conv_messages').insert(payload)
+      if (!error) return true
+      console.warn('[WA] saveMessage intento falló:', error.message)
+    } catch (error) {
+      console.warn('[WA] saveMessage excepción:', error.message)
     }
-    return true
-  } catch (error) {
-    console.warn('[WA] saveMessage excepción:', error.message)
+  }
+  return false
+}
+
+async function recentlySavedIncoming(sb, convId, content) {
+  if (!convId || !content) return false
+  const since = new Date(Date.now() - 90_000).toISOString()
+  try {
+    const { data, error } = await sb.from('crm_conv_messages')
+      .select('id')
+      .eq('conv_id', convId)
+      .eq('role', 'user')
+      .eq('content', content)
+      .gte('created_at', since)
+      .limit(1)
+    return !error && Array.isArray(data) && data.length > 0
+  } catch (_) {
     return false
   }
 }
@@ -256,7 +294,7 @@ async function ensureLead(sb, conv, { tel, phone, name, text }) {
   } catch (_) {}
 
   const base = {
-    id: makeId('l-wa'),
+    id: phone ? `l-wa-${phone}` : makeId('l-wa'),
     nombre: name || tel || phone,
     telefono: tel,
     email: '',
@@ -406,11 +444,19 @@ export default async function handler(req, res) {
     const text = extractTextFromMessage(raw)
     const name = getPushName(raw)
     const fromMe = raw?.key?.fromMe === true || raw?.fromMe === true
+    const msgId = getMessageId(raw)
 
-    console.log('[WA] msg:', { tel, name, fromMe, hasText: !!text, jid: jid.slice(0, 40) })
+    console.log('[WA] msg:', { tel, name, fromMe, hasText: !!text, msgId, jid: jid.slice(0, 40) })
 
     if (!phone || !tel || jid.includes('@g.us') || jid.includes('@broadcast')) {
       results.push({ ok: true, skipped: 'invalid_or_group', jid })
+      continue
+    }
+
+    // No crear conversaciones vacías por eventos técnicos de Evolution.
+    // Esto evita filas duplicadas con "[mensaje]" y panel sin mensajes.
+    if (!text) {
+      results.push({ ok: true, skipped: 'empty_message', jid, msgId })
       continue
     }
 
@@ -422,8 +468,15 @@ export default async function handler(req, res) {
       continue
     }
 
+    // Evitar procesar el mismo mensaje dos veces cuando Evolution reintenta o manda eventos paralelos.
+    const duplicated = await recentlySavedIncoming(sb, conv.id, text)
+    if (duplicated) {
+      results.push({ ok: true, convId: conv.id, skipped: 'duplicate_message', msgId })
+      continue
+    }
+
     // Guardar SIEMPRE la conversación y el mensaje entrante, aunque luego la IA esté apagada.
-    if (text) await saveMessage(sb, conv.id, 'user', text)
+    await saveMessage(sb, conv.id, 'user', text)
     await ensureLead(sb, conv, { tel, phone, name, text })
 
     if (!text) {
@@ -480,12 +533,13 @@ export default async function handler(req, res) {
     }
 
     if (!reply) {
-      // No enviamos frases inventadas. Dejamos constancia y escalamos para que no quede invisible en CRM.
+      // No derivamos automáticamente a humano. Solo dejamos alerta interna para que el CRM muestre revisión,
+      // pero la conversación queda en modo IA salvo que el Panel IA/agent pida escalamiento explícito.
       try {
-        await sb.from('crm_conversations').update({ mode: 'humano', status: 'requiere_revision', updated_at: nowIso() }).eq('id', conv.id)
+        await sb.from('crm_conversations').update({ status: 'requiere_revision', updated_at: nowIso() }).eq('id', conv.id)
       } catch (_) {}
-      await saveMessage(sb, conv.id, 'assistant', '[Sistema] Rabito no generó respuesta. Conversación derivada a revisión humana.', { internal: true })
-      results.push({ ok: true, convId: conv.id, skipped: 'agent_no_reply', action: 'human_review' })
+      await saveMessage(sb, conv.id, 'assistant', '[Sistema] Rabito no generó respuesta visible. Revisar entrenamiento/conocimiento.', { internal: true })
+      results.push({ ok: true, convId: conv.id, skipped: 'agent_no_reply', action: 'review_only' })
       continue
     }
 
@@ -500,7 +554,8 @@ export default async function handler(req, res) {
       updated_at: nowIso()
     }
     if (agentData?.action === 'calificado') convUpdate.status = 'calificado'
-    if (agentData?.action === 'escalar') convUpdate.mode = 'humano'
+    const explicitHuman = agentData?.escalateToHuman === true || agentData?.derivarHumano === true || agentData?.human === true
+    if (explicitHuman) convUpdate.mode = 'humano'
 
     try { await sb.from('crm_conversations').update(convUpdate).eq('id', conv.id) } catch (_) {}
 
