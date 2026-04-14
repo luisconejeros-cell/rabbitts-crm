@@ -15,6 +15,15 @@ function clean(value = '') {
   return String(value ?? '').trim()
 }
 
+
+function normalizeStatusUpdate(value = '') {
+  const v = String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, '_')
+  const allowed = new Set(['activo', 'calificado', 'frio', 'no_interesado', 'requiere_revision'])
+  if (allowed.has(v)) return v
+  if (v === 'revision') return 'requiere_revision'
+  return ''
+}
+
 function nowIso() {
   return new Date().toISOString()
 }
@@ -533,13 +542,17 @@ export default async function handler(req, res) {
     }
 
     if (!reply) {
-      // No mostrar mensajes internos al cliente ni en la bandeja como si fueran respuesta de Rabito.
-      // Solo marcamos la conversación para revisión. El motivo queda en logs/resultados del webhook.
-      try {
-        await sb.from('crm_conversations').update({ status: 'requiere_revision', updated_at: nowIso() }).eq('id', conv.id)
-      } catch (_) {}
-      console.warn('[WA] agent_no_reply:', { convId: conv.id, tel, agentError: agentData?.error || null, trace: agentData?.trace || null })
-      results.push({ ok: true, convId: conv.id, skipped: 'agent_no_reply', action: 'review_only', trace: agentData?.trace || null })
+      // Nunca cambiar automáticamente a "requiere revisión" ni guardar mensajes internos.
+      // Si el agente no generó respuesta visible, dejamos la conversación en IA activa y solo registramos el error en logs.
+      // Así el siguiente mensaje del cliente vuelve a intentar responder normalmente.
+      console.warn('[WA] agent_no_reply_no_status_change:', {
+        convId: conv.id,
+        tel,
+        currentStatus: conv.status || 'activo',
+        agentError: agentData?.error || null,
+        trace: agentData?.trace || null
+      })
+      results.push({ ok: true, convId: conv.id, skipped: 'agent_no_reply', action: 'no_status_change', trace: agentData?.trace || null })
       continue
     }
 
@@ -553,8 +566,15 @@ export default async function handler(req, res) {
       last_message: reply,
       updated_at: nowIso()
     }
+
+    // Candado crítico: WhatsApp NUNCA cambia a revisión/humano por error, timeout o decisión automática.
+    // Solo aplica derivaciones si agent.js confirma que una regla dura del Panel IA autorizó esa derivación.
+    const allowedByHardRules = agentData?.trace?.derivationAllowedByHardRules === true
+    const requestedStatus = normalizeStatusUpdate(agentData?.statusUpdate || '')
+    if (allowedByHardRules && requestedStatus) convUpdate.status = requestedStatus
     if (agentData?.action === 'calificado') convUpdate.status = 'calificado'
-    const explicitHuman = agentData?.escalateToHuman === true || agentData?.derivarHumano === true || agentData?.human === true
+
+    const explicitHuman = allowedByHardRules && (agentData?.escalateToHuman === true || agentData?.derivarHumano === true || agentData?.human === true)
     if (explicitHuman) convUpdate.mode = 'humano'
 
     try { await sb.from('crm_conversations').update(convUpdate).eq('id', conv.id) } catch (_) {}
