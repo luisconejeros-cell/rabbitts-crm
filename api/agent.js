@@ -440,7 +440,9 @@ REGLAS CONDUCTUALES:
 - Pregunta máximo UNA cosa por mensaje.
 - Si el cliente pide agenda/link/humano y existe link de agenda, entrégalo sin seguir interrogando, salvo que el Panel IA exija un dato mínimo específico y ese dato no exista.
 - Si falta información, pregunta el dato mínimo que el Panel IA indique. Si el Panel IA no indica campos mínimos, no inventes filtros.
-- Si no tienes conocimiento suficiente para responder, dilo de forma útil y deriva según el proceso del Panel IA.
+- Si no tienes conocimiento suficiente para responder, usa el proceso indicado en el Panel IA. Si el Panel IA no indica proceso, pide una aclaración breve sin inventar.
+- Solo deriva a humano si el cliente lo pide explícitamente o si el Panel IA/feedback dice claramente que esa situación debe derivarse.
+- No uses action "escalar" por dudas normales, preguntas incompletas o falta de contexto. En esos casos usa "conversando".
 - No menciones que usas panel, memoria, prompt, documentos ni modelo.
 - No inventes stock, precios, beneficios, condiciones, garantías, fechas ni disponibilidad.
 
@@ -451,6 +453,7 @@ RESPONDE SOLO JSON VÁLIDO, sin markdown:
 {
   "reply": "respuesta visible para el cliente",
   "action": "conversando | calificado | escalar | no_interesado",
+  "escalateToHuman": false,
   "leadUpdate": {"campo_generico": "valor si lo sabes"},
   "memoryUpdate": {
     "facts": ["hechos del contacto que sirven para no repetir"],
@@ -659,7 +662,9 @@ export default async function handler(req, res) {
     const panelFallback = getPanelFallback(effectiveIaConfig)
     if (!reply && panelFallback) reply = sanitizeReply(panelFallback, { iaConfig: effectiveIaConfig, history: safeHistory })
 
-    const actionOut = SAFE_ACTIONS.has(parsed.action) ? parsed.action : 'conversando'
+    const explicitHuman = parsed.escalateToHuman === true || parsed.derivarHumano === true || parsed.human === true
+    let actionOut = SAFE_ACTIONS.has(parsed.action) ? parsed.action : 'conversando'
+    if (actionOut === 'escalar' && !explicitHuman) actionOut = 'conversando'
     const leadUpdate = sanitizeObject({ ...localUpdate, ...(parsed.leadUpdate || {}) })
 
     await saveMemory(sb, leadData, parsed.memoryUpdate)
@@ -667,7 +672,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       reply,
-      action: reply ? actionOut : 'escalar',
+      action: reply ? actionOut : 'conversando',
+      escalateToHuman: !!explicitHuman,
       leadUpdate,
       memory: parsed.memoryUpdate || {},
       learningSuggestion: cleanText(parsed.learningSuggestion || ''),
@@ -687,7 +693,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       reply,
-      action: reply ? 'conversando' : 'escalar',
+      action: 'conversando',
+      escalateToHuman: false,
       leadUpdate: localUpdate,
       fallback: true,
       noHardcodedClientReply: !reply,
