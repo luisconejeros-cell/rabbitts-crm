@@ -1,12 +1,25 @@
-// api/whatsapp.js — Webhook WhatsApp estable v6
-// Prioridad: guardar SIEMPRE conversación/mensaje y responder sin cambiar automáticamente a revisión/humano.
+// api/agent.js — Motor genérico de aprendizaje para Rabito v6
+// No contiene guiones de negocio. Responde usando Panel IA + documentos + feedback + memoria.
 
 import { createClient } from '@supabase/supabase-js'
-import { generateAgentResponse } from './agent.js'
 
+const DEFAULT_MODEL = 'claude-3-5-haiku-20241022'
 const clean = (v = '') => String(v ?? '').trim()
 const nowIso = () => new Date().toISOString()
-const makeId = (p = 'id') => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+const BUILT_IN_BLOCKED = [
+  'alta demanda',
+  'te respondo en unos minutos',
+  'te respondo en algunos minutos',
+  'estoy con alta demanda',
+  'soy una ia',
+  'soy inteligencia artificial',
+  'como modelo de lenguaje',
+  'no tengo acceso',
+  'para avanzar bien, dime cuál es el dato principal que quieres resolver ahora',
+  'para ayudarte bien necesito partir por esto',
+  '[sistema]'
+]
 
 function sb() {
   const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
@@ -14,329 +27,503 @@ function sb() {
   return url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null
 }
 
-function eventName(b = {}) {
-  return clean(b.event || b.type || b.eventName || b.action || '').toLowerCase().replace(/_/g, '.')
+function normalize(text = '') {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
-function unwrap(o = {}) {
-  let m = o?.message || o?.msg || o
-  if (m?.ephemeralMessage?.message) m = m.ephemeralMessage.message
-  if (m?.viewOnceMessage?.message) m = m.viewOnceMessage.message
-  if (m?.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message
-  if (m?.documentWithCaptionMessage?.message) m = m.documentWithCaptionMessage.message
-  return m || {}
+function words(text = '') {
+  return normalize(text).split(/[^a-z0-9ñ]+/i).filter(w => w.length > 2)
 }
 
-function textOf(o = {}) {
-  const m = unwrap(o)
-  return clean(
-    m.conversation ||
-    m.extendedTextMessage?.text ||
-    m.imageMessage?.caption ||
-    m.videoMessage?.caption ||
-    m.documentMessage?.caption ||
-    m.buttonsResponseMessage?.selectedDisplayText ||
-    m.buttonsResponseMessage?.selectedButtonId ||
-    m.listResponseMessage?.title ||
-    m.listResponseMessage?.singleSelectReply?.selectedRowId ||
-    m.templateButtonReplyMessage?.selectedDisplayText ||
-    m.templateButtonReplyMessage?.selectedId ||
-    m.interactiveResponseMessage?.body?.text ||
-    m.reactionMessage?.text ||
-    ''
-  )
-}
-
-function jidOf(o = {}) {
-  return clean(o?.key?.remoteJid || o?.remoteJid || o?.jid || o?.from || o?.sender || o?.participant || o?.data?.key?.remoteJid || '')
-}
-function phoneOf(jid = '') { return clean(jid).replace(/@[^@]+$/, '').replace(/:\d+$/, '').replace(/[^0-9]/g, '') }
-function telOf(phone = '') { const d = clean(phone).replace(/[^0-9]/g, ''); return d ? `+${d}` : '' }
-function nameOf(o = {}) { return clean(o?.pushName || o?.notifyName || o?.name || o?.senderName || o?.data?.pushName || '') }
-function msgId(o = {}) { return clean(o?.key?.id || o?.id || o?.messageId || o?.data?.key?.id || '') }
-function fromMeOf(o = {}) { return o?.key?.fromMe === true || o?.fromMe === true || o?.data?.key?.fromMe === true }
-
-function messages(b = {}) {
-  const d = b.data
-  const out = []
-  if (Array.isArray(d)) out.push(...d)
-  else if (Array.isArray(d?.messages)) out.push(...d.messages)
-  else if (Array.isArray(d?.message)) out.push(...d.message)
-  else if (d?.key || d?.message || d?.remoteJid || d?.sender || d?.from) out.push(d)
-  else if (b?.key || b?.message || b?.remoteJid || b?.sender || b?.from) out.push(b)
-  return out.filter(Boolean)
-}
-
-async function readSetting(db, key, fallback = null) {
-  try { const { data } = await db.from('crm_settings').select('value').eq('key', key).single(); return data?.value ?? fallback } catch { return fallback }
-}
-async function upsertSetting(db, key, value) {
-  try { await db.from('crm_settings').upsert({ key, value }, { onConflict: 'key' }) } catch (e) { console.error('[WA] setting upsert error:', key, e?.message) }
-}
-
-async function findOrCreateConv(db, { tel, phone, name, text }) {
-  let conv = null
-  try {
-    const { data, error } = await db.from('crm_conversations').select('*').eq('telefono', tel).order('updated_at', { ascending: false }).limit(1)
-    if (error) console.error('[WA] select conv error:', error.message)
-    conv = data?.[0] || null
-  } catch (e) { console.error('[WA] select conv exception:', e.message) }
-
-  if (conv) {
-    try {
-      await db.from('crm_conversations').update({
-        nombre: conv.nombre || name || tel,
-        last_message: text || conv.last_message || '[mensaje]',
-        updated_at: nowIso()
-      }).eq('id', conv.id)
-    } catch (e) { console.error('[WA] update conv exception:', e.message) }
-    return conv
+function flatten(value, depth = 0) {
+  if (value == null || value === '') return ''
+  if (depth > 4) return ''
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return clean(value)
+  if (Array.isArray(value)) return value.slice(0, 120).map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .filter(([k]) => !/password|token|secret|apikey|api_key|base64|image|file/i.test(k))
+      .slice(0, 120)
+      .map(([k, v]) => {
+        const txt = flatten(v, depth + 1)
+        return txt ? `${k}: ${txt}` : ''
+      })
+      .filter(Boolean)
+      .join('\n')
   }
+  return ''
+}
 
-  const newConv = {
-    id: makeId('wa'),
-    telefono: tel,
-    nombre: name || tel || phone,
-    mode: 'ia',
-    status: 'activo',
-    last_message: text || '[mensaje]',
-    lead_id: null,
-    created_at: nowIso(),
-    updated_at: nowIso()
-  }
+function safeJson(text, fallback = null) {
+  try { return text ? JSON.parse(text) : fallback } catch { return fallback }
+}
 
-  try {
-    const { data, error } = await db.from('crm_conversations').insert(newConv).select().single()
-    if (error) {
-      console.error('[WA] insert conv error:', error.message, error.code, error.details)
-      return newConv
+function stripFence(text = '') {
+  return clean(text).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+}
+
+function extractJson(text = '') {
+  const src = stripFence(text)
+  const start = src.indexOf('{')
+  if (start < 0) return ''
+  let depth = 0, inStr = false, esc = false
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i]
+    if (inStr) {
+      if (esc) { esc = false; continue }
+      if (ch === '\\') { esc = true; continue }
+      if (ch === '"') inStr = false
+      continue
     }
-    console.log('[WA] conv nueva:', data.id)
-    return data
-  } catch (e) {
-    console.error('[WA] insert conv exception:', e.message)
-    return newConv
-  }
-}
-
-async function saveMsg(db, convId, role, content, extra = {}) {
-  const msg = clean(content)
-  if (!convId || !msg || msg.startsWith('[Sistema]')) return false
-  const row = {
-    conv_id: convId,
-    role: role === 'assistant' ? 'assistant' : 'user',
-    content: msg,
-    created_at: extra.created_at || nowIso()
-  }
-  try {
-    const { error } = await db.from('crm_conv_messages').insert(row)
-    if (error) console.error('[WA] insert msg error:', error.message, error.code)
-    return !error
-  } catch (e) {
-    console.error('[WA] insert msg exception:', e.message)
-    return false
-  }
-}
-
-async function duplicate(db, convId, content) {
-  const since = new Date(Date.now() - 45000).toISOString()
-  try {
-    const { data, error } = await db.from('crm_conv_messages')
-      .select('id')
-      .eq('conv_id', convId)
-      .eq('role', 'user')
-      .eq('content', content)
-      .gte('created_at', since)
-      .limit(1)
-    return !error && data?.length > 0
-  } catch { return false }
-}
-
-async function ensureLead(db, conv, { tel, phone, name, text }) {
-  try {
-    const { data } = await db.from('crm_leads').select('*').eq('telefono', tel).limit(1)
-    if (data?.length) {
-      if (conv?.id && !conv.lead_id) await db.from('crm_conversations').update({ lead_id: data[0].id }).eq('id', conv.id)
-      return data[0]
+    if (ch === '"') { inStr = true; continue }
+    if (ch === '{') depth++
+    if (ch === '}') {
+      depth--
+      if (depth === 0) return src.slice(start, i + 1)
     }
+  }
+  return ''
+}
+
+function parseModelOutput(raw = '') {
+  const cleaned = stripFence(raw)
+  const parsed = safeJson(cleaned) || safeJson(extractJson(cleaned))
+  if (parsed && typeof parsed === 'object') {
+    const reply = typeof parsed.reply === 'object'
+      ? clean(parsed.reply.reply || parsed.reply.text || parsed.reply.message || '')
+      : clean(parsed.reply || parsed.message || parsed.text || '')
+    return {
+      reply,
+      action: clean(parsed.action || 'conversando'),
+      statusUpdate: clean(parsed.statusUpdate || parsed.status || ''),
+      escalateToHuman: parsed.escalateToHuman === true || parsed.derivarHumano === true || parsed.human === true,
+      derivationReason: clean(parsed.derivationReason || ''),
+      leadUpdate: parsed.leadUpdate && typeof parsed.leadUpdate === 'object' ? parsed.leadUpdate : {},
+      memoryUpdate: parsed.memoryUpdate && typeof parsed.memoryUpdate === 'object' ? parsed.memoryUpdate : {},
+      learningSuggestion: clean(parsed.learningSuggestion || '')
+    }
+  }
+  if (cleaned && !cleaned.startsWith('{')) return { reply: cleaned, action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
+  return { reply: '', action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
+}
+
+function blockedFromPanel(iaConfig = {}) {
+  const raw = flatten({
+    frasesProhibidas: iaConfig.frasesProhibidas,
+    blockedPhrases: iaConfig.blockedPhrases,
+    noDecir: iaConfig.noDecir,
+    reglasEntrenamiento: iaConfig.reglasEntrenamiento
+  })
+  const lines = raw.split('\n').map(clean).filter(Boolean)
+  const short = lines.filter(x => x.length >= 4 && x.length <= 180)
+  return [...BUILT_IN_BLOCKED, ...short]
+}
+
+function removeBlocked(reply = '', iaConfig = {}) {
+  let out = clean(reply).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').replace(/\*\*/g, '').trim()
+  if (!out) return ''
+  if (out.startsWith('{')) out = parseModelOutput(out).reply || ''
+  if (!out) return ''
+  const blocked = blockedFromPanel(iaConfig).filter(Boolean)
+  for (const phrase of blocked) {
+    const p = clean(phrase)
+    if (!p) continue
+    out = out.replace(new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '')
+  }
+  const badNorm = blocked.map(normalize).filter(Boolean)
+  const sentences = out.split(/(?<=[.!?])\s+|\n+/).map(clean).filter(Boolean)
+  const safe = sentences.filter(s => !badNorm.some(b => normalize(s).includes(b)))
+  out = (safe.length ? safe.join(' ') : out)
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^[-,.;:\s]+/, '')
+    .trim()
+  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 650) || 650
+  if (out.length > max) out = out.slice(0, Math.max(140, max - 20)).replace(/\s+\S*$/, '') + '...'
+  return out
+}
+
+async function setting(db, key, fallback = null) {
+  if (!db) return fallback
+  try {
+    const { data } = await db.from('crm_settings').select('value').eq('key', key).single()
+    return data?.value ?? fallback
+  } catch { return fallback }
+}
+
+async function loadSettings(db) {
+  const keys = ['ia_config', 'drive_content', 'rabito_knowledge', 'rabito_knowledge_chunks', 'agent_training', 'agent_rules', 'ia_knowledge']
+  if (!db) return { map: {}, text: '' }
+  try {
+    const { data } = await db.from('crm_settings').select('key,value').in('key', keys)
+    const map = {}
+    const text = (data || []).map(row => {
+      map[row.key] = row.value
+      const txt = flatten(row.value)
+      return txt ? `### ${row.key}\n${txt}` : ''
+    }).filter(Boolean).join('\n\n').slice(0, 28000)
+    return { map, text }
+  } catch { return { map: {}, text: '' } }
+}
+
+function buildPanelBrain(iaConfig = {}) {
+  const blocks = []
+  const priority = [
+    'nombreAgente','assistantName','agentName','nombre',
+    'personalidad','tono','rol','identidad',
+    'oferta','productos','servicios','catalogo','promesa',
+    'procesoVenta','pasos','flujo','guion',
+    'reglas','reglasDuras','reglasDerivacion','reglasRevision','instrucciones',
+    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas','agendaLink','linkAgenda',
+    'mensajeFallback','fallbackMessage','respuestaFallback'
+  ]
+  const used = new Set()
+  for (const key of priority) {
+    if (!(key in iaConfig)) continue
+    used.add(key)
+    const txt = flatten(iaConfig[key])
+    if (txt) blocks.push(`### ${key}\n${txt}`)
+  }
+  for (const [key, value] of Object.entries(iaConfig || {})) {
+    if (used.has(key) || /token|key|secret|password|activo|created|updated/i.test(key)) continue
+    const txt = flatten(value)
+    if (txt) blocks.push(`### ${key}\n${txt}`)
+  }
+  return blocks.join('\n\n').slice(0, 40000)
+}
+
+function getAgendaLink(iaConfig = {}, settingsText = '') {
+  const direct = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.urlAgenda || iaConfig.calendlyLink || process.env.DEFAULT_AGENDA_LINK || '')
+  if (direct) return direct
+  const match = String(settingsText || '').match(/https?:\/\/[^\s)\]"']+/i)
+  return match ? match[0] : ''
+}
+
+function score(query = '', txt = '') {
+  const qs = words(query).filter(w => w.length > 2)
+  const nt = normalize(txt)
+  let s = 0
+  for (const w of qs) if (nt.includes(w)) s += w.length > 4 ? 2 : 1
+  return s
+}
+
+async function retrieveKnowledge(db, query = '', settings = {}) {
+  let chunks = []
+  try {
+    const { data } = await db.from('crm_knowledge_chunks')
+      .select('id,doc_id,title,titulo,content,contenido,tags,producto,canal,activo')
+      .or('activo.is.null,activo.eq.true')
+      .limit(300)
+    if (Array.isArray(data)) chunks.push(...data)
   } catch {}
-  const lead = {
-    id: makeId('l-wa'),
-    nombre: name || tel || phone,
-    telefono: tel,
-    email: '',
-    tag: 'lead',
-    stage: 'nuevo',
-    fecha: nowIso(),
-    notas: text ? `Primer contacto por WhatsApp: ${text.slice(0, 250)}` : 'Primer contacto por WhatsApp',
-    fuente: 'whatsapp'
+  const sk = settings.map?.rabito_knowledge_chunks
+  const sc = Array.isArray(sk?.chunks) ? sk.chunks : Array.isArray(sk) ? sk : []
+  if (sc.length) chunks.push(...sc.map((c, i) => ({
+    id: c.id || `settings-${i}`,
+    doc_id: c.doc_id || c.docId || 'settings',
+    title: c.title || c.titulo || c.docName || c.nombre || 'Documento',
+    content: c.content || c.contenido || c.text || '',
+    tags: c.tags || c.carpeta || '',
+    activo: c.activo !== false
+  })))
+  chunks = chunks.filter(c => c && c.activo !== false && clean(c.content || c.contenido))
+  if (!chunks.length) return { text: (settings.text || '').slice(0, 18000), chunks: [] }
+  const ranked = chunks.map(c => ({ ...c, _score: score(query, [c.title,c.titulo,c.tags,c.producto,c.canal,c.content,c.contenido].filter(Boolean).join(' ')) }))
+    .sort((a,b) => b._score - a._score)
+  const picked = (ranked.filter(c => c._score > 0).slice(0, 5).length ? ranked.filter(c => c._score > 0).slice(0, 5) : ranked.slice(0, 3))
+  return {
+    text: picked.map((c, i) => `### Fragmento ${i+1}: ${clean(c.title || c.titulo || 'Documento')}\n${clean(c.content || c.contenido).slice(0, 1400)}`).join('\n\n'),
+    chunks: picked.map(c => ({ id: c.id, title: c.title || c.titulo, score: c._score || 0 }))
   }
+}
+
+async function loadFeedback(db, query = '') {
+  const items = []
   try {
-    const { data, error } = await db.from('crm_leads').insert(lead).select().single()
-    if (!error && data) {
-      if (conv?.id) await db.from('crm_conversations').update({ lead_id: data.id }).eq('id', conv.id)
-      return data
-    }
-    if (error) console.error('[WA] insert lead error:', error.message)
-  } catch (e) { console.error('[WA] insert lead exception:', e.message) }
-  return null
-}
-
-async function loadHistory(db, convId) {
+    const { data } = await db.from('crm_conv_feedback').select('msg_content,feedback,correction,improved,created_at').order('created_at', { ascending: false }).limit(80)
+    if (Array.isArray(data)) items.push(...data)
+  } catch {}
   try {
-    const { data } = await db.from('crm_conv_messages').select('role,content,created_at').eq('conv_id', convId).order('created_at', { ascending: true }).limit(40)
-    return (data || []).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content), created_at: m.created_at })).filter(m => m.content && !m.content.startsWith('[Sistema]'))
-  } catch { return [] }
+    const v = await setting(db, 'agent_training', [])
+    const arr = Array.isArray(v) ? v : Array.isArray(v?.items) ? v.items : []
+    items.push(...arr.filter(x => x && x.active !== false))
+  } catch {}
+  const ranked = items.map(x => {
+    const txt = flatten(x)
+    return { txt, score: score(query, txt) }
+  }).filter(x => x.txt).sort((a,b) => b.score - a.score)
+  const picked = (ranked.filter(x => x.score > 0).slice(0, 6).length ? ranked.filter(x => x.score > 0).slice(0, 6) : ranked.slice(0, 4))
+  return { text: picked.map((x,i) => `### Feedback ${i+1}\n${x.txt.slice(0,1000)}`).join('\n\n'), count: picked.length }
 }
 
-async function defaultInstance(db, fallback = '') {
-  if (fallback) return fallback
-  const nums = await readSetting(db, 'wa_numeros', [])
-  if (Array.isArray(nums)) {
-    const n = nums.find(x => x.activo !== false && x.instanceName) || nums.find(x => x.instanceName)
-    if (n?.instanceName) return n.instanceName
-  }
-  return clean(process.env.EVOLUTION_DEFAULT_INSTANCE || process.env.EVO_DEFAULT_INSTANCE || '')
-}
-
-async function sendWa({ instance, number, text }) {
-  const url = clean(process.env.EVOLUTION_API_URL || process.env.EVO_URL || 'https://wa.rabbittscapital.com').replace(/\/$/, '')
-  const key = clean(process.env.EVOLUTION_API_KEY || process.env.EVO_KEY || '')
-  if (!url || !key || !instance || !number || !text) {
-    console.error('[WA] send missing:', { hasUrl: !!url, hasKey: !!key, instance, number: !!number, text: !!text })
-    return { ok: false, error: 'missing_evolution_env_or_payload' }
-  }
+async function loadMemory(db, leadData = {}) {
+  const key = clean(leadData.telefono || leadData.phone || leadData.email || leadData.nombre || leadData.name)
+  if (!db || !key) return ''
   try {
-    const r = await fetch(`${url}/message/sendText/${instance}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: key },
-      body: JSON.stringify({ number: clean(number).replace(/[^0-9]/g, ''), text, delay: Number(process.env.EVOLUTION_SEND_DELAY || 350) })
-    })
-    const body = await r.text().catch(() => '')
-    if (!r.ok) console.error('[WA] send error:', r.status, body.slice(0, 300))
-    return { ok: r.ok, status: r.status, body: body.slice(0, 300) }
-  } catch (e) {
-    console.error('[WA] send exception:', e.message)
-    return { ok: false, error: e.message }
-  }
+    const { data } = await db.from('crm_ai_memory').select('value,updated_at').eq('key', key).order('updated_at', { ascending: false }).limit(1)
+    return flatten(data?.[0]?.value || '').slice(0, 8000)
+  } catch { return '' }
 }
 
-async function direct(res, db, b) {
-  const to = clean(b.to || b.number || b.phone)
-  const text = clean(b.mensaje || b.message || b.text)
-  const inst = await defaultInstance(db, clean(b.instance || b.instanceName))
-  const result = await sendWa({ instance: inst, number: to, text })
-  return res.status(200).json({ ok: result.ok, sent: result.ok, result })
+async function saveMemory(db, leadData = {}, memoryUpdate = {}) {
+  if (!db || !memoryUpdate || typeof memoryUpdate !== 'object') return
+  const key = clean(leadData.telefono || leadData.phone || leadData.email || leadData.nombre || leadData.name)
+  if (!key) return
+  try { await db.from('crm_ai_memory').upsert({ key, value: memoryUpdate, updated_at: nowIso() }, { onConflict: 'key' }) } catch {}
 }
 
-async function handleQrOrConnection(db, b, event, instance) {
-  if (event.includes('qrcode') || event.includes('qr')) {
-    const qr = b?.data?.qrcode?.base64 || b?.data?.base64 || b?.data?.qr || b?.qrcode?.base64 || b?.base64 || b?.qr
-    if (qr && instance) await upsertSetting(db, `wa_qr_${instance}`, { qr, ts: Date.now() })
-    return { ok: true, handled: 'qr' }
-  }
-  if (event.includes('connection')) {
-    const state = b?.data?.state || b?.state || b?.data?.instance?.state
-    if (state === 'open' && instance) { try { await db.from('crm_settings').delete().eq('key', `wa_qr_${instance}`) } catch {} }
-    return { ok: true, handled: 'connection', state }
-  }
-  return null
+function sanitizeHistory(history = []) {
+  return (Array.isArray(history) ? history : [])
+    .filter(m => m && m.role && clean(m.content) && !clean(m.content).startsWith('[Sistema]'))
+    .slice(-24)
+    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content).slice(0, 1400) }))
+}
+
+function conversationFacts(history = [], message = '', leadData = {}) {
+  const user = [...history, { role:'user', content: message }].filter(m => m.role === 'user').slice(-10).map((m,i) => `Cliente ${i+1}: ${clean(m.content).slice(0,400)}`)
+  const lead = Object.entries(leadData || {}).filter(([,v]) => v).slice(0, 20).map(([k,v]) => `${k}: ${clean(v).slice(0,250)}`)
+  return [...user, ...lead].join('\n') || 'Sin datos previos.'
+}
+
+function derivationRulesText(iaConfig = {}) {
+  return flatten({
+    reglasDuras: iaConfig.reglasDuras,
+    reglasDerivacion: iaConfig.reglasDerivacion,
+    derivacionHumano: iaConfig.derivacionHumano,
+    reglasRevision: iaConfig.reglasRevision,
+    humanRules: iaConfig.humanRules,
+    reviewRules: iaConfig.reviewRules
+  })
+}
+
+function hasDerivationRules(iaConfig = {}) {
+  return /(derivar|humano|persona|asesor|ejecutivo|revision|escalar|transferir|tomar control)/.test(normalize(derivationRulesText(iaConfig)))
 }
 
 function normStatus(v = '') {
-  const s = String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, '_')
-  return ['activo','calificado','frio','no_interesado','requiere_revision'].includes(s) ? s : ''
+  const s = normalize(v).replace(/\s+/g, '_')
+  const allowed = ['activo','calificado','frio','no_interesado','requiere_revision']
+  return allowed.includes(s) ? s : ''
 }
 
-async function answer(db, { conv, tel, phone, instance, text }) {
-  const ia = await readSetting(db, 'ia_config', {}) || {}
-  if (ia.activo === false || conv.mode === 'humano') return { ok: true, skipped: ia.activo === false ? 'ia_off' : 'human_mode' }
+function safeUpdate(obj = {}) {
+  const out = {}
+  for (const [k,v] of Object.entries(obj || {}).slice(0,40)) {
+    const key = clean(k).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0,60)
+    if (!key || /password|token|secret|apikey|api_key|created_at|updated_at/i.test(key)) continue
+    const val = typeof v === 'object' ? flatten(v).slice(0,800) : clean(v).slice(0,800)
+    if (val) out[key] = val
+  }
+  return out
+}
 
-  const history = await loadHistory(db, conv.id)
-  const result = await generateAgentResponse({
-    message: text,
-    conversationHistory: history.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
-    iaConfig: ia,
-    leadData: {
-      telefono: conv.telefono || tel || '',
-      nombre: conv.nombre || '',
-      lead_id: conv.lead_id || '',
-      conv_id: conv.id || '',
-      status: conv.status || '',
-      mode: conv.mode || ''
-    }
-  }, { db })
+function extractLocalFields(message = '', leadData = {}, agendaLink = '') {
+  const out = { ...(leadData || {}) }
+  const email = String(message).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
+  if (email) out.email = email
+  if (agendaLink) out.agenda_link = agendaLink
+  return safeUpdate(out)
+}
 
-  const reply = clean(result.reply)
-  if (!reply) {
-    console.error('[WA] agent empty:', result.error || '', result.trace || {})
-    return { ok: true, skipped: 'empty_reply', error: result.error || '' }
+function buildPrompt({ agentName, panelBrain, knowledge, feedback, memory, facts, agendaLink, iaConfig, history, message }) {
+  const recentAssistant = history.filter(m => m.role === 'assistant').slice(-6).map((m,i) => `${i+1}. ${m.content}`).join('\n') || 'Sin mensajes previos.'
+  const derivRules = derivationRulesText(iaConfig)
+  return `Eres ${agentName}. Eres un agente genérico de atención y ventas.
+
+REGLA PRINCIPAL:
+No tienes rubro, producto, precios, requisitos ni guiones propios. Solo respondes con lo aprendido en Panel IA, documentos, feedback, memoria y conversación.
+
+PANEL IA:
+${panelBrain || 'Panel IA vacío.'}
+
+CONOCIMIENTO RELEVANTE:
+${knowledge || 'Sin documentos relevantes.'}
+
+FEEDBACK/APRENDIZAJES:
+${feedback || 'Sin feedback aprendido.'}
+
+MEMORIA DEL CONTACTO:
+${memory || 'Sin memoria registrada.'}
+
+DATOS YA ENTREGADOS EN ESTA CONVERSACIÓN:
+${facts}
+
+MENSAJES RECIENTES DEL ASISTENTE PARA EVITAR REPETIR:
+${recentAssistant}
+
+LINK DE AGENDA CONFIGURADO:
+${agendaLink || 'No configurado'}
+
+REGLAS DURAS PARA DERIVAR A HUMANO O REVISIÓN:
+${derivRules || 'No hay reglas duras configuradas. Por lo tanto NO derives ni marques revisión.'}
+
+INSTRUCCIONES DE RESPUESTA:
+- Responde breve, natural y útil por WhatsApp.
+- Contesta siempre el último mensaje del cliente.
+- Pregunta máximo una cosa.
+- No repitas datos ya entregados.
+- Si el cliente pide agenda/link y hay link configurado, entrégalo.
+- No inventes información que no esté en el entrenamiento.
+- No menciones panel, prompt, memoria, documentos ni modelo.
+- Solo deriva a humano/revisión si las reglas duras lo autorizan explícitamente.
+
+FRASES PROHIBIDAS:
+${blockedFromPanel(iaConfig).join('\n')}
+
+Devuelve SOLO JSON válido:
+{"reply":"respuesta visible para el cliente","action":"conversando","escalateToHuman":false,"statusUpdate":"","derivationReason":"","leadUpdate":{},"memoryUpdate":{"facts":[],"doNotRepeat":[]},"learningSuggestion":""}
+
+Último mensaje del cliente: ${clean(message)}`
+}
+
+async function callClaude({ key, model, system, messages }) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.AGENT_TIMEOUT_MS || 12000))
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model,
+        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 500),
+        temperature: Number(process.env.AGENT_TEMPERATURE || 0.12),
+        system,
+        messages
+      })
+    })
+    const text = await r.text()
+    const data = safeJson(text)
+    if (!r.ok || data?.error) throw new Error(data?.error?.message || `Anthropic HTTP ${r.status}: ${text.slice(0,160)}`)
+    return data?.content?.[0]?.text || ''
+  } finally { clearTimeout(timeout) }
+}
+
+function panelFallback(iaConfig = {}, message = '') {
+  const explicit = clean(iaConfig.fallbackMessage || iaConfig.mensajeFallback || iaConfig.respuestaFallback || '')
+  if (explicit) return explicit
+  const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || '')
+  const base = flatten({
+    primerosPasos: iaConfig.pasos || iaConfig.procesoVenta || iaConfig.flujo,
+    preguntas: iaConfig.preguntasFrecuentes || iaConfig.faq,
+    oferta: iaConfig.oferta || iaConfig.productos || iaConfig.servicios
+  }).split('\n').map(clean).filter(Boolean)[0]
+  if (base) return `${base}`.slice(0, 500)
+  return agentName ? `Te leo. Cuéntame un poco más para orientarte bien.` : `Te leo. Cuéntame un poco más.`
+}
+
+export async function generateAgentResponse(input = {}, opts = {}) {
+  const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY)
+  const model = clean(process.env.ANTHROPIC_MODEL || DEFAULT_MODEL)
+  const message = clean(input.message)
+  if (!message) return { ok: false, reply: '', error: 'missing_message' }
+
+  const db = opts.db || sb()
+  const settings = await loadSettings(db)
+  const iaConfig = { ...(settings.map.ia_config || {}), ...(input.iaConfig || {}) }
+  const history = sanitizeHistory(input.conversationHistory || [])
+  const leadData = input.leadData || {}
+  const panelBrain = buildPanelBrain(iaConfig)
+  const agendaLink = getAgendaLink(iaConfig, settings.text)
+  const facts = conversationFacts(history, message, leadData)
+  const query = [message, facts, panelBrain].join('\n')
+  const [feedback, memory, knowledge] = await Promise.all([
+    loadFeedback(db, query),
+    loadMemory(db, leadData),
+    retrieveKnowledge(db, query, settings)
+  ])
+  const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || 'Asistente')
+  const localUpdate = extractLocalFields(message, leadData, agendaLink)
+
+  if (!key) {
+    const reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
+    return { ok: false, reply, action: 'conversando', escalateToHuman: false, statusUpdate: '', leadUpdate: localUpdate, error: 'ANTHROPIC_KEY_missing', trace: { fallback: true, genericEngine: true, hardcodedBusiness: false } }
   }
 
-  const inst = await defaultInstance(db, instance)
-  const sent = await sendWa({ instance: inst, number: phone || tel, text: reply })
-  await saveMsg(db, conv.id, 'assistant', reply)
+  const system = buildPrompt({ agentName, panelBrain, knowledge: knowledge.text, feedback: feedback.text, memory, facts, agendaLink, iaConfig, history, message })
+  const messages = [...history, { role: 'user', content: message }]
 
-  const upd = { last_message: reply, updated_at: nowIso() }
-  const allowedByHardRules = result?.trace?.derivationAllowedByHardRules === true
-  const requestedStatus = normStatus(result.statusUpdate || '')
-  if (allowedByHardRules && requestedStatus) upd.status = requestedStatus
-  if (result.action === 'calificado') upd.status = 'calificado'
-  if (allowedByHardRules && result.escalateToHuman === true) upd.mode = 'humano'
-  try { await db.from('crm_conversations').update(upd).eq('id', conv.id) } catch (e) { console.error('[WA] update after reply:', e.message) }
+  try {
+    const raw = await callClaude({ key, model, system, messages })
+    const parsed = parseModelOutput(raw)
+    let reply = removeBlocked(parsed.reply, iaConfig)
+    if (!reply) reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
+    const rules = hasDerivationRules(iaConfig)
+    const requestedStatus = rules ? normStatus(parsed.statusUpdate) : ''
+    const requestedHuman = rules && parsed.escalateToHuman === true
+    await saveMemory(db, leadData, parsed.memoryUpdate)
+    return {
+      ok: true,
+      reply,
+      action: parsed.action || 'conversando',
+      escalateToHuman: requestedHuman,
+      statusUpdate: requestedStatus,
+      derivationReason: rules ? clean(parsed.derivationReason || '') : '',
+      leadUpdate: safeUpdate({ ...localUpdate, ...(parsed.leadUpdate || {}) }),
+      memory: parsed.memoryUpdate || {},
+      learningSuggestion: parsed.learningSuggestion || '',
+      trace: {
+        panelUsed: !!panelBrain,
+        feedbackUsed: feedback.count,
+        knowledgeChunksUsed: knowledge.chunks.length,
+        agendaConfigured: !!agendaLink,
+        derivationAllowedByHardRules: !!(requestedHuman || requestedStatus === 'requiere_revision'),
+        genericEngine: true,
+        hardcodedBusiness: false
+      }
+    }
+  } catch (error) {
+    const reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
+    return {
+      ok: false,
+      reply,
+      action: 'conversando',
+      escalateToHuman: false,
+      statusUpdate: '',
+      leadUpdate: localUpdate,
+      error: error?.message || 'agent_error',
+      trace: { genericEngine: true, fallback: true, hardcodedBusiness: false, derivationAllowedByHardRules: false }
+    }
+  }
+}
 
-  return { ok: true, replied: sent.ok, sendStatus: sent.status || 0, error: sent.error || '' }
+async function extractDocument({ file, mediaType }) {
+  const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY)
+  if (!key) throw new Error('ANTHROPIC_KEY missing')
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'pdfs-2024-09-25' },
+    body: JSON.stringify({
+      model: process.env.ANTHROPIC_MODEL || DEFAULT_MODEL,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: mediaType, data: file } },
+        { type: 'text', text: 'Extrae y devuelve todo el texto útil de este documento, sin inventar.' }
+      ] }]
+    })
+  })
+  const txt = await r.text()
+  const data = safeJson(txt)
+  if (!r.ok || data?.error) throw new Error(data?.error?.message || `extract_error ${r.status}`)
+  return data?.content?.[0]?.text || ''
 }
 
 export default async function handler(req, res) {
-  if (req.method === 'GET') return res.status(200).json({ ok: true, endpoint: 'api/whatsapp', mode: 'stable-v6' })
-  if (req.method !== 'POST') return res.status(405).json({ ok: false })
-
-  const db = sb()
-  if (!db) return res.status(200).json({ ok: false, error: 'supabase_env_missing' })
-  const b = req.body || {}
-  if ((b.to || b.number || b.phone) && (b.mensaje || b.message || b.text) && !b.event && !b.data?.key) return direct(res, db, b)
-
-  const event = eventName(b)
-  const rawMessages = messages(b)
-  const instance = clean(b.instance || b.instanceName || b.instance_name || b.data?.instance || b.data?.instanceName || rawMessages[0]?.instance || rawMessages[0]?.instanceName || '')
-  console.log('[WA] event:', event || '(no-event)', '| inst:', instance || '(no-inst)', '| msgs:', rawMessages.length)
-
-  const handled = await handleQrOrConnection(db, b, event, instance)
-  if (handled && !rawMessages.length) return res.status(200).json(handled)
-  if (!(event.includes('message') || rawMessages.length)) return res.status(200).json({ ok: true, skipped: event || 'not_message' })
-
-  const results = []
-  for (const m of rawMessages) {
-    const jid = jidOf(m)
-    const phone = phoneOf(jid)
-    const tel = telOf(phone)
-    const text = textOf(m)
-    const name = nameOf(m)
-    const fromMe = fromMeOf(m)
-    const id = msgId(m)
-
-    console.log('[WA] inbound:', { tel, fromMe, hasText: !!text, id: id || '(no-id)' })
-
-    if (!phone || !tel || jid.includes('@g.us') || jid.includes('@broadcast')) { results.push({ ok:true, skipped:'invalid_or_group' }); continue }
-    if (!text) { results.push({ ok:true, skipped:'empty_message' }); continue }
-
-    const conv = await findOrCreateConv(db, { tel, phone, name, text })
-
-    if (fromMe) {
-      await saveMsg(db, conv.id, 'assistant', text)
-      try { await db.from('crm_conversations').update({ last_message: text, updated_at: nowIso() }).eq('id', conv.id) } catch {}
-      results.push({ ok: true, saved: 'fromMe', convId: conv.id })
-      continue
-    }
-
-    if (await duplicate(db, conv.id, text)) { results.push({ ok:true, skipped:'duplicate', convId: conv.id }); continue }
-    await saveMsg(db, conv.id, 'user', text)
-    await ensureLead(db, conv, { tel, phone, name, text })
-
-    const result = await answer(db, { conv, tel, phone, instance, text })
-    results.push({ ok:true, worker: result, convId: conv.id })
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  if (req.method === 'OPTIONS') return res.status(200).end()
+  if (req.method !== 'POST') return res.status(405).json({ ok:false, error:'Use POST' })
+  const body = req.body || {}
+  if (body.action === 'extract' && body.file) {
+    try { return res.status(200).json({ ok:true, text: await extractDocument({ file: body.file, mediaType: body.mediaType }) }) }
+    catch (e) { return res.status(200).json({ ok:false, error:e.message, text:'' }) }
   }
-
-  return res.status(200).json({ ok: true, processed: true, results })
+  const result = await generateAgentResponse(body)
+  return res.status(200).json(result)
 }
