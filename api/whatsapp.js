@@ -1,362 +1,511 @@
-// api/whatsapp.js — Webhook Evolution API + Rabito IA
-// Archivo backend puro. No pegar JSX/HTML suelto aquí.
+// api/whatsapp.js — Webhook Evolution API robusto
+// Objetivo:
+// 1) Crear/actualizar conversaciones SIEMPRE que llegue un mensaje nuevo.
+// 2) Crear lead básico para números nuevos.
+// 3) Llamar a /api/agent con URL dinámica del deployment.
+// 4) No depender de formatos únicos de Evolution: soporta data directo, arrays, messages, message, webhook variations.
+// 5) No cortar la respuesta por ia.activo indefinido: solo se salta si ia.activo === false.
 
 import { createClient } from '@supabase/supabase-js'
 
 const DEFAULT_EVO_URL = 'https://wa.rabbittscapital.com'
 const DEFAULT_EVO_KEY = 'rabbitts2024'
-const DEFAULT_AGENT_URL = 'https://crm.rabbittscapital.com/api/agent'
 
-function safeJsonParse(text, fallback = null) {
-  try { return text ? JSON.parse(text) : fallback } catch (_) { return fallback }
+function clean(value = '') {
+  return String(value ?? '').trim()
 }
 
-async function readJsonResponse(response) {
-  const text = await response.text()
-  const json = safeJsonParse(text)
-  return { text, json }
+function nowIso() {
+  return new Date().toISOString()
 }
 
-function getMessageText(msg = {}) {
-  return (
-    msg?.message?.conversation ||
-    msg?.message?.extendedTextMessage?.text ||
-    msg?.message?.imageMessage?.caption ||
-    msg?.message?.videoMessage?.caption ||
-    msg?.message?.documentMessage?.caption ||
+function makeId(prefix = 'id') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function getBaseUrl(req) {
+  const configured = clean(process.env.PUBLIC_BASE_URL || process.env.APP_URL || process.env.CRM_URL)
+  if (configured) return configured.replace(/\/$/, '')
+  const host = req.headers['x-forwarded-host'] || req.headers.host
+  const proto = req.headers['x-forwarded-proto'] || 'https'
+  return host ? `${proto}://${host}` : 'https://crm.rabbittscapital.com'
+}
+
+function getSupabase() {
+  const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
+  const key = clean(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
+  if (!url || !key) return null
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
+}
+
+function getEvolutionConfig() {
+  return {
+    url: clean(process.env.EVOLUTION_API_URL || process.env.EVO_URL || DEFAULT_EVO_URL).replace(/\/$/, ''),
+    key: clean(process.env.EVOLUTION_API_KEY || process.env.EVO_KEY || DEFAULT_EVO_KEY)
+  }
+}
+
+function normalizeEvent(body = {}) {
+  return clean(body.event || body.type || body.eventName || body.action || '').toLowerCase().replace(/_/g, '.')
+}
+
+function normalizeInstance(body = {}, msg = null) {
+  return clean(
+    body.instance ||
+    body.instanceName ||
+    body.instance_name ||
+    body.data?.instance ||
+    body.data?.instanceName ||
+    msg?.instance ||
+    msg?.instanceName ||
     ''
   )
 }
 
-function normalizePhoneFromJid(jid = '') {
-  const raw = String(jid).replace(/@[^@]+$/, '').replace(/\D/g, '')
-  return raw ? `+${raw}` : ''
+function unwrapMessageObject(obj = {}) {
+  let message = obj?.message || obj?.msg || obj
+  if (message?.ephemeralMessage?.message) message = message.ephemeralMessage.message
+  if (message?.viewOnceMessage?.message) message = message.viewOnceMessage.message
+  if (message?.viewOnceMessageV2?.message) message = message.viewOnceMessageV2.message
+  if (message?.documentWithCaptionMessage?.message) message = message.documentWithCaptionMessage.message
+  return message || {}
 }
 
-function getSendTo(jid = '') {
-  const raw = String(jid).replace(/@[^@]+$/, '').replace(/\D/g, '')
-  return jid.endsWith('@s.whatsapp.net') ? raw : jid
+function extractTextFromMessage(obj = {}) {
+  const message = unwrapMessageObject(obj)
+  return clean(
+    message.conversation ||
+    message.extendedTextMessage?.text ||
+    message.imageMessage?.caption ||
+    message.videoMessage?.caption ||
+    message.documentMessage?.caption ||
+    message.buttonsResponseMessage?.selectedDisplayText ||
+    message.buttonsResponseMessage?.selectedButtonId ||
+    message.listResponseMessage?.title ||
+    message.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    message.templateButtonReplyMessage?.selectedDisplayText ||
+    message.templateButtonReplyMessage?.selectedId ||
+    message.interactiveResponseMessage?.body?.text ||
+    message.reactionMessage?.text ||
+    ''
+  )
 }
 
-async function autoCreateLeads(sb) {
-  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+function getRemoteJid(obj = {}) {
+  return clean(
+    obj?.key?.remoteJid ||
+    obj?.remoteJid ||
+    obj?.jid ||
+    obj?.from ||
+    obj?.sender ||
+    obj?.participant ||
+    ''
+  )
+}
 
-  const { data: pending, error } = await sb
-    .from('crm_conversations')
-    .select('*')
-    .eq('status', 'calificado')
-    .is('lead_id', null)
-    .lt('updated_at', cutoff)
-    .limit(5)
+function getPushName(obj = {}) {
+  return clean(
+    obj?.pushName ||
+    obj?.notifyName ||
+    obj?.name ||
+    obj?.senderName ||
+    obj?.data?.pushName ||
+    ''
+  )
+}
 
-  if (error) {
-    console.warn('[WA] autoCreateLeads select:', error.message)
-    return
+function jidToPhone(jid = '') {
+  const base = clean(jid).replace(/@[^@]+$/, '').replace(/:\d+$/, '')
+  return base.replace(/[^0-9]/g, '')
+}
+
+function phoneToTel(phone = '') {
+  const digits = clean(phone).replace(/[^0-9]/g, '')
+  return digits ? `+${digits}` : ''
+}
+
+function extractMessages(body = {}) {
+  const data = body.data
+  const candidates = []
+
+  if (Array.isArray(data)) candidates.push(...data)
+  else if (Array.isArray(data?.messages)) candidates.push(...data.messages)
+  else if (Array.isArray(data?.message)) candidates.push(...data.message)
+  else if (data?.key || data?.message || data?.remoteJid || data?.sender) candidates.push(data)
+  else if (body?.key || body?.message || body?.remoteJid || body?.sender) candidates.push(body)
+
+  return candidates.filter(Boolean)
+}
+
+function isIncomingUserMessage(msg = {}) {
+  const jid = getRemoteJid(msg)
+  if (!jid || jid.includes('@g.us') || jid.includes('@broadcast')) return false
+  return msg?.key?.fromMe !== true && msg?.fromMe !== true
+}
+
+async function readSetting(sb, key, fallback = null) {
+  try {
+    const { data } = await sb.from('crm_settings').select('value').eq('key', key).single()
+    return data?.value ?? fallback
+  } catch (_) {
+    return fallback
   }
-  if (!pending?.length) return
+}
 
-  for (const conv of pending) {
-    const { data: existing } = await sb
-      .from('crm_leads')
-      .select('id')
-      .eq('telefono', conv.telefono)
+async function upsertSetting(sb, key, value) {
+  try {
+    await sb.from('crm_settings').upsert({ key, value }, { onConflict: 'key' })
+  } catch (error) {
+    console.warn('[WA] setting error:', key, error.message)
+  }
+}
+
+async function findOrCreateConversation(sb, { tel, phone, name, text, instance }) {
+  let conv = null
+
+  try {
+    const { data, error } = await sb.from('crm_conversations')
+      .select('*')
+      .eq('telefono', tel)
+      .order('updated_at', { ascending: false })
       .limit(1)
+    if (!error && data?.length) conv = data[0]
+  } catch (error) {
+    console.warn('[WA] search conv error:', error.message)
+  }
 
-    if (existing?.length) {
-      await sb.from('crm_conversations').update({ lead_id: existing[0].id }).eq('id', conv.id)
-      continue
+  if (conv) {
+    const update = {
+      nombre: conv.nombre || name || phone,
+      last_message: text || conv.last_message || '[mensaje]',
+      updated_at: nowIso()
     }
-
-    const newLead = {
-      id: 'l-auto-' + Date.now() + '-' + String(conv.id).slice(-4),
-      nombre: conv.nombre || conv.telefono,
-      telefono: conv.telefono || '',
-      email: conv.email || '',
-      tag: 'lead',
-      stage: 'nuevo',
-      fecha: new Date().toISOString(),
-      notas: `Auto-creado desde WhatsApp (calificó pero no agendó). ${conv.last_message ? 'Último mensaje: ' + String(conv.last_message).slice(0, 100) : ''}`,
-      fuente: 'whatsapp_auto'
-    }
-
-    const { data: lead, error: insertError } = await sb
-      .from('crm_leads')
-      .insert(newLead)
-      .select()
-      .single()
-
-    if (!insertError && lead) {
-      await sb.from('crm_conversations').update({ lead_id: lead.id }).eq('id', conv.id)
-      console.log('[WA] Auto-lead creado:', conv.telefono, lead.id)
-    } else if (insertError) {
-      console.error('[WA] Auto-lead error:', insertError.message)
+    if (instance && 'instanceName' in conv) update.instanceName = instance
+    try {
+      const { data } = await sb.from('crm_conversations').update(update).eq('id', conv.id).select().single()
+      return data || { ...conv, ...update }
+    } catch (_) {
+      return { ...conv, ...update }
     }
   }
+
+  const base = {
+    id: makeId('wa'),
+    telefono: tel,
+    nombre: name || tel || phone,
+    mode: 'ia',
+    status: 'activo',
+    last_message: text || '[mensaje]',
+    lead_id: null,
+    created_at: nowIso(),
+    updated_at: nowIso()
+  }
+
+  const attempts = [
+    { ...base, instanceName: instance || null, origen: 'whatsapp' },
+    { ...base, instanceName: instance || null },
+    base
+  ]
+
+  for (const payload of attempts) {
+    try {
+      const { data, error } = await sb.from('crm_conversations').insert(payload).select().single()
+      if (!error && data) {
+        console.log('[WA] conversación nueva creada:', data.id, tel)
+        return data
+      }
+      if (error) console.warn('[WA] insert conv intento falló:', error.message)
+    } catch (error) {
+      console.warn('[WA] insert conv excepción:', error.message)
+    }
+  }
+
+  console.error('[WA] no se pudo persistir conversación; se responderá igual con objeto local:', tel)
+  return base
+}
+
+async function saveMessage(sb, convId, role, content, extra = {}) {
+  if (!convId || !content) return false
+  try {
+    const { error } = await sb.from('crm_conv_messages').insert({
+      conv_id: convId,
+      role,
+      content,
+      created_at: nowIso(),
+      ...extra
+    })
+    if (error) {
+      console.warn('[WA] saveMessage error:', error.message)
+      return false
+    }
+    return true
+  } catch (error) {
+    console.warn('[WA] saveMessage excepción:', error.message)
+    return false
+  }
+}
+
+async function ensureLead(sb, conv, { tel, phone, name, text }) {
+  if (!tel) return null
+  try {
+    const { data: existing } = await sb.from('crm_leads').select('*').eq('telefono', tel).limit(1)
+    if (existing?.length) {
+      if (conv?.id && !conv.lead_id) await sb.from('crm_conversations').update({ lead_id: existing[0].id }).eq('id', conv.id)
+      return existing[0]
+    }
+  } catch (_) {}
+
+  const base = {
+    id: makeId('l-wa'),
+    nombre: name || tel || phone,
+    telefono: tel,
+    email: '',
+    tag: 'lead',
+    stage: 'nuevo',
+    fecha: nowIso(),
+    notas: text ? `Primer contacto por WhatsApp: ${text.slice(0, 250)}` : 'Primer contacto por WhatsApp'
+  }
+
+  const attempts = [
+    { ...base, fuente: 'whatsapp', origen: 'whatsapp' },
+    { ...base, fuente: 'whatsapp' },
+    base
+  ]
+
+  for (const payload of attempts) {
+    try {
+      const { data, error } = await sb.from('crm_leads').insert(payload).select().single()
+      if (!error && data) {
+        if (conv?.id) await sb.from('crm_conversations').update({ lead_id: data.id }).eq('id', conv.id)
+        console.log('[WA] lead nuevo creado:', data.id, tel)
+        return data
+      }
+      if (error) console.warn('[WA] insert lead intento falló:', error.message)
+    } catch (error) {
+      console.warn('[WA] insert lead excepción:', error.message)
+    }
+  }
+
+  return null
+}
+
+async function loadHistory(sb, convId) {
+  if (!convId) return []
+  try {
+    const { data } = await sb.from('crm_conv_messages')
+      .select('role,content,created_at')
+      .eq('conv_id', convId)
+      .order('created_at', { ascending: true })
+      .limit(40)
+    return (data || []).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content) })).filter(m => m.content)
+  } catch (_) {
+    return []
+  }
+}
+
+async function getDefaultInstance(sb, fallback = '') {
+  if (fallback) return fallback
+  const nums = await readSetting(sb, 'wa_numeros', [])
+  if (Array.isArray(nums) && nums.length) {
+    const active = nums.find(n => n.activo !== false && (n.status === 'open' || n.instanceName)) || nums.find(n => n.instanceName)
+    if (active?.instanceName) return active.instanceName
+  }
+  return clean(process.env.EVOLUTION_DEFAULT_INSTANCE || process.env.EVO_DEFAULT_INSTANCE || '')
+}
+
+async function sendWhatsApp({ instance, number, text }) {
+  const evo = getEvolutionConfig()
+  if (!evo.url || !evo.key || !instance || !number || !text) {
+    return { ok: false, status: 0, error: 'missing_send_config' }
+  }
+
+  const cleanNumber = clean(number).replace(/[^0-9]/g, '')
+  const response = await fetch(`${evo.url}/message/sendText/${instance}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: evo.key },
+    body: JSON.stringify({ number: cleanNumber, text, delay: 500 })
+  })
+
+  const body = await response.text().catch(() => '')
+  return { ok: response.ok, status: response.status, body: body.slice(0, 300) }
+}
+
+async function handleDirectSend(req, res, sb, body) {
+  const to = clean(body.to || body.number || body.phone)
+  const text = clean(body.mensaje || body.message || body.text)
+  const instance = await getDefaultInstance(sb, clean(body.instance || body.instanceName))
+  const result = await sendWhatsApp({ instance, number: to, text })
+  return res.status(200).json({ ok: result.ok, sent: result.ok, result })
+}
+
+async function handleQrOrConnection(sb, body, event, instance) {
+  if (event.includes('qrcode') || event.includes('qr')) {
+    const qr = body?.data?.qrcode?.base64 || body?.data?.base64 || body?.data?.qr || body?.qrcode?.base64 || body?.base64 || body?.qr
+    if (qr && instance) await upsertSetting(sb, `wa_qr_${instance}`, { qr, ts: Date.now() })
+    return { ok: true, handled: 'qr' }
+  }
+
+  if (event.includes('connection')) {
+    const state = body?.data?.state || body?.state || body?.data?.instance?.state
+    if (state === 'open' && instance) await sb.from('crm_settings').delete().eq('key', `wa_qr_${instance}`)
+    return { ok: true, handled: 'connection', state }
+  }
+
+  return null
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, apikey')
-
-  if (req.method === 'OPTIONS') return res.status(200).end()
-
-  const SB_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
-  const SB_KEY = (process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
-  const EVO_URL = (process.env.EVOLUTION_API_URL || process.env.EVO_URL || DEFAULT_EVO_URL).trim()
-  const EVO_KEY = (process.env.EVOLUTION_API_KEY || process.env.EVO_KEY || DEFAULT_EVO_KEY).trim()
-  const AGENT_URL = (process.env.RABITO_AGENT_URL || DEFAULT_AGENT_URL).trim()
-
   if (req.method === 'GET') {
+    const sb = getSupabase()
+    const evo = getEvolutionConfig()
     return res.status(200).json({
       status: 'ok',
-      service: 'whatsapp-webhook',
+      endpoint: 'api/whatsapp',
       env: {
-        SUPABASE_URL: !!SB_URL,
-        SUPABASE_KEY: !!SB_KEY,
-        EVOLUTION_API_URL: !!EVO_URL,
-        EVOLUTION_API_KEY: !!EVO_KEY,
-        RABITO_AGENT_URL: !!AGENT_URL
+        supabase: !!sb,
+        evolutionUrl: !!evo.url,
+        evolutionKey: !!evo.key,
+        publicBase: clean(process.env.PUBLIC_BASE_URL || process.env.APP_URL || process.env.CRM_URL || '') || null
       }
     })
   }
 
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' })
 
-  if (!SB_URL || !SB_KEY) {
-    console.error('[WA] ENV faltantes: SUPABASE_URL/SUPABASE_SERVICE_KEY')
-    return res.status(200).json({ ok: false, error: 'env_missing' })
+  const sb = getSupabase()
+  if (!sb) {
+    console.error('[WA] Supabase env faltante')
+    return res.status(200).json({ ok: false, error: 'supabase_env_missing' })
   }
-
-  const sb = createClient(SB_URL, SB_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  })
 
   const body = req.body || {}
-  const eventRaw = String(body?.event || body?.type || '').trim()
-  const event = eventRaw.toLowerCase()
-  const inst = String(body?.instance || body?.instanceName || body?.data?.instance || '').trim()
 
-  console.log('[WA] event:', eventRaw || '(sin evento)', '| inst:', inst || '(sin instancia)')
-
-  try {
-    // Guardar QR si Evolution lo manda por webhook
-    if (event.includes('qrcode') || event.includes('qr')) {
-      const qr =
-        body?.data?.qrcode?.base64 ||
-        body?.data?.base64 ||
-        body?.data?.qr ||
-        body?.qrcode?.base64 ||
-        body?.base64 ||
-        body?.qr ||
-        ''
-
-      if (qr && inst) {
-        await sb
-          .from('crm_settings')
-          .upsert({ key: `wa_qr_${inst}`, value: { qr, ts: Date.now() } }, { onConflict: 'key' })
-      }
-
-      return res.status(200).json({ ok: true, event: eventRaw })
-    }
-
-    // Estado de conexión
-    if (event.includes('connection')) {
-      const state = body?.data?.state || body?.state || body?.data?.connection || ''
-      if (state === 'open' && inst) {
-        await sb.from('crm_settings').delete().eq('key', `wa_qr_${inst}`)
-      }
-
-      return res.status(200).json({ ok: true, event: eventRaw, state })
-    }
-
-    // Rabito solo responde a mensajes entrantes nuevos.
-    if (!event.includes('messages') || !event.includes('upsert')) {
-      return res.status(200).json({ ok: true, skipped: eventRaw || 'unknown_event' })
-    }
-
-    const data = body?.data
-    const msg = Array.isArray(data) ? data[0] : data
-    if (!msg?.key) return res.status(200).json({ ok: true, skipped: 'no_message_key' })
-
-    const fromMe = !!msg?.key?.fromMe
-    const jid = msg?.key?.remoteJid || ''
-    if (!jid || jid.includes('@g.us')) return res.status(200).json({ ok: true, skipped: 'group_or_no_jid' })
-
-    const text = getMessageText(msg).trim()
-    const name = msg?.pushName || msg?.senderName || ''
-    const tel = normalizePhoneFromJid(jid)
-    const sendTo = getSendTo(jid)
-
-    console.log('[WA] de:', tel, '| nombre:', name, '| fromMe:', fromMe, '| texto:', text.slice(0, 80))
-    if (!tel) return res.status(200).json({ ok: true, skipped: 'no_phone' })
-
-    // 1. Buscar o crear conversación
-    const { data: rows, error: convError } = await sb
-      .from('crm_conversations')
-      .select('*')
-      .eq('telefono', tel)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-
-    if (convError) console.warn('[WA] select conv:', convError.message)
-
-    let conv = rows?.[0] || null
-
-    if (!conv) {
-      const newConv = {
-        id: 'wa-' + Date.now(),
-        telefono: tel,
-        nombre: name || tel,
-        mode: 'ia',
-        status: 'activo',
-        last_message: text || '[multimedia]',
-        lead_id: null,
-        instanceName: inst || null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
-
-      const { data: ins, error: insertConvError } = await sb
-        .from('crm_conversations')
-        .upsert(newConv, { onConflict: 'id' })
-        .select()
-        .single()
-
-      if (insertConvError) {
-        console.error('[WA] upsert conv:', insertConvError.message)
-        conv = newConv
-      } else {
-        conv = ins
-      }
-    } else if (inst && !conv.instanceName) {
-      await sb.from('crm_conversations').update({ instanceName: inst }).eq('id', conv.id)
-      conv.instanceName = inst
-    }
-
-    // 2. Guardar mensaje entrante o saliente
-    if (text) {
-      const role = fromMe ? 'assistant' : 'user'
-      const { error: msgError } = await sb.from('crm_conv_messages').insert({
-        conv_id: conv.id,
-        role,
-        content: text,
-        created_at: new Date().toISOString(),
-        manual: fromMe || undefined
-      })
-      if (msgError) console.warn('[WA] insert message:', msgError.message)
-    }
-
-    await sb
-      .from('crm_conversations')
-      .update({ last_message: text || conv.last_message, updated_at: new Date().toISOString(), ...(inst ? { instanceName: inst } : {}) })
-      .eq('id', conv.id)
-
-    // Si el mensaje salió desde el mismo WhatsApp, no responder con IA.
-    if (fromMe) return res.status(200).json({ ok: true, saved: 'fromMe' })
-
-    // Sin texto o conversación en modo humano: no responder con IA.
-    if (conv.mode === 'humano' || !text) {
-      return res.status(200).json({ ok: true, mode: conv.mode || 'ia', skipped: !text ? 'no_text' : 'human_mode' })
-    }
-
-    // 3. Verificar configuración IA
-    const { data: cfgRow, error: cfgError } = await sb
-      .from('crm_settings')
-      .select('value')
-      .eq('key', 'ia_config')
-      .single()
-
-    if (cfgError) console.warn('[WA] ia_config:', cfgError.message)
-
-    const ia = cfgRow?.value || {}
-    if (!ia.activo) {
-      console.log('[WA] IA desactivada')
-      return res.status(200).json({ ok: true, skipped: 'ia_off' })
-    }
-
-    // 4. Historial
-    const { data: hist } = await sb
-      .from('crm_conv_messages')
-      .select('role,content')
-      .eq('conv_id', conv.id)
-      .order('created_at', { ascending: true })
-      .limit(20)
-
-    const history = (hist || [])
-      .filter(m => m?.content)
-      .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
-
-    // 5. Llamar a Rabito IA
-    const agentRes = await fetch(AGENT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: text,
-        conversationHistory: history.slice(0, -1),
-        iaConfig: ia,
-        leadData: {
-          telefono: tel,
-          nombre: conv.nombre,
-          renta: conv.renta,
-          modelo: conv.modelo
-        }
-      })
-    })
-
-    const agentPayload = await readJsonResponse(agentRes)
-    if (!agentRes.ok || !agentPayload.json) {
-      console.error('[WA] agent bad response:', agentRes.status, agentPayload.text.slice(0, 300))
-      return res.status(200).json({ ok: false, error: 'agent_bad_response', status: agentRes.status })
-    }
-
-    const ad = agentPayload.json
-    const reply = ad?.reply
-    if (!reply) {
-      console.log('[WA] Sin reply:', JSON.stringify(ad).slice(0, 200))
-      return res.status(200).json({ ok: true, skipped: 'no_reply' })
-    }
-
-    // 6. Enviar respuesta por WhatsApp
-    const instToUse = conv.instanceName || inst
-    if (!instToUse) {
-      console.error('[WA] Falta instancia para responder')
-      return res.status(200).json({ ok: false, error: 'missing_instance' })
-    }
-
-    const waRes = await fetch(`${EVO_URL}/message/sendText/${instToUse}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
-      body: JSON.stringify({ number: sendTo, text: reply, delay: 500 })
-    })
-
-    const waPayload = await readJsonResponse(waRes)
-    console.log('[WA] sendWA:', waRes.status, waPayload.text.slice(0, 120))
-
-    // 7. Guardar respuesta de Rabito
-    await sb.from('crm_conv_messages').insert({
-      conv_id: conv.id,
-      role: 'assistant',
-      content: reply,
-      created_at: new Date().toISOString()
-    })
-
-    const upd = {
-      last_message: reply,
-      updated_at: new Date().toISOString(),
-      ...(ad?.leadUpdate || {})
-    }
-
-    if (ad?.action?.includes?.('escal')) upd.mode = 'humano'
-    if (ad?.action === 'calificado') upd.status = 'calificado'
-
-    await sb.from('crm_conversations').update(upd).eq('id', conv.id)
-    autoCreateLeads(sb).catch(e => console.warn('[WA] autoLead error:', e.message))
-
-    return res.status(200).json({ ok: true, replied: true, convId: conv.id })
-
-  } catch (e) {
-    console.error('[WA] ERROR:', e?.stack || e?.message || e)
-    return res.status(200).json({ ok: false, error: e?.message || 'unknown_error' })
+  // Permite uso interno del CRM para envíos manuales/masivos: {to, mensaje}
+  if ((body.to || body.number || body.phone) && (body.mensaje || body.message || body.text) && !body.event && !body.data?.key) {
+    return handleDirectSend(req, res, sb, body)
   }
+
+  const event = normalizeEvent(body)
+  const rawMessages = extractMessages(body)
+  const instance = normalizeInstance(body, rawMessages[0])
+
+  console.log('[WA] webhook event:', event || '(sin event)', '| instance:', instance || '(sin instance)', '| mensajes:', rawMessages.length)
+
+  const handled = await handleQrOrConnection(sb, body, event, instance)
+  if (handled && !rawMessages.length) return res.status(200).json(handled)
+
+  const isMessageEvent = event.includes('messages') || event.includes('message') || rawMessages.length > 0
+  if (!isMessageEvent) return res.status(200).json({ ok: true, skipped: event || 'not_message' })
+
+  const results = []
+
+  for (const raw of rawMessages) {
+    const jid = getRemoteJid(raw)
+    const phone = jidToPhone(jid)
+    const tel = phoneToTel(phone)
+    const text = extractTextFromMessage(raw)
+    const name = getPushName(raw)
+    const fromMe = raw?.key?.fromMe === true || raw?.fromMe === true
+
+    console.log('[WA] msg:', { tel, name, fromMe, hasText: !!text, jid: jid.slice(0, 40) })
+
+    if (!phone || !tel || jid.includes('@g.us') || jid.includes('@broadcast')) {
+      results.push({ ok: true, skipped: 'invalid_or_group', jid })
+      continue
+    }
+
+    const conv = await findOrCreateConversation(sb, { tel, phone, name, text, instance })
+
+    if (fromMe) {
+      if (text) await saveMessage(sb, conv.id, 'assistant', text, { manual: true })
+      results.push({ ok: true, saved: 'fromMe', convId: conv.id })
+      continue
+    }
+
+    // Guardar SIEMPRE la conversación y el mensaje entrante, aunque luego la IA esté apagada.
+    if (text) await saveMessage(sb, conv.id, 'user', text)
+    await ensureLead(sb, conv, { tel, phone, name, text })
+
+    if (!text) {
+      results.push({ ok: true, convId: conv.id, skipped: 'no_text' })
+      continue
+    }
+
+    const ia = await readSetting(sb, 'ia_config', {}) || {}
+    if (ia.activo === false) {
+      results.push({ ok: true, convId: conv.id, skipped: 'ia_off' })
+      continue
+    }
+
+    if (conv.mode === 'humano') {
+      results.push({ ok: true, convId: conv.id, skipped: 'human_mode' })
+      continue
+    }
+
+    const history = await loadHistory(sb, conv.id)
+    const baseUrl = getBaseUrl(req)
+
+    let agentData = null
+    try {
+      const agentRes = await fetch(`${baseUrl}/api/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          conversationHistory: history.slice(0, -1),
+          iaConfig: ia,
+          leadData: {
+            telefono: tel,
+            nombre: conv.nombre || name || '',
+            lead_id: conv.lead_id || '',
+            conv_id: conv.id
+          }
+        })
+      })
+      const rawAgent = await agentRes.text()
+      agentData = JSON.parse(rawAgent)
+    } catch (error) {
+      console.error('[WA] agent error:', error.message)
+      agentData = { ok: false, reply: '', action: 'escalar', error: error.message }
+    }
+
+    const reply = clean(agentData?.reply)
+    const leadUpdate = agentData?.leadUpdate && typeof agentData.leadUpdate === 'object' ? agentData.leadUpdate : {}
+
+    if (Object.keys(leadUpdate).length) {
+      try { await sb.from('crm_conversations').update({ ...leadUpdate, updated_at: nowIso() }).eq('id', conv.id) } catch (_) {}
+      try {
+        if (conv.lead_id) await sb.from('crm_leads').update({ ...leadUpdate }).eq('id', conv.lead_id)
+      } catch (_) {}
+    }
+
+    if (!reply) {
+      // No enviamos frases inventadas. Dejamos constancia y escalamos para que no quede invisible en CRM.
+      try {
+        await sb.from('crm_conversations').update({ mode: 'humano', status: 'requiere_revision', updated_at: nowIso() }).eq('id', conv.id)
+      } catch (_) {}
+      await saveMessage(sb, conv.id, 'assistant', '[Sistema] Rabito no generó respuesta. Conversación derivada a revisión humana.', { internal: true })
+      results.push({ ok: true, convId: conv.id, skipped: 'agent_no_reply', action: 'human_review' })
+      continue
+    }
+
+    const instanceToUse = await getDefaultInstance(sb, instance || conv.instanceName || '')
+    const sent = await sendWhatsApp({ instance: instanceToUse, number: phone, text: reply })
+    console.log('[WA] send:', sent.status, '| conv:', conv.id)
+
+    await saveMessage(sb, conv.id, 'assistant', reply)
+
+    const convUpdate = {
+      last_message: reply,
+      updated_at: nowIso()
+    }
+    if (agentData?.action === 'calificado') convUpdate.status = 'calificado'
+    if (agentData?.action === 'escalar') convUpdate.mode = 'humano'
+
+    try { await sb.from('crm_conversations').update(convUpdate).eq('id', conv.id) } catch (_) {}
+
+    results.push({ ok: true, convId: conv.id, replied: sent.ok, sendStatus: sent.status })
+  }
+
+  return res.status(200).json({ ok: true, results })
 }
