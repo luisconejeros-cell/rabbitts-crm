@@ -5573,28 +5573,109 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     setSending(false)
   }
 
+  const savePersistentTraining = async (learningItem) => {
+    if (!learningItem) return null
+    const now = new Date().toISOString()
+    const normalizedItem = {
+      id: learningItem.id || ('train-' + Date.now()),
+      type: learningItem.type || 'correccion',
+      source: learningItem.source || 'feedback_modal',
+      active: learningItem.active !== false,
+      created_at: learningItem.created_at || now,
+      updated_at: now,
+      original: learningItem.original || '',
+      improved: learningItem.improved || '',
+      reason: learningItem.reason || '',
+      context: learningItem.context || '',
+      conversation_id: learningItem.conversation_id || '',
+      message_index: learningItem.message_index ?? null
+    }
+
+    try {
+      const local = JSON.parse(localStorage.getItem('rabito_agent_training') || '[]')
+      localStorage.setItem('rabito_agent_training', JSON.stringify([normalizedItem, ...local].slice(0, 200)))
+    } catch (_) {}
+
+    if (!dbReady || !supabase) return normalizedItem
+
+    try {
+      const { data } = await supabase.from('crm_settings').select('value').eq('key','agent_training').single()
+      const prevItems = Array.isArray(data?.value?.items) ? data.value.items : []
+      const nextItems = [normalizedItem, ...prevItems.filter(x => x.id !== normalizedItem.id)].slice(0, 300)
+      const value = {
+        version: 2,
+        source: 'crm_feedback_training',
+        updated_at: now,
+        items: nextItems
+      }
+      await supabase.from('crm_settings').upsert({ key:'agent_training', value })
+      window.dispatchEvent(new CustomEvent('rabito-training-updated', { detail: value }))
+      return normalizedItem
+    } catch (e) {
+      console.warn('agent_training save failed:', e)
+      return normalizedItem
+    }
+  }
+
   const sendFeedback = async (msgIdx, feedback, correction='', razon='') => {
     if (!activeConv) return
     const msgs = convMessages[activeConv.id]||[]
     const msg = msgs[msgIdx]
     if (!msg) return
-    // Save feedback to Supabase
+
+    const prevUser = [...msgs].slice(0, msgIdx).reverse().find(m=>m.role==='user')
+    const pregunta = prevUser ? prevUser.content : msg.content
+    const now = new Date().toISOString()
+    const cleanCorrection = String(correction || '').trim()
+    const cleanReason = String(razon || '').trim()
+
     try {
-      await supabase.from('crm_conv_feedback').insert({
-        conv_id: activeConv.id, msg_idx: msgIdx, msg_content: msg.content,
-        feedback, correction, created_at: new Date().toISOString()
-      })
-      // Save to iaConfig entrenamiento if correction provided
-      if (feedback==='correccion' && (correction !== msg.content || razon)) {
-        // Build pregunta from previous user message as context
-        const prevUser = [...msgs].slice(0, msgIdx).reverse().find(m=>m.role==='user')
-        const pregunta = prevUser ? prevUser.content : msg.content
-        const nuevoPar = { pregunta, respuesta: correction, razon, fecha: new Date().toISOString() }
-        const entActual = iaConfig.entrenamiento || []
-        setIaConfig(prev => ({ ...prev, entrenamiento: [...entActual, nuevoPar] }))
-        alert('✅ ¡Entrenamiento guardado! Rabito aprenderá de esta corrección.')
+      if (dbReady && supabase) {
+        await supabase.from('crm_conv_feedback').insert({
+          conv_id: activeConv.id,
+          msg_idx: msgIdx,
+          msg_content: msg.content,
+          feedback,
+          correction: cleanCorrection,
+          created_at: now
+        })
       }
-    } catch(e) { console.warn('feedback error', e) }
+
+      if (feedback==='correccion' && (cleanCorrection || cleanReason)) {
+        const learningItem = {
+          id: 'train-' + Date.now(),
+          type: 'correccion_respuesta',
+          source: 'feedback_modal',
+          active: true,
+          created_at: now,
+          original: msg.content,
+          improved: cleanCorrection || msg.content,
+          reason: cleanReason,
+          context: pregunta,
+          conversation_id: activeConv.id,
+          message_index: msgIdx
+        }
+
+        await savePersistentTraining(learningItem)
+
+        const nuevoPar = {
+          pregunta,
+          respuesta: cleanCorrection || msg.content,
+          razon: cleanReason,
+          fecha: now,
+          fuente: 'feedback'
+        }
+        setIaConfig(prev => ({
+          ...prev,
+          entrenamiento: [nuevoPar, ...(Array.isArray(prev.entrenamiento) ? prev.entrenamiento : [])].slice(0, 120)
+        }))
+
+        alert('✅ Entrenamiento permanente guardado. Lo verás en Panel IA → Reglas → Aprendizajes desde feedback, y Rabito lo leerá antes de responder.')
+      }
+    } catch(e) {
+      console.warn('feedback error', e)
+      alert('No pude guardar el entrenamiento. Revisa Supabase o la consola del navegador.')
+    }
   }
 
   const createLead = async () => {
@@ -6097,6 +6178,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
   const [docs, setDocs] = React.useState([])
   const [chunks, setChunks] = React.useState([])
   const [rules, setRules] = React.useState([])
+  const [trainingItems, setTrainingItems] = React.useState([])
   const [msg, setMsg] = React.useState(null)
   const [uploading, setUploading] = React.useState(false)
   const [folderName, setFolderName] = React.useState('General')
@@ -6131,6 +6213,29 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     }
     loadChunks()
     return () => { mounted = false }
+  }, [dbReady, supabase])
+
+  React.useEffect(() => {
+    let mounted = true
+    const loadTraining = async () => {
+      let localItems = []
+      try { localItems = JSON.parse(localStorage.getItem('rabito_agent_training') || '[]') } catch (_) {}
+      if (Array.isArray(localItems) && localItems.length && mounted) setTrainingItems(localItems)
+      if (!dbReady || !supabase) return
+      try {
+        const { data } = await supabase.from('crm_settings').select('value').eq('key','agent_training').single()
+        if (!mounted) return
+        const items = Array.isArray(data?.value?.items) ? data.value.items : []
+        setTrainingItems(items)
+      } catch (_) {}
+    }
+    const onTrainingUpdated = (ev) => {
+      const items = Array.isArray(ev?.detail?.items) ? ev.detail.items : []
+      setTrainingItems(items)
+    }
+    loadTraining()
+    window.addEventListener('rabito-training-updated', onTrainingUpdated)
+    return () => { mounted = false; window.removeEventListener('rabito-training-updated', onTrainingUpdated) }
   }, [dbReady, supabase])
 
   const normalizeText = (txt='') => String(txt||'')
@@ -6302,7 +6407,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
   const agendaConfigured = Boolean(String(iaConfig?.agendaLink || iaConfig?.calendlyLink || '').trim())
   const baseOk = Boolean(String(iaConfig?.personalidad || '').trim()) && Boolean(String(iaConfig?.productosRabito || iaConfig?.oferta || '').trim())
   const procesoOk = Boolean(String(iaConfig?.guion || iaConfig?.pasosRabito || '').trim())
-  const reglasOk = Boolean(String(iaConfig?.reglasRabito || '').trim()) || rules.length > 0
+  const reglasOk = Boolean(String(iaConfig?.reglasRabito || '').trim()) || rules.length > 0 || trainingItems.length > 0
   const conocimientoOk = chunks.length > 0 || docs.length > 0
   const score = [agendaConfigured, baseOk, procesoOk, reglasOk, conocimientoOk].filter(Boolean).length
 
@@ -6335,6 +6440,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
             <Check ok={procesoOk} text='Proceso' />
             <Check ok={reglasOk} text='Reglas' />
             <Check ok={conocimientoOk} text='Docs' />
+            <Check ok={trainingItems.length>0} text={'Feedback ' + trainingItems.length} />
           </div>
         </Box>
 
@@ -6366,6 +6472,22 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
             <button onClick={addRule} style={{marginTop:10,padding:'10px 14px',borderRadius:12,border:'none',background:C.primary,color:'#fff',fontSize:12,fontWeight:900,cursor:'pointer'}}>Guardar regla</button>
             {rules.length>0 && <div style={{marginTop:12,borderTop:'1px solid #EEF2FF',paddingTop:8}}>{rules.map(r=><div key={r.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px 0',borderBottom:'1px solid #F1F5F9'}}><div style={{flex:1}}><div style={{fontSize:12,fontWeight:900,color:C.text}}>{r.title}</div><div style={{fontSize:12,color:C.mid,whiteSpace:'pre-wrap',marginTop:3}}>{r.content}</div></div><button onClick={()=>deleteRule(r.id)} style={{border:'1px solid #FCA5A5',background:'#FEF2F2',color:'#991B1B',borderRadius:8,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'}}>Eliminar</button></div>)}</div>}
           </Box>
+          <Box>
+            <Label>Aprendizajes desde feedback</Label>
+            <Hint>Aquí quedan guardadas las correcciones que escribes en “Sugerir mensaje”. Rabito las lee siempre antes de responder.</Hint>
+            {trainingItems.length===0 && <div style={{fontSize:13,color:C.mid,padding:'14px 0'}}>Todavía no hay feedback permanente guardado. Corrige una respuesta desde Conversaciones y presiona Entrenar.</div>}
+            {trainingItems.slice(0,12).map(item => (
+              <div key={item.id || item.created_at} style={{border:'1px solid #EEF2FF',borderRadius:12,padding:12,marginBottom:8,background:'#FBFDFF'}}>
+                <div style={{display:'flex',justifyContent:'space-between',gap:10,marginBottom:6}}>
+                  <div style={{fontSize:12,fontWeight:950,color:C.text}}>Corrección permanente</div>
+                  <div style={{fontSize:10,color:C.mid}}>{item.created_at ? new Date(item.created_at).toLocaleString('es-CL') : ''}</div>
+                </div>
+                {item.context && <div style={{fontSize:11,color:C.mid,marginBottom:5}}><b>Contexto:</b> {String(item.context).slice(0,160)}</div>}
+                {item.reason && <div style={{fontSize:11,color:'#92400E',background:'#FFFBEB',border:'1px solid #FDE68A',borderRadius:8,padding:7,marginBottom:6}}><b>Regla aprendida:</b> {String(item.reason).slice(0,260)}</div>}
+                <div style={{fontSize:12,color:C.text,whiteSpace:'pre-wrap'}}>{String(item.improved || item.correction || '').slice(0,420)}</div>
+              </div>
+            ))}
+          </Box>
         </>}
 
         {section==='cerebro' && <>
@@ -6389,7 +6511,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
 
         {section==='prueba' && <>
           <Box><Label>Simulador de venta</Label><Hint>Prueba al agente y revisa qué partes del cerebro usó. Si no usa documentos, hay que mejorar el conocimiento o subir contenido más específico.</Hint><textarea value={testMsg} onChange={e=>setTestMsg(e.target.value)} style={{...sty.inp,minHeight:90,resize:'vertical'}} placeholder='Escribe como cliente...' /><button onClick={testRabito} disabled={testing} style={{marginTop:10,padding:'10px 14px',borderRadius:12,border:'none',background:C.primary,color:'#fff',fontSize:12,fontWeight:950,cursor:'pointer',opacity:testing?0.6:1}}>{testing?'Probando...':'Probar Rabito'}</button></Box>
-          {testReply && <Box><div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',marginBottom:10}}><Label>Respuesta</Label><span style={{fontSize:11,fontWeight:900,color:testReply.action==='calificado'?'#166534':'#475569',background:testReply.action==='calificado'?'#DCFCE7':'#F1F5F9',borderRadius:999,padding:'6px 10px'}}>Acción: {testReply.action || '—'}</span></div><div style={{fontSize:13,lineHeight:1.55,color:C.text,whiteSpace:'pre-wrap',background:'#F8FAFC',border:'1px solid #EEF2FF',borderRadius:12,padding:14}}>{testReply.reply || testReply.error || 'Sin respuesta'}</div>{testReply.trace && <div style={{marginTop:14,display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10}}><Trace title='Panel cargado' value={testReply.trace.panelLoaded?'Sí':'No'} ok={testReply.trace.panelLoaded}/><Trace title='Agenda' value={testReply.trace.agendaConfigured?'Configurada':'Falta'} ok={testReply.trace.agendaConfigured}/><Trace title='Fragmentos disponibles' value={testReply.trace.chunksAvailable||0} ok={(testReply.trace.chunksAvailable||0)>0}/><Trace title='Memoria' value={testReply.trace.memoryLoaded?'Sí':'No'} ok={true}/></div>}{testReply.trace?.chunksUsed?.length>0 && <div style={{marginTop:14}}><div style={{fontSize:12,fontWeight:950,color:C.text,marginBottom:6}}>Documentos usados</div>{testReply.trace.chunksUsed.map((c,i)=><div key={i} style={{fontSize:12,color:C.mid,padding:'7px 9px',border:'1px solid #EEF2FF',borderRadius:8,marginBottom:6,background:'#FBFDFF'}}>{c.docName} · score {c.score}</div>)}</div>}{testReply.learningSuggestion && <div style={{marginTop:12,padding:10,borderRadius:10,background:'#FFFBEB',border:'1px solid #FDE68A',fontSize:12,color:'#92400E'}}><b>Sugerencia de entrenamiento:</b> {testReply.learningSuggestion}</div>}</Box>}
+          {testReply && <Box><div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',marginBottom:10}}><Label>Respuesta</Label><span style={{fontSize:11,fontWeight:900,color:testReply.action==='calificado'?'#166534':'#475569',background:testReply.action==='calificado'?'#DCFCE7':'#F1F5F9',borderRadius:999,padding:'6px 10px'}}>Acción: {testReply.action || '—'}</span></div><div style={{fontSize:13,lineHeight:1.55,color:C.text,whiteSpace:'pre-wrap',background:'#F8FAFC',border:'1px solid #EEF2FF',borderRadius:12,padding:14}}>{testReply.reply || testReply.error || 'Sin respuesta'}</div>{testReply.trace && <div style={{marginTop:14,display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10}}><Trace title='Panel cargado' value={testReply.trace.panelLoaded?'Sí':'No'} ok={testReply.trace.panelLoaded}/><Trace title='Agenda' value={testReply.trace.agendaConfigured?'Configurada':'Falta'} ok={testReply.trace.agendaConfigured}/><Trace title='Fragmentos disponibles' value={testReply.trace.chunksAvailable||0} ok={(testReply.trace.chunksAvailable||0)>0}/><Trace title='Feedback usado' value={(testReply.trace.feedbackUsed||[]).length} ok={(testReply.trace.feedbackUsed||[]).length>0}/><Trace title='Memoria' value={testReply.trace.memoryLoaded?'Sí':'No'} ok={true}/></div>}{testReply.trace?.chunksUsed?.length>0 && <div style={{marginTop:14}}><div style={{fontSize:12,fontWeight:950,color:C.text,marginBottom:6}}>Documentos usados</div>{testReply.trace.chunksUsed.map((c,i)=><div key={i} style={{fontSize:12,color:C.mid,padding:'7px 9px',border:'1px solid #EEF2FF',borderRadius:8,marginBottom:6,background:'#FBFDFF'}}>{c.docName} · score {c.score}</div>)}</div>}{testReply.trace?.feedbackUsed?.length>0 && <div style={{marginTop:14}}><div style={{fontSize:12,fontWeight:950,color:C.text,marginBottom:6}}>Feedback usado</div>{testReply.trace.feedbackUsed.map((f,i)=><div key={i} style={{fontSize:12,color:C.mid,padding:'7px 9px',border:'1px solid #EEF2FF',borderRadius:8,marginBottom:6,background:'#FBFDFF'}}>{f.correction || f.improved || 'Corrección'} · score {f.score}</div>)}</div>}{testReply.learningSuggestion && <div style={{marginTop:12,padding:10,borderRadius:10,background:'#FFFBEB',border:'1px solid #FDE68A',fontSize:12,color:'#92400E'}}><b>Sugerencia de entrenamiento:</b> {testReply.learningSuggestion}</div>}</Box>}
         </>}
       </div>
     </div>
