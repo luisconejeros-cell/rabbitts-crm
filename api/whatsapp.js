@@ -15,6 +15,77 @@ function clean(value = '') {
   return String(value ?? '').trim()
 }
 
+function stripCodeFence(text = '') {
+  return String(text || '').replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+}
+
+function safeJsonParse(text, fallback = null) {
+  try { return text ? JSON.parse(text) : fallback } catch (_) { return fallback }
+}
+
+function extractJsonBlock(text = '') {
+  const src = stripCodeFence(text)
+  const start = src.indexOf('{')
+  if (start < 0) return ''
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i]
+    if (inString) {
+      if (escaped) { escaped = false; continue }
+      if (ch === '\\') { escaped = true; continue }
+      if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{') depth++
+    if (ch === '}') {
+      depth--
+      if (depth === 0) return src.slice(start, i + 1)
+    }
+  }
+  return ''
+}
+
+function jsonStringValueFromKey(text = '', key = 'reply') {
+  const src = String(text || '')
+  const rx = new RegExp('"' + key + '"\\s*:\\s*"', 'i')
+  const m = rx.exec(src)
+  if (!m) return ''
+  let i = m.index + m[0].length
+  let out = ''
+  let escaped = false
+  for (; i < src.length; i++) {
+    const ch = src[i]
+    if (escaped) { out += '\\' + ch; escaped = false; continue }
+    if (ch === '\\') { escaped = true; continue }
+    if (ch === '"') break
+    out += ch
+  }
+  try { return JSON.parse('"' + out + '"') } catch (_) { return out.replace(/\\n/g, '\n').replace(/\\"/g, '"') }
+}
+
+function extractVisibleReply(value) {
+  if (!value) return ''
+  if (typeof value === 'object') {
+    if (value.reply) return extractVisibleReply(value.reply)
+    if (value.message) return extractVisibleReply(value.message)
+    if (value.text) return extractVisibleReply(value.text)
+    return ''
+  }
+  let text = clean(value)
+  if (!text) return ''
+  if (text.startsWith('{')) {
+    const parsed = safeJsonParse(text) || safeJsonParse(extractJsonBlock(text))
+    if (parsed && typeof parsed === 'object') {
+      return extractVisibleReply(parsed.reply || parsed.message || parsed.text || '')
+    }
+    return clean(jsonStringValueFromKey(text, 'reply'))
+  }
+  return text
+}
+
 
 function normalizeStatusUpdate(value = '') {
   const v = String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, '_')
@@ -531,7 +602,7 @@ export default async function handler(req, res) {
       agentData = { ok: false, reply: '', action: 'escalar', error: error.message }
     }
 
-    const reply = clean(agentData?.reply)
+    const reply = extractVisibleReply(agentData?.reply)
     const leadUpdate = agentData?.leadUpdate && typeof agentData.leadUpdate === 'object' ? agentData.leadUpdate : {}
 
     if (Object.keys(leadUpdate).length) {
