@@ -302,7 +302,7 @@ function AgendaPublicaView({settings={}}) {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');`}</style>
       <div style={{maxWidth:900,margin:'0 auto',display:'flex',flexDirection:isMobile?'column':'row',minHeight:isMobile?'100vh':'auto',border:'1px solid #E2E8F0',borderRadius:isMobile?0:16,marginTop:isMobile?0:40,marginBottom:isMobile?0:40,boxShadow:'0 4px 32px rgba(0,0,0,0.08)',overflow:'hidden'}}>
 
-        {/* LEFT PANEL — Calendly style */}
+        {/* LEFT PANEL — estilo agenda */}
         <div style={leftPanel}>
 
           {/* Logo */}
@@ -581,7 +581,8 @@ export default function App() {
     notifEntradaHumano: true,   // notify when enters human stage
     notifMensajeHumano: true,   // notify when new message in human stage
     activo: false,
-    calendlyLink: 'https://calendly.com/agenda-rabbittscapital/60min',
+    agendaLink: 'https://crm.rabbittscapital.com/agenda',
+    calendlyLink: '',
     metaPhoneId: '',
     metaWabaId: '',
     metaToken: '',
@@ -607,7 +608,7 @@ export default function App() {
       inactividad:  'Hola {broker}, tienes {n} clientes sin actividad hace mas de {dias} dias. Quieres repasarlos?',
     },
     personalidad: "Eres Rabito, asistente de ventas de Rabbitts Capital. Sigues estas reglas AL PIE DE LA LETRA. TONO MOTIVADOR: Inspira confianza y entusiasmo. Usa frases de animo. Celebra logros. Transmite energia positiva. MENSAJES MEDIOS: 3-4 oraciones (50-120 palabras). Balancea claridad con brevedad. TRATO CASUAL: Tutea al cliente siempre. Usa expresiones coloquiales apropiadas. Tono relajado pero respetuoso. SIN EMOJIS: Cero emojis en cualquier contexto. Usa palabras para expresar emociones. NUNCA: cambies de tono, excedas longitud, mezcles tu/usted, inventes informacion, seas condescendiente, prometas pagos, descuentos, reembolsos, compartas datos bancarios, opines de politica o religion, hables mal de competidores ni garantices resultados. ESCALA A HUMANO SI: pide hablar con persona, menciona demanda/abogado/legal, esta enojado sin solucion, ya intentaste 3 veces sin exito.",
-    guion: "FLUJO DE VENTAS - PASO 0 SALUDO: Hola como estas? Mi nombre es Rabito y soy parte del equipo de Rabbitts Capital. Ayudamos a invertir en departamentos, usar multicrédito y pagar menos impuestos. En que te puedo ayudar? PASO 1 DETECTAR NECESIDAD: Ofrecer menu si no es claro: 1.Primer depto inversion 2.Multicredito/varios/IVA 3.Renta corta Airbnb 4.Asesoria tributaria. PASO 2 DIAGNOSTICO: Obtener renta liquida, propiedades a nombre, preferencia renta. PASO 3 ESTRATEGIA: Multicredito=entrega inmediata preferible, futura max 2 deptos mismo proyecto, DFL2+IVA desde tercero. Primera prop=revisar credito+proyecto+modelo renta. Renta corta=experiencia real Airbnb/Booking. PASO 4 FILTRO: Califica si renta>=1500000 o pareja>=2000000 -> agendar calendly.com/agenda-rabbittscapital/60min. No califica->orientacion basica sin reunion. PASO 5 CIERRE: Confirmar reunion, aclarar asesoria SIN COSTO para cliente (pagan inmobiliarias). SEGUIMIENTO: 24h sin respuesta=recordar, 48-72h=ultimo intento, No me interesa/No quiero=marcar No interesado y detener.",
+    guion: "FLUJO DE VENTAS - PASO 0 SALUDO: Hola como estas? Mi nombre es Rabito y soy parte del equipo de Rabbitts Capital. Ayudamos a invertir en departamentos, usar multicrédito y pagar menos impuestos. En que te puedo ayudar? PASO 1 DETECTAR NECESIDAD: Ofrecer menu si no es claro: 1.Primer depto inversion 2.Multicredito/varios/IVA 3.Renta corta Airbnb 4.Asesoria tributaria. PASO 2 DIAGNOSTICO: Obtener renta liquida, propiedades a nombre, preferencia renta. PASO 3 ESTRATEGIA: Multicredito=entrega inmediata preferible, futura max 2 deptos mismo proyecto, DFL2+IVA desde tercero. Primera prop=revisar credito+proyecto+modelo renta. Renta corta=experiencia real Airbnb/Booking. PASO 4 FILTRO: Califica si renta>=1500000 o pareja>=2000000 -> agendar usando el link de agenda configurado en Rabito. No califica->orientacion basica sin reunion. PASO 5 CIERRE: Confirmar reunion, aclarar asesoria SIN COSTO para cliente (pagan inmobiliarias). SEGUIMIENTO: 24h sin respuesta=recordar, 48-72h=ultimo intento, No me interesa/No quiero=marcar No interesado y detener.",
     productosRabito: "Rabbitts Capital estructura inversiones inmobiliarias en Chile, Paraguay y Florida. Servicios: venta de departamentos de inversión, estrategia de renta corta/tradicional, apoyo hipotecario, análisis tributario con Contabiliario y administración de propiedades con RentaDays/Rentastik. La asesoría de compra normalmente no tiene costo directo para el cliente porque Rabbitts recibe comisión de la inmobiliaria.",
     pasosRabito: "Entender objetivo → Calificar capacidad → Recomendar camino → Invitar a reunión → Derivar a asesor humano si corresponde.",
     reglasRabito: "Siempre disponible 24/7. Nunca decir alta demanda. Nunca decir que responderá después. Nunca inventar precios, stock, rentabilidades ni beneficios tributarios. Máximo una pregunta por mensaje. Mensajes cortos estilo WhatsApp.",
@@ -4901,7 +4902,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
             <WhatsAppNumerosPanel iaConfig={iaConfig} upd={upd} supabase={supabase} dbReady={dbReady}/>
           </div>
 
-          {/* Calificacion y Calendly */}
+          {/* Calificacion y link de agenda */}
           <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
             <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🎯 Criterios de calificación</p>
             <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10}}>
@@ -4911,8 +4912,8 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
               <Fld label="Renta mínima con pareja ($)">
                 <input type="number" value={iaConfig.rentaMinimaPareja||2000000} onChange={e=>upd(['rentaMinimaPareja'],parseInt(e.target.value))} style={sty.inp}/>
               </Fld>
-              <Fld label="Link Calendly reunión">
-                <input value={iaConfig.calendlyLink||''} onChange={e=>upd(['calendlyLink'],e.target.value)} placeholder="https://calendly.com/..." style={sty.inp}/>
+              <Fld label="Link de agenda de reunión">
+                <input value={iaConfig.agendaLink||iaConfig.calendlyLink||''} onChange={e=>upd(['agendaLink'],e.target.value)} placeholder="https://tu-link-de-agenda.com/..." style={sty.inp}/>
               </Fld>
             </div>
           </div>
