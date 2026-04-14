@@ -274,7 +274,7 @@ async function getSupabaseClient() {
 
 async function loadSettings(sb = null) {
   if (!sb) return { text: '', map: {} }
-  const keys = ['ia_config', 'drive_content', 'rabito_knowledge', 'ia_knowledge', 'agent_knowledge', 'agent_training', 'agent_rules']
+  const keys = ['ia_config', 'drive_content', 'rabito_knowledge', 'rabito_knowledge_chunks', 'ia_knowledge', 'agent_knowledge', 'agent_training', 'agent_rules']
   try {
     const { data, error } = await sb.from('crm_settings').select('key,value').in('key', keys)
     if (error || !Array.isArray(data)) return { text: '', map: {} }
@@ -305,7 +305,15 @@ async function loadFeedback(sb = null, query = '') {
   try {
     const { data } = await sb.from('crm_settings').select('value').eq('key', 'agent_training').single()
     const value = Array.isArray(data?.value) ? data.value : Array.isArray(data?.value?.items) ? data.value.items : []
-    items.push(...value.map(x => ({ source: 'agent_training', msg_content: x.original || x.before || x.msg || '', correction: x.corrected || x.after || x.correction || x.regla || x.text || '', feedback: x.reason || x.razon || x.feedback || '', created_at: x.created_at || x.createdAt })))
+    items.push(...value
+      .filter(x => x && x.active !== false)
+      .map(x => ({
+        source: 'agent_training',
+        msg_content: x.context || x.original || x.before || x.msg || x.situation || '',
+        correction: x.improved || x.corrected || x.after || x.correction || x.regla || x.rule || x.text || '',
+        feedback: x.reason || x.razon || x.feedback || x.explanation || '',
+        created_at: x.created_at || x.createdAt
+      })))
   } catch (_) {}
 
   const ranked = items
@@ -359,17 +367,50 @@ function scoreChunk(query = '', chunk = {}) {
   return score
 }
 
-async function retrieveKnowledge(sb = null, query = '', settingsText = '') {
-  if (!sb) return { text: settingsText.slice(0, 25000), chunks: [] }
+async function retrieveKnowledge(sb = null, query = '', settingsText = '', settingsMap = {}) {
   let chunks = []
 
-  try {
-    const { data } = await sb.from('crm_knowledge_chunks')
-      .select('id,doc_id,title,titulo,content,contenido,tags,producto,canal,activo,created_at')
-      .or('activo.is.null,activo.eq.true')
-      .limit(600)
-    if (Array.isArray(data)) chunks = data
-  } catch (_) {}
+  // 1) Tabla nueva, si existe.
+  if (sb) {
+    try {
+      const { data } = await sb.from('crm_knowledge_chunks')
+        .select('id,doc_id,title,titulo,content,contenido,tags,producto,canal,activo,created_at')
+        .or('activo.is.null,activo.eq.true')
+        .limit(600)
+      if (Array.isArray(data)) chunks.push(...data)
+    } catch (_) {}
+  }
+
+  // 2) Fallback real del Panel IA: los chunks se guardan hoy en crm_settings.rabito_knowledge_chunks.
+  const settingsChunks = Array.isArray(settingsMap?.rabito_knowledge_chunks?.chunks)
+    ? settingsMap.rabito_knowledge_chunks.chunks
+    : Array.isArray(settingsMap?.rabito_knowledge_chunks)
+      ? settingsMap.rabito_knowledge_chunks
+      : []
+
+  if (settingsChunks.length) {
+    chunks.push(...settingsChunks.map((c, idx) => ({
+      id: c.id || `settings-chunk-${idx}`,
+      doc_id: c.doc_id || c.docId || c.documentId || c.docName || c.nombre || 'settings-doc',
+      title: c.title || c.titulo || c.docName || c.nombre || c.carpeta || 'Documento del panel',
+      content: c.content || c.contenido || c.text || '',
+      tags: c.tags || [c.carpeta, c.categoria].filter(Boolean).join(' '),
+      producto: c.producto || c.categoria || '',
+      canal: c.canal || '',
+      activo: c.activo !== false,
+      created_at: c.created_at || c.createdAt
+    })))
+  }
+
+  const seen = new Set()
+  chunks = chunks
+    .filter(c => c && c.activo !== false && cleanText(c.content || c.contenido))
+    .filter(c => {
+      const key = `${c.doc_id || ''}-${c.id || ''}-${cleanText(c.content || c.contenido).slice(0, 120)}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
 
   if (!chunks.length) {
     return { text: settingsText.slice(0, 35000), chunks: [] }
@@ -377,18 +418,18 @@ async function retrieveKnowledge(sb = null, query = '', settingsText = '') {
 
   const ranked = chunks
     .map(c => ({ ...c, _score: scoreChunk(query, c) }))
-    .filter(c => c._score > 0)
     .sort((a, b) => b._score - a._score)
-    .slice(0, 8)
 
-  const selected = ranked.length ? ranked : chunks.slice(0, 5)
-  const text = selected.map((c, i) => {
-    const title = cleanText(c.title || c.titulo || `Documento ${i + 1}`)
-    const content = cleanText(c.content || c.contenido || '').slice(0, 2500)
+  const selected = ranked.filter(c => c._score > 0).slice(0, 10)
+  const finalSelected = selected.length ? selected : ranked.slice(0, 6)
+
+  const text = finalSelected.map((c, i) => {
+    const title = cleanText(c.title || c.titulo || c.docName || `Documento ${i + 1}`)
+    const content = cleanText(c.content || c.contenido || '').slice(0, 3000)
     return `### Fragmento ${i + 1}: ${title}\n${content}`
-  }).join('\n\n')
+  }).join('\n\n').slice(0, 35000)
 
-  return { text, chunks: selected.map(c => ({ id: c.id, doc_id: c.doc_id, title: c.title || c.titulo, score: c._score || 0 })) }
+  return { text, chunks: finalSelected.map(c => ({ id: c.id, doc_id: c.doc_id, title: c.title || c.titulo, score: c._score || 0 })) }
 }
 
 function buildSystemPrompt({ iaConfig, panelBrain, knowledgeText, feedbackText, storedMemory, facts, agendaLink, history, message }) {
@@ -620,7 +661,7 @@ export default async function handler(req, res) {
   const [feedback, memory, knowledge] = await Promise.all([
     loadFeedback(sb, [message, facts].join('\n')),
     loadMemory(sb, leadData),
-    retrieveKnowledge(sb, [message, facts, panelBrain].join('\n'), settings.text)
+    retrieveKnowledge(sb, [message, facts, panelBrain].join('\n'), settings.text, settings.map)
   ])
 
   const localUpdate = inferGenericFields(message, leadData, agendaLink)
