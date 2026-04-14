@@ -1,9 +1,9 @@
-// api/agent.js — Motor genérico de aprendizaje para Rabito
-// Fuente de verdad: Panel IA + documentos/conocimiento + feedback + memoria. Sin guiones comerciales fijos.
+// api/agent.js — Motor genérico de aprendizaje para Rabito v6
+// No contiene guiones de negocio. Responde usando Panel IA + documentos + feedback + memoria.
 
 import { createClient } from '@supabase/supabase-js'
 
-const DEFAULT_MODEL = 'claude-haiku-4-5-20251001'
+const DEFAULT_MODEL = 'claude-3-5-haiku-20241022'
 const clean = (v = '') => String(v ?? '').trim()
 const nowIso = () => new Date().toISOString()
 
@@ -17,7 +17,8 @@ const BUILT_IN_BLOCKED = [
   'como modelo de lenguaje',
   'no tengo acceso',
   'para avanzar bien, dime cuál es el dato principal que quieres resolver ahora',
-  'para ayudarte bien necesito partir por esto'
+  'para ayudarte bien necesito partir por esto',
+  '[sistema]'
 ]
 
 function sb() {
@@ -43,11 +44,11 @@ function flatten(value, depth = 0) {
   if (value == null || value === '') return ''
   if (depth > 4) return ''
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return clean(value)
-  if (Array.isArray(value)) return value.slice(0, 150).map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
+  if (Array.isArray(value)) return value.slice(0, 120).map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
   if (typeof value === 'object') {
     return Object.entries(value)
-      .filter(([k]) => !/password|token|secret|apikey|api_key|base64|file|image/i.test(k))
-      .slice(0, 150)
+      .filter(([k]) => !/password|token|secret|apikey|api_key|base64|image|file/i.test(k))
+      .slice(0, 120)
       .map(([k, v]) => {
         const txt = flatten(v, depth + 1)
         return txt ? `${k}: ${txt}` : ''
@@ -107,7 +108,6 @@ function parseModelOutput(raw = '') {
       learningSuggestion: clean(parsed.learningSuggestion || '')
     }
   }
-  // Si el modelo responde texto normal, también sirve. Lo envolvemos.
   if (cleaned && !cleaned.startsWith('{')) return { reply: cleaned, action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
   return { reply: '', action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
 }
@@ -143,8 +143,8 @@ function removeBlocked(reply = '', iaConfig = {}) {
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^[-,.;:\s]+/, '')
     .trim()
-  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 850) || 850
-  if (out.length > max) out = out.slice(0, Math.max(160, max - 20)).replace(/\s+\S*$/, '') + '...'
+  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 650) || 650
+  if (out.length > max) out = out.slice(0, Math.max(140, max - 20)).replace(/\s+\S*$/, '') + '...'
   return out
 }
 
@@ -166,7 +166,7 @@ async function loadSettings(db) {
       map[row.key] = row.value
       const txt = flatten(row.value)
       return txt ? `### ${row.key}\n${txt}` : ''
-    }).filter(Boolean).join('\n\n').slice(0, 35000)
+    }).filter(Boolean).join('\n\n').slice(0, 28000)
     return { map, text }
   } catch { return { map: {}, text: '' } }
 }
@@ -179,7 +179,8 @@ function buildPanelBrain(iaConfig = {}) {
     'oferta','productos','servicios','catalogo','promesa',
     'procesoVenta','pasos','flujo','guion',
     'reglas','reglasDuras','reglasDerivacion','reglasRevision','instrucciones',
-    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas','agendaLink','linkAgenda'
+    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas','agendaLink','linkAgenda',
+    'mensajeFallback','fallbackMessage','respuestaFallback'
   ]
   const used = new Set()
   for (const key of priority) {
@@ -193,7 +194,7 @@ function buildPanelBrain(iaConfig = {}) {
     const txt = flatten(value)
     if (txt) blocks.push(`### ${key}\n${txt}`)
   }
-  return blocks.join('\n\n').slice(0, 50000)
+  return blocks.join('\n\n').slice(0, 40000)
 }
 
 function getAgendaLink(iaConfig = {}, settingsText = '') {
@@ -231,12 +232,12 @@ async function retrieveKnowledge(db, query = '', settings = {}) {
     activo: c.activo !== false
   })))
   chunks = chunks.filter(c => c && c.activo !== false && clean(c.content || c.contenido))
-  if (!chunks.length) return { text: (settings.text || '').slice(0, 25000), chunks: [] }
+  if (!chunks.length) return { text: (settings.text || '').slice(0, 18000), chunks: [] }
   const ranked = chunks.map(c => ({ ...c, _score: score(query, [c.title,c.titulo,c.tags,c.producto,c.canal,c.content,c.contenido].filter(Boolean).join(' ')) }))
     .sort((a,b) => b._score - a._score)
-  const picked = (ranked.filter(c => c._score > 0).slice(0, 6).length ? ranked.filter(c => c._score > 0).slice(0, 6) : ranked.slice(0, 4))
+  const picked = (ranked.filter(c => c._score > 0).slice(0, 5).length ? ranked.filter(c => c._score > 0).slice(0, 5) : ranked.slice(0, 3))
   return {
-    text: picked.map((c, i) => `### Fragmento ${i+1}: ${clean(c.title || c.titulo || 'Documento')}\n${clean(c.content || c.contenido).slice(0, 1800)}`).join('\n\n'),
+    text: picked.map((c, i) => `### Fragmento ${i+1}: ${clean(c.title || c.titulo || 'Documento')}\n${clean(c.content || c.contenido).slice(0, 1400)}`).join('\n\n'),
     chunks: picked.map(c => ({ id: c.id, title: c.title || c.titulo, score: c._score || 0 }))
   }
 }
@@ -244,7 +245,7 @@ async function retrieveKnowledge(db, query = '', settings = {}) {
 async function loadFeedback(db, query = '') {
   const items = []
   try {
-    const { data } = await db.from('crm_conv_feedback').select('msg_content,feedback,correction,created_at').order('created_at', { ascending: false }).limit(100)
+    const { data } = await db.from('crm_conv_feedback').select('msg_content,feedback,correction,improved,created_at').order('created_at', { ascending: false }).limit(80)
     if (Array.isArray(data)) items.push(...data)
   } catch {}
   try {
@@ -256,8 +257,8 @@ async function loadFeedback(db, query = '') {
     const txt = flatten(x)
     return { txt, score: score(query, txt) }
   }).filter(x => x.txt).sort((a,b) => b.score - a.score)
-  const picked = (ranked.filter(x => x.score > 0).slice(0, 8).length ? ranked.filter(x => x.score > 0).slice(0, 8) : ranked.slice(0, 6))
-  return { text: picked.map((x,i) => `### Feedback ${i+1}\n${x.txt.slice(0,1200)}`).join('\n\n'), count: picked.length }
+  const picked = (ranked.filter(x => x.score > 0).slice(0, 6).length ? ranked.filter(x => x.score > 0).slice(0, 6) : ranked.slice(0, 4))
+  return { text: picked.map((x,i) => `### Feedback ${i+1}\n${x.txt.slice(0,1000)}`).join('\n\n'), count: picked.length }
 }
 
 async function loadMemory(db, leadData = {}) {
@@ -265,7 +266,7 @@ async function loadMemory(db, leadData = {}) {
   if (!db || !key) return ''
   try {
     const { data } = await db.from('crm_ai_memory').select('value,updated_at').eq('key', key).order('updated_at', { ascending: false }).limit(1)
-    return flatten(data?.[0]?.value || '').slice(0, 12000)
+    return flatten(data?.[0]?.value || '').slice(0, 8000)
   } catch { return '' }
 }
 
@@ -279,13 +280,13 @@ async function saveMemory(db, leadData = {}, memoryUpdate = {}) {
 function sanitizeHistory(history = []) {
   return (Array.isArray(history) ? history : [])
     .filter(m => m && m.role && clean(m.content) && !clean(m.content).startsWith('[Sistema]'))
-    .slice(-30)
-    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content).slice(0, 1800) }))
+    .slice(-24)
+    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content).slice(0, 1400) }))
 }
 
 function conversationFacts(history = [], message = '', leadData = {}) {
-  const user = [...history, { role:'user', content: message }].filter(m => m.role === 'user').slice(-12).map((m,i) => `Cliente ${i+1}: ${clean(m.content).slice(0,500)}`)
-  const lead = Object.entries(leadData || {}).filter(([,v]) => v).slice(0, 25).map(([k,v]) => `${k}: ${clean(v).slice(0,300)}`)
+  const user = [...history, { role:'user', content: message }].filter(m => m.role === 'user').slice(-10).map((m,i) => `Cliente ${i+1}: ${clean(m.content).slice(0,400)}`)
+  const lead = Object.entries(leadData || {}).filter(([,v]) => v).slice(0, 20).map(([k,v]) => `${k}: ${clean(v).slice(0,250)}`)
   return [...user, ...lead].join('\n') || 'Sin datos previos.'
 }
 
@@ -315,7 +316,7 @@ function safeUpdate(obj = {}) {
   for (const [k,v] of Object.entries(obj || {}).slice(0,40)) {
     const key = clean(k).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0,60)
     if (!key || /password|token|secret|apikey|api_key|created_at|updated_at/i.test(key)) continue
-    const val = typeof v === 'object' ? flatten(v).slice(0,1000) : clean(v).slice(0,1000)
+    const val = typeof v === 'object' ? flatten(v).slice(0,800) : clean(v).slice(0,800)
     if (val) out[key] = val
   }
   return out
@@ -363,6 +364,7 @@ ${derivRules || 'No hay reglas duras configuradas. Por lo tanto NO derives ni ma
 
 INSTRUCCIONES DE RESPUESTA:
 - Responde breve, natural y útil por WhatsApp.
+- Contesta siempre el último mensaje del cliente.
 - Pregunta máximo una cosa.
 - No repitas datos ya entregados.
 - Si el cliente pide agenda/link y hay link configurado, entrégalo.
@@ -381,7 +383,7 @@ Devuelve SOLO JSON válido:
 
 async function callClaude({ key, model, system, messages }) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.AGENT_TIMEOUT_MS || 7500))
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.AGENT_TIMEOUT_MS || 12000))
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -389,7 +391,7 @@ async function callClaude({ key, model, system, messages }) {
       headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model,
-        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 420),
+        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 500),
         temperature: Number(process.env.AGENT_TEMPERATURE || 0.12),
         system,
         messages
@@ -402,12 +404,24 @@ async function callClaude({ key, model, system, messages }) {
   } finally { clearTimeout(timeout) }
 }
 
+function panelFallback(iaConfig = {}, message = '') {
+  const explicit = clean(iaConfig.fallbackMessage || iaConfig.mensajeFallback || iaConfig.respuestaFallback || '')
+  if (explicit) return explicit
+  const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || '')
+  const base = flatten({
+    primerosPasos: iaConfig.pasos || iaConfig.procesoVenta || iaConfig.flujo,
+    preguntas: iaConfig.preguntasFrecuentes || iaConfig.faq,
+    oferta: iaConfig.oferta || iaConfig.productos || iaConfig.servicios
+  }).split('\n').map(clean).filter(Boolean)[0]
+  if (base) return `${base}`.slice(0, 500)
+  return agentName ? `Te leo. Cuéntame un poco más para orientarte bien.` : `Te leo. Cuéntame un poco más.`
+}
+
 export async function generateAgentResponse(input = {}, opts = {}) {
   const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY)
   const model = clean(process.env.ANTHROPIC_MODEL || DEFAULT_MODEL)
   const message = clean(input.message)
   if (!message) return { ok: false, reply: '', error: 'missing_message' }
-  if (!key) return { ok: false, reply: '', error: 'ANTHROPIC_KEY_missing' }
 
   const db = opts.db || sb()
   const settings = await loadSettings(db)
@@ -424,14 +438,21 @@ export async function generateAgentResponse(input = {}, opts = {}) {
     retrieveKnowledge(db, query, settings)
   ])
   const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || 'Asistente')
+  const localUpdate = extractLocalFields(message, leadData, agendaLink)
+
+  if (!key) {
+    const reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
+    return { ok: false, reply, action: 'conversando', escalateToHuman: false, statusUpdate: '', leadUpdate: localUpdate, error: 'ANTHROPIC_KEY_missing', trace: { fallback: true, genericEngine: true, hardcodedBusiness: false } }
+  }
+
   const system = buildPrompt({ agentName, panelBrain, knowledge: knowledge.text, feedback: feedback.text, memory, facts, agendaLink, iaConfig, history, message })
   const messages = [...history, { role: 'user', content: message }]
-  const localUpdate = extractLocalFields(message, leadData, agendaLink)
 
   try {
     const raw = await callClaude({ key, model, system, messages })
     const parsed = parseModelOutput(raw)
-    const reply = removeBlocked(parsed.reply, iaConfig)
+    let reply = removeBlocked(parsed.reply, iaConfig)
+    if (!reply) reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
     const rules = hasDerivationRules(iaConfig)
     const requestedStatus = rules ? normStatus(parsed.statusUpdate) : ''
     const requestedHuman = rules && parsed.escalateToHuman === true
@@ -457,10 +478,10 @@ export async function generateAgentResponse(input = {}, opts = {}) {
       }
     }
   } catch (error) {
-    const fb = clean(iaConfig.fallbackMessage || iaConfig.mensajeFallback || iaConfig.respuestaFallback || '')
+    const reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
     return {
       ok: false,
-      reply: fb ? removeBlocked(fb, iaConfig) : '',
+      reply,
       action: 'conversando',
       escalateToHuman: false,
       statusUpdate: '',
