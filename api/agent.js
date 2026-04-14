@@ -49,16 +49,102 @@ function stripCodeFence(text = '') {
     .trim()
 }
 
+function extractJsonBlock(text = '') {
+  const src = stripCodeFence(text)
+  const start = src.indexOf('{')
+  if (start < 0) return ''
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i]
+    if (inString) {
+      if (escaped) { escaped = false; continue }
+      if (ch === '\\') { escaped = true; continue }
+      if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{') depth++
+    if (ch === '}') {
+      depth--
+      if (depth === 0) return src.slice(start, i + 1)
+    }
+  }
+  return ''
+}
+
+function jsonStringValueFromKey(text = '', key = 'reply') {
+  const src = String(text || '')
+  const rx = new RegExp('"' + key + '"\\s*:\\s*"', 'i')
+  const m = rx.exec(src)
+  if (!m) return ''
+  let i = m.index + m[0].length
+  let out = ''
+  let escaped = false
+  for (; i < src.length; i++) {
+    const ch = src[i]
+    if (escaped) {
+      out += '\\' + ch
+      escaped = false
+      continue
+    }
+    if (ch === '\\') { escaped = true; continue }
+    if (ch === '"') break
+    out += ch
+  }
+  try { return JSON.parse('"' + out + '"') } catch (_) { return out.replace(/\\n/g, '\n').replace(/\\"/g, '"') }
+}
+
+function normalizeAssistantObject(obj, raw = '') {
+  if (!obj || typeof obj !== 'object') {
+    const reply = jsonStringValueFromKey(raw, 'reply') || cleanText(raw)
+    return { reply, action: 'conversando', leadUpdate: {}, memoryUpdate: {}, trace: {} }
+  }
+
+  if (typeof obj.reply === 'string') {
+    const nestedText = stripCodeFence(obj.reply)
+    if (nestedText.trim().startsWith('{')) {
+      const nested = safeJsonParse(nestedText) || safeJsonParse(extractJsonBlock(nestedText))
+      if (nested && typeof nested === 'object' && nested.reply) {
+        return { ...obj, ...nested, reply: nested.reply }
+      }
+      const innerReply = jsonStringValueFromKey(nestedText, 'reply')
+      if (innerReply) obj.reply = innerReply
+    }
+  } else if (obj.reply && typeof obj.reply === 'object') {
+    const nested = obj.reply
+    obj = { ...obj, ...nested, reply: nested.reply || nested.text || nested.message || '' }
+  }
+
+  return {
+    reply: cleanText(obj.reply || obj.message || obj.text || ''),
+    action: cleanText(obj.action || 'conversando'),
+    escalateToHuman: obj.escalateToHuman === true || obj.derivarHumano === true || obj.human === true,
+    statusUpdate: cleanText(obj.statusUpdate || obj.status || ''),
+    derivationReason: cleanText(obj.derivationReason || ''),
+    leadUpdate: obj.leadUpdate && typeof obj.leadUpdate === 'object' ? obj.leadUpdate : {},
+    memoryUpdate: obj.memoryUpdate && typeof obj.memoryUpdate === 'object' ? obj.memoryUpdate : {},
+    learningSuggestion: cleanText(obj.learningSuggestion || '')
+  }
+}
+
 function parseAssistantJson(text = '') {
   const cleaned = stripCodeFence(text)
   const direct = safeJsonParse(cleaned)
-  if (direct && typeof direct === 'object') return direct
-  const match = cleaned.match(/\{[\s\S]*\}/)
-  if (match) {
-    const parsed = safeJsonParse(match[0])
-    if (parsed && typeof parsed === 'object') return parsed
+  if (direct && typeof direct === 'object') return normalizeAssistantObject(direct, cleaned)
+
+  const block = extractJsonBlock(cleaned)
+  if (block) {
+    const parsed = safeJsonParse(block)
+    if (parsed && typeof parsed === 'object') return normalizeAssistantObject(parsed, cleaned)
   }
-  return { reply: cleaned, action: 'conversando', leadUpdate: {}, memoryUpdate: {}, trace: {} }
+
+  const replyFromJsonish = jsonStringValueFromKey(cleaned, 'reply')
+  if (replyFromJsonish) return normalizeAssistantObject({ reply: replyFromJsonish }, cleaned)
+  if (cleaned.trim().startsWith('{')) return normalizeAssistantObject({ reply: '' }, cleaned)
+  return normalizeAssistantObject({ reply: cleaned }, cleaned)
 }
 
 function containsBlockedPhrase(text = '', extraBlocked = []) {
@@ -669,6 +755,13 @@ function sanitizeReply(reply = '', { iaConfig = {}, history = [] } = {}) {
     .trim()
 
   if (!out) return ''
+
+  // Si llegó un JSON completo como texto, extraemos solo el campo reply.
+  if (out.trim().startsWith('{')) {
+    const parsed = parseAssistantJson(out)
+    out = cleanText(parsed.reply || '')
+    if (!out) return ''
+  }
 
   // Antes se anulaba TODA la respuesta si tenía una frase prohibida.
   // Eso dejaba a Rabito mudo y WhatsApp terminaba marcando revisión.
