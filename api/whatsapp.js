@@ -1,40 +1,41 @@
-// api/whatsapp.js — Webhook estable Rabbitts CRM
-// Flujo simple y probado: recibir -> guardar -> generar respuesta -> enviar por Evolution -> guardar respuesta.
+// api/whatsapp.js — Webhook WhatsApp estable v9
+// Flujo confiable: recibir -> guardar conversación -> generar respuesta -> enviar por Evolution -> guardar respuesta SOLO si se envió.
 
 import { createClient } from '@supabase/supabase-js'
 import { generateAgentResponse } from './agent.js'
 
 const clean = (v = '') => String(v ?? '').trim()
 const nowIso = () => new Date().toISOString()
+const makeId = (p = 'id') => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-function getSupabase() {
+function sb() {
   const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
   const key = clean(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
-  if (!url || !key) return null
-  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
+  return url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null
 }
 
-function eventName(body = {}) {
-  return clean(body.event || body.type || body.eventName || body.action || '').toLowerCase().replace(/_/g, '.')
+function eventName(b = {}) {
+  return clean(b.event || b.type || b.eventName || b.action || '').toLowerCase().replace(/_/g, '.')
 }
 
-function unwrapMessage(message = {}) {
-  let m = message || {}
-  if (m.ephemeralMessage?.message) m = m.ephemeralMessage.message
-  if (m.viewOnceMessage?.message) m = m.viewOnceMessage.message
-  if (m.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message
-  if (m.documentWithCaptionMessage?.message) m = m.documentWithCaptionMessage.message
-  return m
+function unwrap(o = {}) {
+  let m = o?.message || o?.msg || o
+  if (m?.ephemeralMessage?.message) m = m.ephemeralMessage.message
+  if (m?.viewOnceMessage?.message) m = m.viewOnceMessage.message
+  if (m?.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message
+  if (m?.documentWithCaptionMessage?.message) m = m.documentWithCaptionMessage.message
+  return m || {}
 }
 
-function extractText(raw = {}) {
-  const m = unwrapMessage(raw.message || raw.msg || raw)
+function textOf(o = {}) {
+  const m = unwrap(o)
   return clean(
     m.conversation ||
     m.extendedTextMessage?.text ||
     m.imageMessage?.caption ||
     m.videoMessage?.caption ||
     m.documentMessage?.caption ||
+    m.audioMessage?.caption ||
     m.buttonsResponseMessage?.selectedDisplayText ||
     m.buttonsResponseMessage?.selectedButtonId ||
     m.listResponseMessage?.title ||
@@ -47,72 +48,140 @@ function extractText(raw = {}) {
   )
 }
 
-function extractMessages(body = {}) {
-  const d = body.data
-  if (Array.isArray(d)) return d
-  if (Array.isArray(d?.messages)) return d.messages
-  if (Array.isArray(d?.message)) return d.message
-  if (d?.key || d?.message || d?.remoteJid || d?.from || d?.sender) return [d]
-  if (body?.key || body?.message || body?.remoteJid || body?.from || body?.sender) return [body]
-  return []
+function collectJids(value, out = []) {
+  if (!value || out.length > 80) return out
+  if (typeof value === 'string') {
+    if (/@(s\.whatsapp\.net|c\.us|lid|g\.us|broadcast)\b/i.test(value)) out.push(clean(value))
+    return out
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectJids(item, out)
+    return out
+  }
+  if (typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if (/remoteJid|participant|sender|from|jid|author|recipient|chatId|user/i.test(k)) collectJids(v, out)
+    }
+  }
+  return out
 }
 
-function jidOf(raw = {}) {
-  return clean(raw?.key?.remoteJid || raw?.remoteJid || raw?.jid || raw?.from || raw?.sender || raw?.data?.key?.remoteJid || '')
+function jidOf(o = {}) {
+  const direct = [
+    o?.key?.remoteJid,
+    o?.remoteJid,
+    o?.jid,
+    o?.from,
+    o?.sender,
+    o?.participant,
+    o?.data?.key?.remoteJid,
+    o?.data?.remoteJid,
+    o?.data?.sender,
+    o?.data?.from,
+    o?.data?.participant
+  ].map(clean).filter(Boolean)
+  const all = [...direct, ...collectJids(o)]
+  const unique = [...new Set(all)]
+  return unique.find(j => /@(s\.whatsapp\.net|c\.us)$/i.test(j)) || unique.find(j => /@lid$/i.test(j)) || unique[0] || ''
 }
-function fromMeOf(raw = {}) { return raw?.key?.fromMe === true || raw?.fromMe === true || raw?.data?.key?.fromMe === true }
-function nameOf(raw = {}) { return clean(raw?.pushName || raw?.notifyName || raw?.name || raw?.senderName || raw?.data?.pushName || '') }
-function phoneFromJid(jid = '') { return clean(jid).replace(/@[^@]+$/, '').replace(/:\d+$/, '').replace(/[^0-9]/g, '') }
-function telOf(phone = '') { const d = phone.replace(/[^0-9]/g, ''); return d ? `+${d}` : '' }
+
+function phoneOf(jid = '') {
+  const j = clean(jid)
+  if (!j || /@lid$/i.test(j)) return ''
+  return j.replace(/@[^@]+$/, '').replace(/:\d+$/, '').replace(/[^0-9]/g, '')
+}
+
+function lidOf(jid = '') {
+  const j = clean(jid)
+  return /@lid$/i.test(j) ? j.replace(/@lid$/i, '').replace(/[^0-9]/g, '') : ''
+}
+
+function telOf(phone = '', lid = '') {
+  const d = clean(phone).replace(/[^0-9]/g, '')
+  if (d) return '+' + d
+  const l = clean(lid).replace(/[^0-9]/g, '')
+  return l ? 'wa-lid-' + l : ''
+}
+
+function nameOf(o = {}) { return clean(o?.pushName || o?.notifyName || o?.name || o?.senderName || o?.data?.pushName || '') }
+function msgId(o = {}) { return clean(o?.key?.id || o?.id || o?.messageId || o?.data?.key?.id || '') }
+function fromMeOf(o = {}) { return o?.key?.fromMe === true || o?.fromMe === true || o?.data?.key?.fromMe === true }
+
+function messages(b = {}) {
+  const d = b.data
+  const out = []
+  if (Array.isArray(d)) out.push(...d)
+  else if (Array.isArray(d?.messages)) out.push(...d.messages)
+  else if (Array.isArray(d?.message)) out.push(...d.message)
+  else if (d?.key || d?.message || d?.remoteJid || d?.sender || d?.from) out.push(d)
+  else if (b?.key || b?.message || b?.remoteJid || b?.sender || b?.from) out.push(b)
+  return out.filter(Boolean)
+}
 
 async function readSetting(db, key, fallback = null) {
-  try {
-    const { data } = await db.from('crm_settings').select('value').eq('key', key).single()
-    return data?.value ?? fallback
-  } catch { return fallback }
+  try { const { data } = await db.from('crm_settings').select('value').eq('key', key).single(); return data?.value ?? fallback } catch { return fallback }
 }
 
 async function upsertSetting(db, key, value) {
-  try { await db.from('crm_settings').upsert({ key, value }, { onConflict: 'key' }) } catch (e) { console.error('[WA] setting error', key, e.message) }
+  try { await db.from('crm_settings').upsert({ key, value }, { onConflict: 'key' }) } catch (e) { console.error('[WA] setting upsert error:', key, e?.message) }
 }
 
-async function getIaConfig(db) {
-  const ia = await readSetting(db, 'ia_config', {})
-  return ia && typeof ia === 'object' ? ia : {}
+async function getWaNumbers(db) {
+  const nums = await readSetting(db, 'wa_numeros', [])
+  return Array.isArray(nums) ? nums : []
 }
 
-async function getEvolutionConfig(db, instanceFromEvent = '', conv = null) {
-  const waNums = await readSetting(db, 'wa_numeros', [])
-  const nums = Array.isArray(waNums) ? waNums : []
-  const selected = nums.find(n => instanceFromEvent && n.instanceName === instanceFromEvent)
-    || nums.find(n => n.activo !== false && n.instanceName)
-    || nums[0]
+async function getInstanceConfig(db, fallbackInstance = '') {
+  const nums = await getWaNumbers(db)
+  const chosen = nums.find(x => fallbackInstance && x.instanceName === fallbackInstance)
+    || nums.find(x => x.activo !== false && x.instanceName)
+    || nums.find(x => x.instanceName)
     || {}
 
-  const instance = clean(instanceFromEvent || conv?.instanceName || selected.instanceName || process.env.EVOLUTION_DEFAULT_INSTANCE || process.env.EVO_DEFAULT_INSTANCE)
-  const url = clean(process.env.EVOLUTION_API_URL || process.env.EVO_URL || selected.evoUrl || selected.url || 'https://wa.rabbittscapital.com').replace(/\/$/, '')
-  const key = clean(process.env.EVOLUTION_API_KEY || process.env.EVO_KEY || selected.evoKey || selected.apiKey || selected.apikey || 'rabbitts2024')
+  const instance = clean(fallbackInstance || chosen.instanceName || process.env.EVOLUTION_DEFAULT_INSTANCE || process.env.EVO_DEFAULT_INSTANCE || '')
+  const url = clean(process.env.EVOLUTION_API_URL || process.env.EVO_URL || chosen.evoUrl || chosen.url || 'https://wa.rabbittscapital.com').replace(/\/$/, '')
+  const key = clean(
+    process.env.EVOLUTION_API_KEY ||
+    process.env.EVO_KEY ||
+    chosen.evoKey ||
+    chosen.apiKey ||
+    chosen.apikey ||
+    // Compatibilidad con la configuración antigua del CRM. Idealmente mover a variables de entorno en Vercel.
+    'rabbitts2024'
+  )
   return { instance, url, key }
 }
 
-async function findOrCreateConversation(db, { tel, phone, name, text, instance }) {
-  const { data: existing, error } = await db.from('crm_conversations')
-    .select('*')
-    .eq('telefono', tel)
-    .order('updated_at', { ascending: false })
-    .limit(1)
+async function findOrCreateConv(db, { tel, phone, lid, name, text, instance }) {
+  let conv = null
+  try {
+    const { data, error } = await db.from('crm_conversations')
+      .select('*')
+      .eq('telefono', tel)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+    if (error) console.error('[WA] select conv error:', error.message)
+    conv = data?.[0] || null
+  } catch (e) { console.error('[WA] select conv exception:', e.message) }
 
-  if (error) console.error('[WA] conv select error:', error.message)
-  if (existing?.[0]) {
-    const conv = existing[0]
-    const upd = { nombre: conv.nombre || name || tel, last_message: text || conv.last_message || '[mensaje]', updated_at: nowIso() }
+  if (conv) {
+    const upd = {
+      nombre: conv.nombre || name || tel,
+      last_message: text || conv.last_message || '[mensaje]',
+      updated_at: nowIso()
+    }
     if (instance && Object.prototype.hasOwnProperty.call(conv, 'instanceName')) upd.instanceName = instance
-    const { data } = await db.from('crm_conversations').update(upd).eq('id', conv.id).select().single()
-    return data || { ...conv, ...upd }
+    try {
+      const { data } = await db.from('crm_conversations').update(upd).eq('id', conv.id).select().single()
+      return data || { ...conv, ...upd }
+    } catch (e) {
+      console.error('[WA] update conv exception:', e.message)
+      return { ...conv, ...upd }
+    }
   }
 
   const base = {
-    id: phone ? `wa-${phone}` : `wa-${Date.now()}`,
+    id: phone ? `wa-${phone}` : (lid ? `wa-lid-${lid}` : makeId('wa')),
     telefono: tel,
     nombre: name || tel || phone,
     mode: 'ia',
@@ -128,51 +197,63 @@ async function findOrCreateConversation(db, { tel, phone, name, text, instance }
     { ...base, instanceName: instance || null },
     base
   ]
-
   for (const row of attempts) {
-    const { data, error: insertError } = await db.from('crm_conversations').insert(row).select().single()
-    if (!insertError && data) {
-      console.log('[WA] conv created:', data.id)
-      return data
-    }
-    console.error('[WA] conv insert attempt error:', insertError?.message)
+    try {
+      const { data, error } = await db.from('crm_conversations').insert(row).select().single()
+      if (!error && data) {
+        console.log('[WA] conv created:', data.id)
+        return data
+      }
+      if (error) console.error('[WA] insert conv attempt error:', error.message)
+    } catch {}
   }
-
   return base
 }
 
-async function saveMessage(db, convId, role, content, extra = {}) {
-  const text = clean(content)
-  if (!convId || !text || text.startsWith('[Sistema]')) return false
+async function saveMsg(db, convId, role, content, extra = {}) {
+  const msg = clean(content)
+  if (!convId || !msg || msg.startsWith('[Sistema]')) return false
   const row = {
     conv_id: convId,
     role: role === 'assistant' ? 'assistant' : 'user',
-    content: text,
+    content: msg,
     created_at: extra.created_at || nowIso()
   }
-  if (extra.manual != null) row.manual = extra.manual
-  const { error } = await db.from('crm_conv_messages').insert(row)
-  if (error) {
-    const { error: retryError } = await db.from('crm_conv_messages').insert({ conv_id: convId, role: row.role, content: text, created_at: row.created_at })
-    if (retryError) {
-      console.error('[WA] msg insert error:', retryError.message)
-      return false
-    }
+  try {
+    const { error } = await db.from('crm_conv_messages').insert(row)
+    if (error) console.error('[WA] insert msg error:', error.message, error.code)
+    return !error
+  } catch (e) {
+    console.error('[WA] insert msg exception:', e.message)
+    return false
   }
-  return true
 }
 
-async function ensureLead(db, conv, { tel, phone, name, text }) {
+async function duplicate(db, convId, content, role = 'user') {
+  const since = new Date(Date.now() - 90000).toISOString()
   try {
-    const { data } = await db.from('crm_leads').select('id').eq('telefono', tel).limit(1)
-    if (data?.[0]?.id) {
-      if (!conv.lead_id) await db.from('crm_conversations').update({ lead_id: data[0].id }).eq('id', conv.id)
-      return data[0].id
+    const { data, error } = await db.from('crm_conv_messages')
+      .select('id')
+      .eq('conv_id', convId)
+      .eq('role', role)
+      .eq('content', content)
+      .gte('created_at', since)
+      .limit(1)
+    return !error && data?.length > 0
+  } catch { return false }
+}
+
+async function ensureLead(db, conv, { tel, phone, lid, name, text }) {
+  try {
+    const { data } = await db.from('crm_leads').select('*').eq('telefono', tel).limit(1)
+    if (data?.length) {
+      if (conv?.id && !conv.lead_id) await db.from('crm_conversations').update({ lead_id: data[0].id }).eq('id', conv.id)
+      return data[0]
     }
   } catch {}
 
   const base = {
-    id: phone ? `l-wa-${phone}` : `l-wa-${Date.now()}`,
+    id: phone ? `l-wa-${phone}` : (lid ? `l-wa-lid-${lid}` : makeId('l-wa')),
     nombre: name || tel || phone,
     telefono: tel,
     email: '',
@@ -183,186 +264,193 @@ async function ensureLead(db, conv, { tel, phone, name, text }) {
   }
   const attempts = [{ ...base, fuente: 'whatsapp', origen: 'whatsapp' }, { ...base, fuente: 'whatsapp' }, base]
   for (const row of attempts) {
-    const { data, error } = await db.from('crm_leads').insert(row).select('id').single()
-    if (!error && data?.id) {
-      await db.from('crm_conversations').update({ lead_id: data.id }).eq('id', conv.id)
-      return data.id
-    }
+    try {
+      const { data, error } = await db.from('crm_leads').insert(row).select().single()
+      if (!error && data) {
+        if (conv?.id) await db.from('crm_conversations').update({ lead_id: data.id }).eq('id', conv.id)
+        return data
+      }
+    } catch {}
   }
   return null
 }
 
 async function loadHistory(db, convId) {
-  const { data, error } = await db.from('crm_conv_messages')
-    .select('role,content,created_at')
-    .eq('conv_id', convId)
-    .order('created_at', { ascending: true })
-    .limit(50)
-  if (error) {
-    console.error('[WA] history error:', error.message)
-    return []
-  }
-  return (data || [])
-    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content), created_at: m.created_at }))
-    .filter(m => m.content && !m.content.startsWith('[Sistema]'))
+  try {
+    const { data } = await db.from('crm_conv_messages')
+      .select('role,content,created_at')
+      .eq('conv_id', convId)
+      .order('created_at', { ascending: true })
+      .limit(60)
+    return (data || [])
+      .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content), created_at: m.created_at }))
+      .filter(m => m.content && !m.content.startsWith('[Sistema]'))
+  } catch { return [] }
 }
 
-function statusAllowed(status = '', iaConfig = {}) {
-  const s = clean(status).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '_')
-  if (['activo', 'calificado', 'frio', 'no_interesado'].includes(s)) return s
-  if (s === 'requiere_revision') {
-    const rules = normalizeText([iaConfig.reglasDuras, iaConfig.reglasRevision, iaConfig.reglasDerivacion].map(x => typeof x === 'string' ? x : JSON.stringify(x || '')).join('\n'))
-    return /requiere_revision|requiere revision|derivar a revision/.test(rules) ? s : ''
-  }
-  return ''
-}
-function normalizeText(t = '') { return clean(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') }
-
-function extractVisibleReply(value) {
-  if (!value) return ''
-  if (typeof value === 'string') {
-    const t = clean(value)
-    if (!t.startsWith('{')) return t
-    try { return clean(JSON.parse(t).reply || JSON.parse(t).message || JSON.parse(t).text || '') } catch { return t }
-  }
-  if (typeof value === 'object') return clean(value.reply || value.message || value.text || '')
-  return ''
+function normStatus(v = '') {
+  const s = clean(v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '_')
+  return ['activo','calificado','frio','no_interesado','requiere_revision'].includes(s) ? s : ''
 }
 
-async function sendWhatsApp(db, { instance, number, text, conv }) {
-  const cfg = await getEvolutionConfig(db, instance, conv)
+async function sendWa(db, { instance: instanceFallback, number, text }) {
+  const cfg = await getInstanceConfig(db, instanceFallback)
+  const instance = cfg.instance
+  const url = cfg.url
+  const key = cfg.key
   const cleanNumber = clean(number).replace(/[^0-9]/g, '')
-  const msg = extractVisibleReply(text)
+  const msg = clean(text)
 
-  if (!cfg.url || !cfg.key || !cfg.instance || !cleanNumber || !msg) {
-    console.error('[WA] send missing:', { url: !!cfg.url, key: !!cfg.key, instance: cfg.instance || null, number: !!cleanNumber, text: !!msg })
-    return { ok: false, status: 0, error: 'missing_send_config' }
+  if (!url || !key || !instance || !cleanNumber || !msg) {
+    console.error('[WA] send missing:', { hasUrl: !!url, hasKey: !!key, instance: instance || null, hasNumber: !!cleanNumber, hasText: !!msg })
+    return { ok: false, error: 'missing_evolution_config_or_payload' }
   }
 
-  const endpoint = `${cfg.url}/message/sendText/${encodeURIComponent(cfg.instance)}`
-  const payload = { number: cleanNumber, text: msg, delay: 400 }
-  console.log('[WA] send attempt:', endpoint, cleanNumber)
-  const r = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', apikey: cfg.key },
-    body: JSON.stringify(payload)
-  })
-  const raw = await r.text().catch(() => '')
-  console.log('[WA] send status:', r.status, raw.slice(0, 180))
-  return { ok: r.ok, status: r.status, raw }
+  const endpoint = `${url}/message/sendText/${encodeURIComponent(instance)}`
+  const headers = { 'Content-Type': 'application/json', apikey: key }
+  const payloads = [
+    { number: cleanNumber, text: msg, delay: Number(process.env.EVOLUTION_SEND_DELAY || 250) },
+    { number: cleanNumber, textMessage: { text: msg }, delay: Number(process.env.EVOLUTION_SEND_DELAY || 250) }
+  ]
+
+  let last = null
+  for (const body of payloads) {
+    try {
+      const r = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) })
+      const txt = await r.text().catch(() => '')
+      last = { ok: r.ok, status: r.status, body: txt.slice(0, 500) }
+      if (r.ok) {
+        console.log('[WA] send ok:', { instance, number: cleanNumber.slice(-6), status: r.status })
+        return last
+      }
+      console.error('[WA] send attempt failed:', { status: r.status, body: txt.slice(0, 300) })
+    } catch (e) {
+      last = { ok: false, error: e.message }
+      console.error('[WA] send exception:', e.message)
+    }
+  }
+  return last || { ok: false, error: 'send_failed' }
 }
 
-async function processOneMessage(db, body, raw) {
-  const event = eventName(body)
-  const instance = clean(body.instance || body.instanceName || body.data?.instance || '')
-  const jid = jidOf(raw)
-  const phone = phoneFromJid(jid)
-  const tel = telOf(phone)
-  const text = extractText(raw)
-  const name = nameOf(raw)
-  const fromMe = fromMeOf(raw)
+async function direct(res, db, b) {
+  const to = clean(b.to || b.number || b.phone)
+  const text = clean(b.mensaje || b.message || b.text)
+  const result = await sendWa(db, { instance: clean(b.instance || b.instanceName), number: to, text })
+  return res.status(200).json({ ok: result.ok, sent: result.ok, result })
+}
 
-  console.log('[WA] message parsed:', { event, instance, tel, fromMe, hasText: !!text, text: text.slice(0, 80) })
+async function handleQrOrConnection(db, b, event, instance) {
+  if (event.includes('qrcode') || event.includes('qr')) {
+    const qr = b?.data?.qrcode?.base64 || b?.data?.base64 || b?.data?.qr || b?.qrcode?.base64 || b?.base64 || b?.qr
+    if (qr && instance) await upsertSetting(db, `wa_qr_${instance}`, { qr, ts: Date.now() })
+    return { ok: true, handled: 'qr' }
+  }
+  if (event.includes('connection')) {
+    const state = b?.data?.state || b?.state || b?.data?.instance?.state
+    if (state === 'open' && instance) { try { await db.from('crm_settings').delete().eq('key', `wa_qr_${instance}`) } catch {} }
+    return { ok: true, handled: 'connection', state }
+  }
+  return null
+}
 
-  if (!tel || jid.includes('@g.us')) return { ok: true, skipped: 'no_tel_or_group' }
-
-  const conv = await findOrCreateConversation(db, { tel, phone, name, text: text || '[mensaje]', instance })
-  if (!conv?.id) return { ok: false, error: 'conv_not_created' }
-
-  if (text) await saveMessage(db, conv.id, fromMe ? 'assistant' : 'user', text, { manual: fromMe })
-  await db.from('crm_conversations').update({ last_message: text || conv.last_message || '[mensaje]', updated_at: nowIso() }).eq('id', conv.id)
-  await ensureLead(db, conv, { tel, phone, name, text })
-
-  if (fromMe) return { ok: true, saved: 'from_me', convId: conv.id }
-  if (!text) return { ok: true, saved: 'no_text', convId: conv.id }
-  if (conv.mode === 'humano') return { ok: true, saved: 'human_mode', convId: conv.id }
-
-  const iaConfig = await getIaConfig(db)
-  if (iaConfig.activo === false) return { ok: true, saved: 'ia_off', convId: conv.id }
+async function answer(db, { conv, tel, phone, lid, instance, text }) {
+  const ia = await readSetting(db, 'ia_config', {}) || {}
+  if (ia.activo === false || conv.mode === 'humano') return { ok: true, skipped: ia.activo === false ? 'ia_off' : 'human_mode' }
 
   const history = await loadHistory(db, conv.id)
-  const leadData = { telefono: tel, nombre: conv.nombre || name || '', email: conv.email || '', status: conv.status || '', lead_id: conv.lead_id || '' }
-
   console.log('[WA] calling agent:', { convId: conv.id, history: history.length })
-  const agentResult = await generateAgentResponse({
+  const result = await generateAgentResponse({
     message: text,
-    conversationHistory: history.slice(0, -1),
-    iaConfig,
-    leadData
-  })
+    conversationHistory: history,
+    iaConfig: ia,
+    leadData: {
+      telefono: conv.telefono || tel || '',
+      nombre: conv.nombre || '',
+      lead_id: conv.lead_id || '',
+      conv_id: conv.id || '',
+      status: conv.status || '',
+      mode: conv.mode || ''
+    }
+  }, { db })
 
-  const reply = extractVisibleReply(agentResult)
-  console.log('[WA] agent reply:', { chars: reply.length, action: agentResult?.action, statusUpdate: agentResult?.statusUpdate })
-  if (!reply) return { ok: true, saved: 'agent_empty', convId: conv.id }
+  const reply = clean(result.reply)
+  console.log('[WA] agent result:', { ok: result.ok, hasReply: !!reply, error: result.error || '', trace: result.trace || {} })
+  if (!reply) return { ok: true, skipped: 'empty_reply', error: result.error || '' }
 
-  const send = await sendWhatsApp(db, { instance, number: phone, text: reply, conv })
-  if (!send.ok) {
-    console.error('[WA] send failed:', send.status, send.raw || send.error)
-    return { ok: true, saved: 'reply_not_sent', convId: conv.id, sendStatus: send.status }
+  if (await duplicate(db, conv.id, reply, 'assistant')) return { ok: true, skipped: 'duplicate_assistant_reply' }
+
+  const sent = await sendWa(db, { instance, number: phone || lid, text: reply })
+
+  // Para no mentir en el panel: si Evolution no confirma envío, NO guardamos el mensaje como enviado.
+  if (!sent.ok) {
+    console.error('[WA] reply generated but send failed:', sent)
+    try { await db.from('crm_conversations').update({ updated_at: nowIso() }).eq('id', conv.id) } catch {}
+    return { ok: true, replied: false, sendFailed: true, sendStatus: sent.status || 0, error: sent.error || sent.body || '' }
   }
 
-  await saveMessage(db, conv.id, 'assistant', reply)
+  await saveMsg(db, conv.id, 'assistant', reply)
 
   const upd = { last_message: reply, updated_at: nowIso() }
-  const status = statusAllowed(agentResult?.statusUpdate || agentResult?.action, iaConfig)
-  if (status) upd.status = status
-  if (agentResult?.leadUpdate && typeof agentResult.leadUpdate === 'object') Object.assign(upd, agentResult.leadUpdate)
-  await db.from('crm_conversations').update(upd).eq('id', conv.id)
+  const allowedByHardRules = result?.trace?.derivationAllowedByHardRules === true
+  const requestedStatus = normStatus(result.statusUpdate || '')
+  if (allowedByHardRules && requestedStatus) upd.status = requestedStatus
+  if (result.action === 'calificado') upd.status = 'calificado'
+  if (allowedByHardRules && result.escalateToHuman === true) upd.mode = 'humano'
 
-  console.log('[WA] done:', { tel, convId: conv.id })
-  return { ok: true, replied: true, convId: conv.id }
+  try { await db.from('crm_conversations').update(upd).eq('id', conv.id) } catch (e) { console.error('[WA] update after reply:', e.message) }
+  return { ok: true, replied: true, sendStatus: sent.status || 0 }
 }
 
 export default async function handler(req, res) {
-  if (req.method === 'GET') {
-    return res.status(200).json({
-      ok: true,
-      env: {
-        supabase: !!(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL),
-        supabaseKey: !!(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY),
-        anthropic: !!(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.CLAUDE_API_KEY),
-        evolutionUrl: !!(process.env.EVOLUTION_API_URL || process.env.EVO_URL),
-        evolutionKey: !!(process.env.EVOLUTION_API_KEY || process.env.EVO_KEY)
-      }
-    })
-  }
+  if (req.method === 'GET') return res.status(200).json({ ok: true, endpoint: 'api/whatsapp', mode: 'stable-v9-direct' })
+  if (req.method !== 'POST') return res.status(405).json({ ok: false })
 
-  if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' })
-  const db = getSupabase()
-  if (!db) {
-    console.error('[WA] missing Supabase env')
-    return res.status(200).json({ ok: false, error: 'missing_supabase_env' })
-  }
+  const db = sb()
+  if (!db) return res.status(200).json({ ok: false, error: 'supabase_env_missing' })
+  const b = req.body || {}
+  if ((b.to || b.number || b.phone) && (b.mensaje || b.message || b.text) && !b.event && !b.data?.key) return direct(res, db, b)
 
-  const body = req.body || {}
-  const event = eventName(body)
-  const instance = clean(body.instance || body.instanceName || body.data?.instance || '')
-  console.log('[WA] webhook:', { event, instance })
+  const event = eventName(b)
+  const rawMessages = messages(b)
+  const instance = clean(b.instance || b.instanceName || b.instance_name || b.data?.instance || b.data?.instanceName || rawMessages[0]?.instance || rawMessages[0]?.instanceName || '')
+  console.log('[WA] event:', event || '(no-event)', '| inst:', instance || '(no-inst)', '| msgs:', rawMessages.length)
 
-  try {
-    if (event.includes('qrcode') || event.includes('qr')) {
-      const qr = body?.data?.qrcode?.base64 || body?.data?.base64 || body?.data?.qr || body?.qrcode
-      if (qr) await upsertSetting(db, `wa_qr_${instance}`, { qr, ts: Date.now() })
-      return res.status(200).json({ ok: true, event })
+  const handled = await handleQrOrConnection(db, b, event, instance)
+  if (handled && !rawMessages.length) return res.status(200).json(handled)
+  if (!(event.includes('message') || rawMessages.length)) return res.status(200).json({ ok: true, skipped: event || 'not_message' })
+
+  const results = []
+  for (const m of rawMessages) {
+    const jid = jidOf(m)
+    const lid = lidOf(jid)
+    const phone = phoneOf(jid)
+    const tel = telOf(phone, lid)
+    const text = textOf(m)
+    const name = nameOf(m)
+    const fromMe = fromMeOf(m)
+    const id = msgId(m)
+
+    console.log('[WA] inbound:', { tel, jidType: jid.includes('@lid') ? 'lid' : 'phone', fromMe, hasText: !!text, id: id || '(no-id)' })
+
+    if (!tel || jid.includes('@g.us') || jid.includes('@broadcast')) { results.push({ ok:true, skipped:'invalid_or_group' }); continue }
+    if (!text) { results.push({ ok:true, skipped:'empty_message' }); continue }
+
+    const conv = await findOrCreateConv(db, { tel, phone, lid, name, text, instance })
+
+    if (fromMe) {
+      await saveMsg(db, conv.id, 'assistant', text)
+      try { await db.from('crm_conversations').update({ last_message: text, updated_at: nowIso() }).eq('id', conv.id) } catch {}
+      results.push({ ok: true, saved: 'fromMe', convId: conv.id })
+      continue
     }
 
-    if (event.includes('connection')) {
-      if (body?.data?.state === 'open' || body?.state === 'open') {
-        try { await db.from('crm_settings').delete().eq('key', `wa_qr_${instance}`) } catch {}
-      }
-      return res.status(200).json({ ok: true, event })
-    }
+    if (await duplicate(db, conv.id, text, 'user')) { results.push({ ok:true, skipped:'duplicate', convId: conv.id }); continue }
+    await saveMsg(db, conv.id, 'user', text)
+    await ensureLead(db, conv, { tel, phone, lid, name, text })
 
-    const msgs = extractMessages(body)
-    if (!msgs.length || (event && !event.includes('message'))) {
-      return res.status(200).json({ ok: true, skipped: event || 'no_message_event' })
-    }
-
-    const results = []
-    for (const raw of msgs.slice(0, 5)) results.push(await processOneMessage(db, body, raw))
-    return res.status(200).json({ ok: true, results })
-  } catch (e) {
-    console.error('[WA] fatal:', e.message, e.stack)
-    return res.status(200).json({ ok: false, error: e.message })
+    const result = await answer(db, { conv, tel, phone, lid, instance, text })
+    results.push({ ok:true, result, convId: conv.id })
   }
+
+  return res.status(200).json({ ok: true, processed: true, results })
 }
