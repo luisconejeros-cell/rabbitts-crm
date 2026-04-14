@@ -4763,7 +4763,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 // ─── IA Config View ───────────────────────────────────────────────────────────
 function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
-  const [tab, setTab] = useState('config')
+  const [tab, setTab] = useState('cerebro')
   const [testMsg, setTestMsg] = useState('')
   const [testEvento, setTestEvento] = useState('asignacion')
   const [testBroker, setTestBroker] = useState('')
@@ -4809,12 +4809,9 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
   })
 
   const TABS = [
-    {id:'config',    icon:'⚙️', title:'Configuración', desc:'Identidad, WhatsApp y agenda'},
-    {id:'cerebro',   icon:'🧠', title:'Entrenar Rabito', desc:'Personalidad, productos y reglas'},
-    {id:'eventos',   icon:'🔔', title:'Automatizaciones', desc:'Alertas y disparadores'},
-    {id:'plantillas',icon:'💬', title:'Mensajes', desc:'Plantillas editables'},
-    {id:'entrena',   icon:'✏️', title:'Preguntas frecuentes', desc:'Respuestas guardadas'},
-    {id:'monitor',   icon:'📊', title:'Monitor', desc:'Pruebas y control'},
+    {id:'cerebro',   icon:'🧠', title:'Entrenar', desc:'Oferta, reglas, documentos y prueba'},
+    {id:'config',    icon:'⚙️', title:'Conexión', desc:'WhatsApp, agenda y estado'},
+    {id:'monitor',   icon:'📊', title:'Monitor', desc:'Control y conversaciones'},
   ]
 
   const TONOS = ['profesional','amigable','formal','motivador']
@@ -6094,21 +6091,22 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 }
 
 
-// ─── Cerebro Rabito: Subir documentos como base de conocimiento ───────────────
+// ─── Cerebro Rabito: panel mínimo + conocimiento por chunks + prueba trazable ─────
 function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
+  const [section, setSection] = React.useState('base')
   const [docs, setDocs] = React.useState([])
+  const [chunks, setChunks] = React.useState([])
   const [rules, setRules] = React.useState([])
-  const [section, setSection] = React.useState('perfil')
   const [msg, setMsg] = React.useState(null)
   const [uploading, setUploading] = React.useState(false)
   const [folderName, setFolderName] = React.useState('General')
   const [docCategory, setDocCategory] = React.useState('General')
   const [newRule, setNewRule] = React.useState({ title:'', content:'' })
-  const [testMsg, setTestMsg] = React.useState('Quiero invertir en renta corta en Santiago Centro')
+  const [testMsg, setTestMsg] = React.useState('Hola, quiero saber más')
   const [testReply, setTestReply] = React.useState(null)
   const [testing, setTesting] = React.useState(false)
   const fileRef = React.useRef(null)
-  const B2 = { primary:'#4F46E5', light:'#EEF2FF', mid:'#64748B', border:'#E2E8F0' }
+  const C = { primary:'#2563EB', light:'#EFF6FF', border:'#E2E8F0', text:'#0F172A', mid:'#64748B', green:'#16A34A', red:'#DC2626' }
 
   const setCfg = (key, value) => upd && upd([key], value)
   const val = (key, fallback='') => iaConfig?.[key] ?? fallback
@@ -6121,43 +6119,77 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     setRules(Array.isArray(iaConfig?.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento : [])
   }, [iaConfig?.reglasEntrenamiento])
 
-  const syncKnowledge = async (nextDocs = docs, nextRules = rules) => {
-    const driveContent = {
-      files: (nextDocs || []).map(d => ({ name:d.nombre, content:d.content, categoria:d.categoria || 'General', carpeta:d.carpeta || 'General' })),
-      synced_at: new Date().toISOString(),
-      source: 'rabito_cerebro'
+  React.useEffect(() => {
+    let mounted = true
+    async function loadChunks() {
+      if (!dbReady || !supabase) return
+      try {
+        const { data } = await supabase.from('crm_settings').select('value').eq('key','rabito_knowledge_chunks').single()
+        if (!mounted) return
+        setChunks(Array.isArray(data?.value?.chunks) ? data.value.chunks : [])
+      } catch(_) {}
     }
-    const rabitoKnowledge = {
-      items: (nextRules || []).map(r => ({ title:r.title, content:r.content, type:'regla_operativa' })),
-      synced_at: new Date().toISOString(),
-      source: 'rabito_training'
+    loadChunks()
+    return () => { mounted = false }
+  }, [dbReady, supabase])
+
+  const normalizeText = (txt='') => String(txt||'')
+    .replace(/[\x00-\x08\x0B\x0E-\x1F]/g, '')
+    .replace(/\r/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  const splitIntoChunks = (text='', meta={}) => {
+    const clean = normalizeText(text)
+    const size = 1200
+    const overlap = 160
+    const out = []
+    let index = 0
+    for (let start = 0; start < clean.length && out.length < 500; start += (size - overlap)) {
+      const content = clean.slice(start, start + size).trim()
+      if (content.length < 80) continue
+      out.push({
+        id: `${meta.docId}-${index}`,
+        docId: meta.docId,
+        docName: meta.docName,
+        carpeta: meta.carpeta || 'General',
+        categoria: meta.categoria || 'General',
+        order: index,
+        content,
+        createdAt: new Date().toISOString()
+      })
+      index++
     }
+    return out
+  }
+
+  const syncKnowledge = async (nextDocs = docs, nextRules = rules, nextChunks = chunks) => {
+    const previewFiles = (nextDocs || []).map(d => ({
+      id:d.id,
+      name:d.nombre,
+      carpeta:d.carpeta || 'General',
+      categoria:d.categoria || 'General',
+      chars:d.chars || 0,
+      chunksCount:d.chunksCount || 0,
+      content:d.content || ''
+    }))
+    const driveContent = { files: previewFiles, synced_at: new Date().toISOString(), source: 'rabito_cerebro_preview' }
+    const rabitoKnowledge = { items: (nextRules || []).map(r => ({ title:r.title, content:r.content, type:'regla_operativa' })), synced_at: new Date().toISOString(), source: 'rabito_training' }
+    const knowledgeChunks = { chunks: nextChunks || [], updated_at: new Date().toISOString(), source: 'rabito_cerebro_chunks', version: 2 }
+
     if (dbReady && supabase) {
       await supabase.from('crm_settings').upsert({ key:'drive_content', value:driveContent })
       await supabase.from('crm_settings').upsert({ key:'rabito_knowledge', value:rabitoKnowledge })
+      await supabase.from('crm_settings').upsert({ key:'rabito_knowledge_chunks', value:knowledgeChunks })
     }
     upd && upd(['cerebroDocs'], nextDocs)
     upd && upd(['reglasEntrenamiento'], nextRules)
     upd && upd(['driveConectado'], (nextDocs || []).length > 0 || (nextRules || []).length > 0)
   }
 
-  const applyRecommendedTrainingTemplate = () => {
-    setCfg('activo', true)
-    setCfg('siempreActivo', true)
-    setCfg('tiempoEspera', 4)
-    setCfg('personalidad', `Eres Rabito, asistente comercial de Rabbitts Capital. Respondes como un asesor humano de WhatsApp: natural, directo, amable y vendedor. Tu objetivo es entender al cliente, calificarlo y llevarlo a una reunión cuando exista interés real. No dices que eres IA salvo que te lo pregunten. Nunca dices que estás con alta demanda, ocupado o que responderás después. Mantienes la conversación viva con una sola pregunta útil por mensaje. No prometes rentabilidades garantizadas, no inventas precios, no inventas stock, no inventas condiciones y no hablas mal de competidores.`)
-    setCfg('productosRabito', `Rabbitts Capital ayuda a personas a invertir en propiedades en Chile, Paraguay y Florida. Trabaja con venta de departamentos para inversión, renta corta, renta tradicional, planificación de retiro inmobiliario, apoyo hipotecario, estrategia tributaria con Contabiliario y administración de propiedades con RentaDays/Rentastik. La asesoría de compra normalmente no tiene costo directo para el cliente porque Rabbitts recibe comisión de la inmobiliaria.`)
-    setCfg('guion', `Flujo comercial obligatorio:\n1. Entender qué busca: renta corta, renta tradicional, retiro inmobiliario o comprar para vivir.\n2. Calificar sin abrumar: renta líquida, si compra solo o con pareja, si tiene propiedades, comuna o país de interés y ahorro/pie aproximado.\n3. Educar brevemente: explicar que Rabbitts revisa proyecto, crédito, tributación y rentabilidad real antes de recomendar.\n4. Si el cliente entrega renta suficiente, pide reunión o muestra intención clara de avanzar, entregar el link de agenda configurado.\n5. Si falta un dato clave, pedir solo un dato por mensaje.\n6. Si pide humano, está molesto o pregunta algo legal/tributario complejo, escalar.`)
-    setCfg('pasosRabito', `Entender objetivo → Calificar capacidad → Educar con criterio → Recomendar próximo paso → Agendar o escalar.`)
-    setCfg('reglasRabito', `Reglas duras:\n- Siempre disponible 24/7.\n- Nunca responder “alta demanda”.\n- Nunca decir “te respondo en unos minutos”.\n- Nunca repetir datos ya entregados por el cliente.\n- Nunca pedir nuevamente renta, email, nombre, modelo o propiedades si ya están en la conversación.\n- Nunca inventar precios, stock, rentabilidades, subsidios ni beneficios tributarios.\n- Máximo una pregunta por mensaje.\n- Mensajes cortos, naturales y estilo WhatsApp.\n- Si el cliente dice “quiero agendar” y ya calificó, enviar el link de agenda configurado.\n- Si el cliente no califica, orientar con respeto y no forzar reunión.`)
-    setCfg('objecionesRabito', `Objeciones y respuestas:\n- “No tengo experiencia”: responder que justamente la asesoría es para orientar y evitar errores.\n- “No tengo pie”: explicar que depende del proyecto y que algunos permiten pie en cuotas, sin prometer aprobación.\n- “Se paga solo”: aclarar que ninguna renta se debe prometer como garantizada; se proyecta anual, no mensual.\n- “Quiero renta corta”: explicar que no todos los edificios sirven y que se revisa ubicación, demanda, reglas del edificio y operación.\n- “Gano poco”: preguntar si compra con pareja o complementar renta; si no califica, entregar orientación general.\n- “Quiero agendar”: si ya hay renta y objetivo, enviar link de agenda.`)
-    setSection('test')
-    setMsg({ type:'success', text:'Configuración comercial recomendada aplicada y guardándose automáticamente.' })
-  }
-
   const toBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload = e => resolve(e.target.result.split(',')[1])
+    reader.onload = e => resolve(String(e.target.result).split(',')[1])
     reader.onerror = reject
     reader.readAsDataURL(file)
   })
@@ -6174,7 +6206,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     }
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
-      reader.onload = e => resolve(e.target.result)
+      reader.onload = e => resolve(e.target.result || '')
       reader.onerror = reject
       reader.readAsText(file, 'UTF-8')
     })
@@ -6185,20 +6217,23 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     setUploading(true)
     setMsg(null)
     const newDocs = []
+    const newChunks = []
     for (const file of Array.from(files)) {
       try {
         setMsg({ type:'info', text:`Leyendo ${file.name}...` })
-        const text = await readFileText(file)
-        const clean = text.replace(/[\x00-\x08\x0B\x0E-\x1F]/g, '').trim()
-        if (clean.length < 10) { setMsg({ type:'error', text:`${file.name}: vacío o no legible` }); continue }
+        const text = normalizeText(await readFileText(file))
+        if (text.length < 10) { setMsg({ type:'error', text:`${file.name}: vacío o no legible` }); continue }
+        const docId = 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2,7)
+        const docChunks = splitIntoChunks(text, { docId, docName:file.name, carpeta:folderName || 'General', categoria:docCategory || 'General' })
+        newChunks.push(...docChunks)
         newDocs.push({
-          id:'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2,5),
+          id:docId,
           nombre:file.name,
           carpeta:folderName || 'General',
           categoria:docCategory || 'General',
-          content:clean.slice(0, 18000),
-          chars:clean.length,
-          truncado:clean.length > 18000,
+          content:text.slice(0, 3000),
+          chars:text.length,
+          chunksCount:docChunks.length,
           fecha:new Date().toISOString()
         })
       } catch(e) {
@@ -6207,19 +6242,25 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     }
     if (newDocs.length) {
       const allDocs = [...docs, ...newDocs]
+      const allChunks = [...chunks, ...newChunks]
       setDocs(allDocs)
-      try { await syncKnowledge(allDocs, rules); setMsg({ type:'success', text:`${newDocs.length} documento(s) cargado(s). Rabito ya puede usarlos.` }) }
-      catch(e) { setMsg({ type:'error', text:'Error guardando: ' + e.message }) }
+      setChunks(allChunks)
+      try {
+        await syncKnowledge(allDocs, rules, allChunks)
+        setMsg({ type:'success', text:`${newDocs.length} documento(s) indexado(s) en ${newChunks.length} fragmentos. Rabito ya puede recuperar lo relevante.` })
+      } catch(e) { setMsg({ type:'error', text:'Error guardando: ' + e.message }) }
     }
     setUploading(false)
     if (fileRef.current) fileRef.current.value = ''
   }
 
   const deleteDoc = async (docId) => {
-    const updated = docs.filter(d => d.id !== docId)
-    setDocs(updated)
-    try { await syncKnowledge(updated, rules) } catch(e) {}
-    setMsg({ type:'success', text:'Documento eliminado.' })
+    const updatedDocs = docs.filter(d => d.id !== docId)
+    const updatedChunks = chunks.filter(c => c.docId !== docId)
+    setDocs(updatedDocs)
+    setChunks(updatedChunks)
+    try { await syncKnowledge(updatedDocs, rules, updatedChunks) } catch(e) {}
+    setMsg({ type:'success', text:'Documento eliminado del cerebro.' })
   }
 
   const addRule = async () => {
@@ -6231,14 +6272,14 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     const next = [...rules, item]
     setRules(next)
     setNewRule({ title:'', content:'' })
-    try { await syncKnowledge(docs, next) } catch(e) {}
-    setMsg({ type:'success', text:'Regla permanente guardada.' })
+    try { await syncKnowledge(docs, next, chunks) } catch(e) {}
+    setMsg({ type:'success', text:'Regla permanente guardada. Rabito la usará como instrucción de comportamiento.' })
   }
 
   const deleteRule = async (id) => {
     const next = rules.filter(r => r.id !== id)
     setRules(next)
-    try { await syncKnowledge(docs, next) } catch(e) {}
+    try { await syncKnowledge(docs, next, chunks) } catch(e) {}
   }
 
   const testRabito = async () => {
@@ -6246,141 +6287,121 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     setTesting(true)
     setTestReply(null)
     try {
-      const r = await fetch('/api/agent', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message:testMsg, iaConfig, leadData:{nombre:'Cliente de prueba'}, conversationHistory:[] }) })
+      const r = await fetch('/api/agent', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ message:testMsg, iaConfig, leadData:{nombre:'Cliente de prueba'}, conversationHistory:[] })
+      })
       const data = await r.json()
       setTestReply(data)
-      setMsg({ type:data?.ok?'success':'error', text:data?.ok?'Prueba ejecutada.':'Error probando Rabito.' })
-    } catch(e) { setMsg({ type:'error', text:'Error probando Rabito: ' + e.message }) }
+      setMsg({ type:data?.ok?'success':'error', text:data?.ok?'Prueba ejecutada. Revisa la respuesta y la trazabilidad.':'Error probando Rabito.' })
+    } catch(e) { setMsg({ type:'error', text:e.message }) }
     setTesting(false)
   }
 
-  const totalChars = docs.reduce((s, d) => s + (Number(d.chars) || d.content?.length || 0), 0)
-  const folders = [...new Set(docs.map(d => d.carpeta || 'General'))]
-  const agendaConfigured = Boolean((iaConfig?.agendaLink || iaConfig?.calendlyLink || '').trim())
-  const checks = [val('personalidad','').length > 80, val('productosRabito','').length > 80, val('guion','').length > 80, val('reglasRabito','').length > 80, agendaConfigured, docs.length > 0 || rules.length > 0]
-  const score = Math.round((checks.filter(Boolean).length / checks.length) * 100)
+  const totalChars = docs.reduce((acc,d)=>acc+(Number(d.chars)||0),0)
+  const agendaConfigured = Boolean(String(iaConfig?.agendaLink || iaConfig?.calendlyLink || '').trim())
+  const baseOk = Boolean(String(iaConfig?.personalidad || '').trim()) && Boolean(String(iaConfig?.productosRabito || iaConfig?.oferta || '').trim())
+  const procesoOk = Boolean(String(iaConfig?.guion || iaConfig?.pasosRabito || '').trim())
+  const reglasOk = Boolean(String(iaConfig?.reglasRabito || '').trim()) || rules.length > 0
+  const conocimientoOk = chunks.length > 0 || docs.length > 0
+  const score = [agendaConfigured, baseOk, procesoOk, reglasOk, conocimientoOk].filter(Boolean).length
 
-  const modules = [
-    { id:'perfil', icon:'🎯', title:'Perfil comercial', sub:'Identidad, oferta y agenda' },
-    { id:'reglas', icon:'🛡️', title:'Reglas de venta', sub:'Límites y objeciones' },
-    { id:'conocimiento', icon:'📚', title:'Conocimiento', sub:'Documentos y reglas' },
-    { id:'test', icon:'🧪', title:'Probar Rabito', sub:'Simula antes de vender' },
+  const sections = [
+    { id:'base', label:'Base', sub:'Qué vende y cómo agenda' },
+    { id:'reglas', label:'Reglas', sub:'Lo que no debe fallar' },
+    { id:'cerebro', label:'Cerebro', sub:'Documentos y conocimiento' },
+    { id:'prueba', label:'Prueba', sub:'Respuesta + trazabilidad' },
   ]
 
-  const ModuleButton = ({item}) => {
-    const active = section === item.id
-    return (
-      <button onClick={() => setSection(item.id)} style={{width:'100%',textAlign:'left',border:'1px solid '+(active?B2.primary:'#E2E8F0'),background:active?'#F5F7FF':'#fff',borderRadius:14,padding:12,cursor:'pointer',display:'flex',gap:10,alignItems:'center',boxShadow:active?'0 10px 22px rgba(79,70,229,.10)':'none'}}>
-        <div style={{width:36,height:36,borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',background:active?B2.primary:'#F1F5F9',color:active?'#fff':'#475569',fontSize:17}}>{item.icon}</div>
-        <div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:900,color:active?B2.primary:'#0F172A'}}>{item.title}</div><div style={{fontSize:11,color:B2.mid}}>{item.sub}</div></div>
-      </button>
-    )
-  }
-
-  const TextAreaBlock = ({label, hint, configKey, minHeight=150}) => (
-    <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
-      <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:4}}>{label}</div>
-      <div style={{fontSize:12,color:B2.mid,marginBottom:10,lineHeight:1.45}}>{hint}</div>
-      <textarea value={val(configKey, '')} onChange={e=>setCfg(configKey, e.target.value)} style={{...sty.inp,minHeight,resize:'vertical',fontSize:12,lineHeight:1.5,fontFamily:'monospace',background:'#FBFDFF'}} />
-    </div>
-  )
-
-  const Health = ({ok, text}) => (
-    <div style={{display:'flex',alignItems:'center',gap:7,padding:'8px 10px',borderRadius:999,border:'1px solid '+(ok?'#BBF7D0':'#FED7AA'),background:ok?'#F0FDF4':'#FFF7ED',color:ok?'#166534':'#9A3412',fontSize:11,fontWeight:800}}><span>●</span>{text}</div>
-  )
+  const Box = ({children, style={}}) => <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:16,padding:16,boxShadow:'0 8px 22px rgba(15,23,42,.04)',...style}}>{children}</div>
+  const Label = ({children}) => <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:6}}>{children}</div>
+  const Hint = ({children}) => <div style={{fontSize:12,color:C.mid,lineHeight:1.45,marginBottom:10}}>{children}</div>
+  const TextArea = ({label,hint,keyName,minHeight=130,placeholder=''}) => <Box><Label>{label}</Label><Hint>{hint}</Hint><textarea value={val(keyName,'')} onChange={e=>setCfg(keyName,e.target.value)} placeholder={placeholder} style={{...sty.inp,minHeight,resize:'vertical',lineHeight:1.45}} /></Box>
+  const Check = ({ok,text}) => <span style={{fontSize:11,fontWeight:900,borderRadius:999,padding:'6px 9px',border:'1px solid '+(ok?'#BBF7D0':'#FED7AA'),background:ok?'#F0FDF4':'#FFF7ED',color:ok?'#166534':'#9A3412'}}>{ok?'✓':'!'} {text}</span>
 
   return (
-    <div style={{display:'grid',gridTemplateColumns:'minmax(220px,280px) 1fr',gap:16}}>
-      <div style={{display:'flex',flexDirection:'column',gap:12}}>
-        <div style={{background:'linear-gradient(180deg,#FFFFFF 0%,#F5F7FF 100%)',border:'1px solid '+B2.border,borderRadius:18,padding:16,boxShadow:'0 8px 24px rgba(15,23,42,.05)'}}>
-          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
-            <div style={{width:42,height:42,borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',background:B2.primary,color:'#fff',fontSize:21}}>🤖</div>
-            <div><div style={{fontWeight:900,fontSize:15,color:'#0F172A'}}>Entrenamiento Rabito</div><div style={{fontSize:11,color:B2.mid}}>Menos botones. Más ventas.</div></div>
+    <div style={{display:'grid',gridTemplateColumns:'260px 1fr',gap:16,alignItems:'start'}}>
+      <div style={{position:'sticky',top:10,display:'flex',flexDirection:'column',gap:12}}>
+        <Box style={{background:'linear-gradient(180deg,#FFFFFF 0%,#F8FAFC 100%)'}}>
+          <div style={{fontSize:18,fontWeight:950,color:C.text,letterSpacing:'-.02em'}}>Cerebro comercial</div>
+          <div style={{fontSize:12,color:C.mid,marginTop:4,lineHeight:1.4}}>Lo mínimo que realmente mueve ventas: oferta, reglas, conocimiento y prueba.</div>
+          <div style={{marginTop:14,display:'flex',alignItems:'center',gap:10}}>
+            <div style={{fontSize:28,fontWeight:950,color:score>=4?C.green:score>=3?'#D97706':C.red}}>{score}/5</div>
+            <div style={{fontSize:11,color:C.mid,lineHeight:1.35}}>nivel de entrenamiento útil</div>
           </div>
-          <div style={{height:8,background:'#E2E8F0',borderRadius:999,overflow:'hidden',marginBottom:8}}><div style={{height:'100%',width:score+'%',background:score>=80?'#22C55E':score>=55?B2.primary:'#F59E0B',borderRadius:999}}/></div>
-          <div style={{fontSize:12,color:B2.mid,marginBottom:12}}><strong style={{color:'#0F172A'}}>{score}% listo.</strong> Mientras más completo esté, menos improvisa Rabito.</div>
-          <button onClick={applyRecommendedTrainingTemplate} style={{width:'100%',padding:'10px 12px',borderRadius:12,border:'none',background:B2.primary,color:'#fff',fontSize:12,fontWeight:900,cursor:'pointer',boxShadow:'0 10px 22px rgba(79,70,229,.18)'}}>Restaurar estrategia recomendada</button>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:12}}>
+            <Check ok={agendaConfigured} text='Agenda' />
+            <Check ok={baseOk} text='Oferta' />
+            <Check ok={procesoOk} text='Proceso' />
+            <Check ok={reglasOk} text='Reglas' />
+            <Check ok={conocimientoOk} text='Docs' />
+          </div>
+        </Box>
+
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {sections.map(s => <button key={s.id} onClick={()=>setSection(s.id)} style={{textAlign:'left',padding:'12px 14px',borderRadius:14,border:section===s.id?'1.5px solid '+C.primary:'1px solid #E2E8F0',background:section===s.id?'#EFF6FF':'#fff',cursor:'pointer',boxShadow:section===s.id?'0 8px 18px rgba(37,99,235,.10)':'none'}}><div style={{fontSize:13,fontWeight:950,color:section===s.id?C.primary:C.text}}>{s.label}</div><div style={{fontSize:11,color:C.mid,marginTop:2}}>{s.sub}</div></button>)}
         </div>
-        {modules.map(m => <ModuleButton key={m.id} item={m}/>) }
-        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14,display:'flex',flexDirection:'column',gap:8}}>
-          <div style={{fontSize:12,fontWeight:900,color:'#0F172A'}}>Estado real</div>
-          <Health ok={!!iaConfig?.activo} text={iaConfig?.activo?'IA encendida':'IA apagada'} />
-          <Health ok={!!iaConfig?.siempreActivo} text={iaConfig?.siempreActivo?'24/7 activo':'Con horario'} />
-          <Health ok={agendaConfigured} text={agendaConfigured?'Agenda configurada':'Falta link de agenda'} />
-          <Health ok={!!(docs.length || rules.length)} text={(docs.length || rules.length)?'Conocimiento cargado':'Sin conocimiento extra'} />
-        </div>
+
+        <button onClick={()=>{setCfg('activo',true);setCfg('siempreActivo',true);setMsg({type:'success',text:'Rabito quedó activo y disponible 24/7. Recuerda completar base, reglas y cerebro.'})}} style={{border:'none',background:C.primary,color:'#fff',borderRadius:14,padding:'12px 14px',fontSize:12,fontWeight:950,cursor:'pointer'}}>Activar agente</button>
       </div>
 
-      <div style={{display:'flex',flexDirection:'column',gap:14,minWidth:0}}>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:24,fontWeight:900,color:B2.primary}}>{docs.length}</div><div style={{fontSize:11,color:B2.mid,fontWeight:700}}>Documentos</div></div>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:24,fontWeight:900,color:B2.primary}}>{folders.length}</div><div style={{fontSize:11,color:B2.mid,fontWeight:700}}>Carpetas</div></div>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:24,fontWeight:900,color:B2.primary}}>{rules.length}</div><div style={{fontSize:11,color:B2.mid,fontWeight:700}}>Reglas</div></div>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:24,fontWeight:900,color:B2.primary}}>{(totalChars/1000).toFixed(1)}k</div><div style={{fontSize:11,color:B2.mid,fontWeight:700}}>Caracteres</div></div>
-        </div>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        {msg && <div style={{padding:'10px 12px',borderRadius:12,fontSize:12,fontWeight:800,border:'1px solid '+(msg.type==='error'?'#FCA5A5':msg.type==='success'?'#BBF7D0':'#BFDBFE'),background:msg.type==='error'?'#FEF2F2':msg.type==='success'?'#F0FDF4':'#EFF6FF',color:msg.type==='error'?'#991B1B':msg.type==='success'?'#166534':'#1D4ED8'}}>{msg.text}</div>}
 
-        {msg && <div style={{padding:'11px 14px',borderRadius:12,fontSize:13,fontWeight:800,background:msg.type==='error'?'#FEF2F2':msg.type==='info'?'#EEF2FF':'#DCFCE7',color:msg.type==='error'?'#991b1b':msg.type==='info'?'#1B4FC8':'#14532d'}}>{msg.text}</div>}
+        {section==='base' && <>
+          <Box><Label>Link de agenda</Label><Hint>El agente lo entrega cuando el cliente pide reunión, asesor o siguiente paso.</Hint><input value={iaConfig?.agendaLink || iaConfig?.calendlyLink || ''} onChange={e=>setCfg('agendaLink', e.target.value)} placeholder='https://tu-link-de-agenda.com/...' style={sty.inp}/></Box>
+          <TextArea keyName='personalidad' label='Personalidad' hint='Cómo habla: tono, longitud, estilo y límites humanos.' minHeight={150} placeholder='Ej: Habla directo, natural, por WhatsApp, sin sonar robótico.'/>
+          <TextArea keyName='productosRabito' label='Qué vende' hint='Oferta, producto/servicio, público objetivo, condiciones y promesas prohibidas.' minHeight={170} placeholder='Describe exactamente qué debe vender el agente.'/>
+          <TextArea keyName='guion' label='Cómo vende' hint='Proceso paso a paso: entender, calificar, educar, agendar o derivar.' minHeight={170} placeholder='Define el flujo comercial que debe seguir.'/>
+        </>}
 
-        {section==='perfil' && <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
-            <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:4}}>Link de agenda que enviará Rabito</div>
-            <div style={{fontSize:12,color:B2.mid,marginBottom:10}}>No está amarrado a ningún proveedor. Puedes usar tu agenda del CRM, Calendly, Google Calendar, TidyCal u otro.</div>
-            <input value={iaConfig?.agendaLink || iaConfig?.calendlyLink || ''} onChange={e=>setCfg('agendaLink', e.target.value)} placeholder="https://tu-link-de-agenda.com/..." style={sty.inp}/>
-          </div>
-          <TextAreaBlock label="Personalidad" hint="Define cómo habla Rabito. Esto sí afecta al agente porque se guarda en la configuración principal." configKey="personalidad" />
-          <TextAreaBlock label="Oferta comercial" hint="Qué vende Rabbitts, en qué países, qué servicios incluye y qué no debe prometer." configKey="productosRabito" />
-          <TextAreaBlock label="Proceso de venta" hint="El camino que debe seguir: entender, calificar, educar y agendar." configKey="guion" />
-        </div>}
+        {section==='reglas' && <>
+          <TextArea keyName='reglasRabito' label='Reglas duras' hint='Mandatos que deben cumplirse siempre. Aquí van anti-loop, no inventar, no repetir, cuándo escalar.' minHeight={180}/>
+          <TextArea keyName='objecionesRabito' label='Objeciones clave' hint='Respuestas guía para precio, presupuesto, confianza, tiempos, dudas y reclamos.' minHeight={160}/>
+          <Box>
+            <Label>Regla permanente nueva</Label><Hint>Úsala cuando detectes un error repetido. Esto sí entrena comportamiento.</Hint>
+            <Fld label='Título'><input value={newRule.title} onChange={e=>setNewRule({...newRule,title:e.target.value})} style={sty.inp} placeholder='Ej: No repetir datos ya entregados'/></Fld>
+            <div style={{height:8}} />
+            <Fld label='Regla'><textarea value={newRule.content} onChange={e=>setNewRule({...newRule,content:e.target.value})} style={{...sty.inp,minHeight:80,resize:'vertical'}} placeholder='Ej: Si el cliente ya entregó un dato, no volver a pedirlo.'/></Fld>
+            <button onClick={addRule} style={{marginTop:10,padding:'10px 14px',borderRadius:12,border:'none',background:C.primary,color:'#fff',fontSize:12,fontWeight:900,cursor:'pointer'}}>Guardar regla</button>
+            {rules.length>0 && <div style={{marginTop:12,borderTop:'1px solid #EEF2FF',paddingTop:8}}>{rules.map(r=><div key={r.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px 0',borderBottom:'1px solid #F1F5F9'}}><div style={{flex:1}}><div style={{fontSize:12,fontWeight:900,color:C.text}}>{r.title}</div><div style={{fontSize:12,color:C.mid,whiteSpace:'pre-wrap',marginTop:3}}>{r.content}</div></div><button onClick={()=>deleteRule(r.id)} style={{border:'1px solid #FCA5A5',background:'#FEF2F2',color:'#991B1B',borderRadius:8,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'}}>Eliminar</button></div>)}</div>}
+          </Box>
+        </>}
 
-        {section==='reglas' && <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
-          <TextAreaBlock label="Reglas duras" hint="Aquí van las instrucciones que Rabito no puede romper. Esto pesa más que el feedback suelto." configKey="reglasRabito" />
-          <TextAreaBlock label="Objeciones y respuestas" hint="Entrena cómo responder precio, pie, renta corta, IVA, DFL2, miedo al crédito y clientes que no califican." configKey="objecionesRabito" />
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
-            <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:4}}>Nueva regla permanente</div>
-            <div style={{fontSize:12,color:B2.mid,marginBottom:10}}>Úsalo cuando corrijas una mala respuesta. Ejemplo: “Si el cliente ya entregó renta, no volver a pedirla”.</div>
-            <Fld label="Título"><input value={newRule.title} onChange={e=>setNewRule({...newRule,title:e.target.value})} style={sty.inp} placeholder="Ej: No repetir datos ya entregados"/></Fld>
-            <div style={{height:8}}/>
-            <Fld label="Regla"><textarea value={newRule.content} onChange={e=>setNewRule({...newRule,content:e.target.value})} style={{...sty.inp,minHeight:90,resize:'vertical'}} placeholder="Describe exactamente cómo debe actuar Rabito..."/></Fld>
-            <button onClick={addRule} style={{marginTop:10,padding:'10px 14px',borderRadius:12,border:'none',background:B2.primary,color:'#fff',fontSize:12,fontWeight:900,cursor:'pointer'}}>Guardar regla</button>
-            {rules.length > 0 && <div style={{marginTop:14,borderTop:'1px solid #EEF2FF',paddingTop:12}}>{rules.map(r => <div key={r.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px 0',borderBottom:'1px solid #F1F5F9'}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:12,fontWeight:900,color:'#0F172A'}}>{r.title}</div><div style={{fontSize:12,color:B2.mid,marginTop:3,whiteSpace:'pre-wrap'}}>{r.content}</div></div><button onClick={() => deleteRule(r.id)} style={{border:'1px solid #FCA5A5',background:'#FEF2F2',color:'#991B1B',borderRadius:8,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'}}>Eliminar</button></div>)}</div>}
-          </div>
-        </div>}
-
-        {section==='conocimiento' && <div style={{display:'flex',flexDirection:'column',gap:14}}>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
-            <div style={{fontWeight:900,fontSize:14,color:'#0F172A',marginBottom:4}}>Base de conocimiento</div>
-            <div style={{fontSize:12,color:B2.mid,marginBottom:12}}>Sube material real: proyectos, preguntas frecuentes, guiones, tributario, renta corta y políticas comerciales.</div>
+        {section==='cerebro' && <>
+          <Box>
+            <Label>Subir conocimiento</Label><Hint>Ahora los documentos se guardan por fragmentos. Rabito no lee todo mezclado: recupera solo lo relevante para cada pregunta.</Hint>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-              <Fld label="Carpeta"><input value={folderName} onChange={e=>setFolderName(e.target.value)} style={sty.inp} placeholder="Ej: Chile, Paraguay, Florida"/></Fld>
-              <Fld label="Categoría"><select value={docCategory} onChange={e=>setDocCategory(e.target.value)} style={sty.inp}><option>General</option><option>Proyectos</option><option>Precios</option><option>Tributario</option><option>Crédito</option><option>Renta corta</option><option>Objeciones</option><option>Guiones</option></select></Fld>
+              <Fld label='Carpeta'><input value={folderName} onChange={e=>setFolderName(e.target.value)} style={sty.inp} placeholder='Ej: Producto A, Chile, Soporte'/></Fld>
+              <Fld label='Categoría'><select value={docCategory} onChange={e=>setDocCategory(e.target.value)} style={sty.inp}><option>General</option><option>Oferta</option><option>Precios</option><option>Proceso</option><option>FAQ</option><option>Objeciones</option><option>Legal</option><option>Soporte</option></select></Fld>
             </div>
-            <div onClick={() => fileRef.current && fileRef.current.click()} onDragOver={e => { e.preventDefault(); e.currentTarget.style.background='#EEF2FF' }} onDragLeave={e => { e.currentTarget.style.background='#F8FAFC' }} onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files); e.currentTarget.style.background='#F8FAFC' }} style={{border:'2px dashed '+B2.border,borderRadius:14,padding:'30px',textAlign:'center',cursor:'pointer',background:'#F8FAFC'}}>
-              <div style={{fontSize:28,marginBottom:8}}>📂</div><div style={{fontWeight:900,fontSize:14,color:B2.primary}}>{uploading?'Procesando...':'Subir documentos para entrenar'}</div><div style={{fontSize:12,color:B2.mid,marginTop:4}}>PDF, DOCX, TXT, MD, CSV, HTML</div>
-              <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.html" style={{display:'none'}} onChange={e => uploadFiles(e.target.files)}/>
+            <div onClick={() => fileRef.current && fileRef.current.click()} onDragOver={e=>{e.preventDefault();e.currentTarget.style.background='#EFF6FF'}} onDragLeave={e=>{e.currentTarget.style.background='#F8FAFC'}} onDrop={e=>{e.preventDefault();uploadFiles(e.dataTransfer.files);e.currentTarget.style.background='#F8FAFC'}} style={{border:'2px dashed '+C.border,borderRadius:16,padding:'28px',textAlign:'center',cursor:'pointer',background:'#F8FAFC'}}>
+              <div style={{fontSize:26,marginBottom:6}}>📂</div><div style={{fontWeight:950,fontSize:14,color:C.primary}}>{uploading?'Procesando...':'Subir o arrastrar documentos'}</div><div style={{fontSize:12,color:C.mid,marginTop:4}}>PDF, DOCX, TXT, MD, CSV, HTML</div>
+              <input ref={fileRef} type='file' multiple accept='.pdf,.docx,.doc,.txt,.md,.csv,.html' style={{display:'none'}} onChange={e=>uploadFiles(e.target.files)}/>
             </div>
-          </div>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
-            <div style={{fontWeight:900,fontSize:13,color:'#0F172A',marginBottom:12}}>Documentos cargados</div>
-            {docs.length === 0 && <div style={{textAlign:'center',color:B2.mid,fontSize:13,padding:24}}>Sin documentos aún. Rabito puede vender, pero improvisará más.</div>}
-            {docs.map(doc => <div key={doc.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,border:'1px solid #EEF2FF',marginBottom:7,background:'#FBFDFF'}}><span style={{fontSize:20}}>{doc.nombre?.endsWith('.pdf')?'📕':doc.nombre?.endsWith('.docx')||doc.nombre?.endsWith('.doc')?'📘':'📄'}</span><div style={{flex:1,minWidth:0}}><div style={{fontWeight:800,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{doc.nombre}</div><div style={{fontSize:11,color:B2.mid}}>{doc.carpeta||'General'} · {doc.categoria||'General'} · {((Number(doc.chars)||doc.content?.length||0)/1000).toFixed(1)}k caracteres{doc.truncado && <span style={{color:'#F59E0B',fontWeight:800}}> · truncado</span>}</div></div><button onClick={() => deleteDoc(doc.id)} style={{padding:'5px 10px',borderRadius:8,border:'1px solid #FCA5A5',background:'#FEF2F2',color:'#991B1B',cursor:'pointer',fontSize:11,fontWeight:800}}>Eliminar</button></div>)}
-          </div>
-        </div>}
+          </Box>
+          <Box>
+            <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',marginBottom:12,flexWrap:'wrap'}}><Label>Conocimiento indexado</Label><div style={{fontSize:11,color:C.mid}}>{docs.length} doc(s) · {chunks.length} fragmentos · {(totalChars/1000).toFixed(1)}k caracteres</div></div>
+            {docs.length===0 && <div style={{textAlign:'center',color:C.mid,fontSize:13,padding:24}}>Sin documentos. El agente responderá solo con el panel y feedback.</div>}
+            {docs.map(doc=><div key={doc.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:12,border:'1px solid #EEF2FF',marginBottom:8,background:'#FBFDFF'}}><span style={{fontSize:20}}>📄</span><div style={{flex:1,minWidth:0}}><div style={{fontWeight:900,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{doc.nombre}</div><div style={{fontSize:11,color:C.mid}}>{doc.carpeta||'General'} · {doc.categoria||'General'} · {doc.chunksCount||0} fragmentos · {((Number(doc.chars)||0)/1000).toFixed(1)}k caracteres</div></div><button onClick={()=>deleteDoc(doc.id)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #FCA5A5',background:'#FEF2F2',color:'#991B1B',cursor:'pointer',fontSize:11,fontWeight:900}}>Eliminar</button></div>)}
+          </Box>
+        </>}
 
-        {section==='test' && <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
-            <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:4}}>Prueba rápida de Rabito</div>
-            <div style={{fontSize:12,color:B2.mid,marginBottom:10}}>Antes de conectar campañas, prueba si responde natural, si no repite datos y si lleva a reunión cuando corresponde.</div>
-            <textarea value={testMsg} onChange={e=>setTestMsg(e.target.value)} style={{...sty.inp,minHeight:90,resize:'vertical'}} placeholder="Escribe como si fueras un cliente..." />
-            <button onClick={testRabito} disabled={testing} style={{marginTop:10,padding:'10px 14px',borderRadius:12,border:'none',background:B2.primary,color:'#fff',fontSize:12,fontWeight:900,cursor:'pointer',opacity:testing?0.6:1}}>{testing?'Probando...':'Probar respuesta'}</button>
-          </div>
-          {testReply && <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}><div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',marginBottom:10}}><div style={{fontSize:14,fontWeight:900,color:'#0F172A'}}>Respuesta generada</div><div style={{fontSize:11,fontWeight:900,color:testReply?.action==='calificado'?'#166534':'#475569',background:testReply?.action==='calificado'?'#DCFCE7':'#F1F5F9',borderRadius:999,padding:'6px 10px'}}>Acción: {testReply?.action || '—'}</div></div><div style={{fontSize:13,lineHeight:1.55,color:'#0F172A',whiteSpace:'pre-wrap',background:'#F8FAFC',border:'1px solid #EEF2FF',borderRadius:12,padding:14}}>{testReply?.reply || testReply?.error || 'Sin respuesta'}</div></div>}
-          <div style={{background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}><div style={{fontSize:13,fontWeight:900,color:'#0F172A',marginBottom:8}}>Criterio para aprobar la respuesta</div><div style={{fontSize:12,color:B2.mid,lineHeight:1.7}}>Debe sonar humana, ser breve, no pedir datos repetidos, no prometer rentabilidad, hacer una sola pregunta y avanzar a reunión cuando el cliente ya entregó renta, objetivo y correo.</div></div>
-        </div>}
+        {section==='prueba' && <>
+          <Box><Label>Simulador de venta</Label><Hint>Prueba al agente y revisa qué partes del cerebro usó. Si no usa documentos, hay que mejorar el conocimiento o subir contenido más específico.</Hint><textarea value={testMsg} onChange={e=>setTestMsg(e.target.value)} style={{...sty.inp,minHeight:90,resize:'vertical'}} placeholder='Escribe como cliente...' /><button onClick={testRabito} disabled={testing} style={{marginTop:10,padding:'10px 14px',borderRadius:12,border:'none',background:C.primary,color:'#fff',fontSize:12,fontWeight:950,cursor:'pointer',opacity:testing?0.6:1}}>{testing?'Probando...':'Probar Rabito'}</button></Box>
+          {testReply && <Box><div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',marginBottom:10}}><Label>Respuesta</Label><span style={{fontSize:11,fontWeight:900,color:testReply.action==='calificado'?'#166534':'#475569',background:testReply.action==='calificado'?'#DCFCE7':'#F1F5F9',borderRadius:999,padding:'6px 10px'}}>Acción: {testReply.action || '—'}</span></div><div style={{fontSize:13,lineHeight:1.55,color:C.text,whiteSpace:'pre-wrap',background:'#F8FAFC',border:'1px solid #EEF2FF',borderRadius:12,padding:14}}>{testReply.reply || testReply.error || 'Sin respuesta'}</div>{testReply.trace && <div style={{marginTop:14,display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10}}><Trace title='Panel cargado' value={testReply.trace.panelLoaded?'Sí':'No'} ok={testReply.trace.panelLoaded}/><Trace title='Agenda' value={testReply.trace.agendaConfigured?'Configurada':'Falta'} ok={testReply.trace.agendaConfigured}/><Trace title='Fragmentos disponibles' value={testReply.trace.chunksAvailable||0} ok={(testReply.trace.chunksAvailable||0)>0}/><Trace title='Memoria' value={testReply.trace.memoryLoaded?'Sí':'No'} ok={true}/></div>}{testReply.trace?.chunksUsed?.length>0 && <div style={{marginTop:14}}><div style={{fontSize:12,fontWeight:950,color:C.text,marginBottom:6}}>Documentos usados</div>{testReply.trace.chunksUsed.map((c,i)=><div key={i} style={{fontSize:12,color:C.mid,padding:'7px 9px',border:'1px solid #EEF2FF',borderRadius:8,marginBottom:6,background:'#FBFDFF'}}>{c.docName} · score {c.score}</div>)}</div>}{testReply.learningSuggestion && <div style={{marginTop:12,padding:10,borderRadius:10,background:'#FFFBEB',border:'1px solid #FDE68A',fontSize:12,color:'#92400E'}}><b>Sugerencia de entrenamiento:</b> {testReply.learningSuggestion}</div>}</Box>}
+        </>}
       </div>
     </div>
   )
 }
 
+function Trace({title,value,ok}) {
+  return <div style={{border:'1px solid '+(ok?'#BBF7D0':'#FED7AA'),background:ok?'#F0FDF4':'#FFF7ED',borderRadius:12,padding:10}}><div style={{fontSize:11,color:'#64748B',fontWeight:800}}>{title}</div><div style={{fontSize:14,fontWeight:950,color:ok?'#166534':'#9A3412',marginTop:2}}>{value}</div></div>
+}
+
+
+// ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
 // ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
 function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agendaSettings={}, setAgendaSettings}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
