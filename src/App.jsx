@@ -849,7 +849,7 @@ export default function App() {
       try {
         const { data: convs } = await supabase.from('crm_conversations')
           .select('*').order('updated_at',{ascending:false}).limit(200)
-        if (convs) setConversations(convs)
+        if (convs) setConversations(mergeConversationsByPhone(convs))
       } catch(_) {}
       // Load commissions
       try {
@@ -1036,20 +1036,65 @@ export default function App() {
   }
 
   async function saveConvMessage(convId, message) {
-    if (!dbReady) return
-    try {
-      await supabase.from('crm_conv_messages').insert({conv_id:convId, ...message})
-      setConvMessages(prev => ({...prev, [convId]: [...(prev[convId]||[]), message]}))
-    } catch(e) { console.warn('Message save failed:', e) }
+    if (!dbReady || !convId || !message?.content) return false
+    const cleanMessage = {
+      role: message.role === 'assistant' ? 'assistant' : 'user',
+      content: String(message.content || ''),
+      created_at: message.created_at || new Date().toISOString()
+    }
+
+    const attempts = [
+      { conv_id: convId, ...message, ...cleanMessage },
+      { conv_id: convId, ...cleanMessage }
+    ]
+
+    for (const payload of attempts) {
+      try {
+        const { error } = await supabase.from('crm_conv_messages').insert(payload)
+        if (!error) {
+          setConvMessages(prev => ({...prev, [convId]: [...(prev[convId]||[]), cleanMessage]}))
+          return true
+        }
+        console.warn('Message save attempt failed:', error.message)
+      } catch(e) { console.warn('Message save exception:', e.message) }
+    }
+    return false
   }
 
   async function loadConvMessages(convId) {
     if (!dbReady) return
     try {
-      const { data } = await supabase.from('crm_conv_messages')
-        .select('*').eq('conv_id',convId).order('created_at',{ascending:true})
+      const conv = conversations.find(c => c.id === convId) || activeConv
+      const ids = Array.from(new Set([convId, ...((conv && conv._mergedIds) || [])].filter(Boolean)))
+      const query = supabase.from('crm_conv_messages').select('*').order('created_at',{ascending:true})
+      const { data } = ids.length > 1 ? await query.in('conv_id', ids) : await query.eq('conv_id', convId)
       if (data) setConvMessages(prev => ({...prev, [convId]: data}))
     } catch(e) { console.warn('loadConvMessages error:', e) }
+  }
+
+  async function deleteConversation(conv) {
+    if (!conv || !dbReady) return
+    const ids = Array.from(new Set([conv.id, ...((conv && conv._mergedIds) || [])].filter(Boolean)))
+    const label = conv.nombre || conv.telefono || 'esta conversación'
+    const ok = window.confirm('¿Borrar ' + label + ' del panel?\n\nSe eliminarán la conversación y sus mensajes del CRM. No se borra el contacto de WhatsApp ni el lead asociado.')
+    if (!ok) return
+
+    try {
+      await supabase.from('crm_conv_messages').delete().in('conv_id', ids)
+      await supabase.from('crm_conversations').delete().in('id', ids)
+
+      setConvMessages(prev => {
+        const next = {...prev}
+        ids.forEach(id => delete next[id])
+        return next
+      })
+      setConversations(prev => prev.filter(c => !ids.includes(c.id)))
+      if (activeConv && ids.includes(activeConv.id)) setActiveConv(null)
+      msg('Conversación borrada del panel')
+    } catch(e) {
+      console.warn('deleteConversation error:', e)
+      msg('No se pudo borrar la conversación')
+    }
   }
 
   async function saveCommission(key, data) {
@@ -3286,6 +3331,7 @@ export default function App() {
             dbReady={dbReady}
             me={me}
             setConversations={setConversations}
+            deleteConversation={deleteConversation}
             setIaConfig={setIaConfig}
           />
         )}
@@ -5443,7 +5489,7 @@ function RabitoChat({iaConfig}) {
 }
 
 // ─── Conversaciones View ─────────────────────────────────────────────────────
-function ConversacionesView({conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, setIaConfig, users, leads, setLeads, supabase, dbReady, me, setConversations}) {
+function ConversacionesView({conversations, convMessages, activeConv, setActiveConv, loadConvMessages, upsertConversation, saveConvMessage, iaConfig, setIaConfig, users, leads, setLeads, supabase, dbReady, me, setConversations, deleteConversation}) {
   const [winWidth, setWinWidth] = React.useState(typeof window !== 'undefined' ? window.innerWidth : 1200)
   React.useEffect(() => {
     const handle = () => setWinWidth(window.innerWidth)
@@ -5503,6 +5549,32 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   const messagesEndRef = useRef(null)
   const agents = (users||[]).filter(u=>u.role==='agent')
 
+  // Une conversaciones duplicadas por el mismo teléfono.
+  // Evolution puede enviar eventos paralelos del mismo número; sin esto el CRM muestra 2 filas
+  // y al abrir una de ellas puede parecer "sin mensajes".
+  const phoneKey = (value='') => String(value || '').replace(/[^0-9]/g, '')
+  const mergeConversationsByPhone = (items=[]) => {
+    const groups = new Map()
+    for (const c of items || []) {
+      const key = phoneKey(c.telefono) || String(c.id || '')
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(c)
+    }
+    return Array.from(groups.values()).map(group => {
+      const sorted = [...group].sort((a,b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
+      const withRealLast = sorted.find(c => c.last_message && c.last_message !== '[mensaje]' && c.last_message !== '[mensaje multimedia]')
+      const base = withRealLast || sorted[0]
+      const mergedIds = sorted.map(c => c.id).filter(Boolean)
+      return {
+        ...base,
+        _mergedIds: mergedIds,
+        _duplicateCount: mergedIds.length,
+        nombre: base.nombre || sorted.find(c => c.nombre)?.nombre || base.telefono,
+        last_message: base.last_message || sorted.find(c => c.last_message)?.last_message || ''
+      }
+    }).sort((a,b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
+  }
+
   // Load messages when conversation selected
   useEffect(() => {
     if (activeConv) loadConvMessages(activeConv.id)
@@ -5526,7 +5598,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
           .select('*')
           .order('updated_at', {ascending: false})
           .limit(200)
-        if (convs) setConversations(convs)
+        if (convs) setConversations(mergeConversationsByPhone(convs))
         // Si hay conversación activa, recargar sus mensajes también
         if (activeConv) loadConvMessages(activeConv.id)
       } catch(_) {}
@@ -5850,7 +5922,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                   <div key={conv.id} onClick={()=>setActiveConv(conv)}
                     style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:isActive?B.light:'#fff',transition:'background .15s'}}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:3}}>
-                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{conv.nombre||conv.telefono}</div>
+                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{conv.nombre||conv.telefono}{conv._duplicateCount>1 ? ` · ${conv._duplicateCount} registros unidos` : ''}</div>
                       <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
                         <span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:conv.mode==='ia'?'#E8EFFE':'#FEF9C3',color:conv.mode==='ia'?B.primary:'#713f12',fontWeight:700}}>
                           {conv.mode==='ia'?'🤖':'👤'}
@@ -5898,7 +5970,13 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                     <option value="calificado">Calificado</option>
                     <option value="no_interesado">No interesado</option>
                     <option value="frio">Frío</option>
+                    <option value="requiere_revision">Requiere revisión</option>
                   </select>
+                  <button onClick={()=>deleteConversation?.(activeConv)}
+                    title="Borrar esta conversación del panel"
+                    style={{fontSize:11,padding:'5px 10px',borderRadius:8,border:'1px solid #fecaca',background:'#fff5f5',color:'#991b1b',cursor:'pointer',fontWeight:700}}>
+                    🗑 Borrar
+                  </button>
                 </div>
               </div>
 
