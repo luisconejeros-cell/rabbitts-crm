@@ -268,7 +268,7 @@ function AgendaPublicaView({settings={}}) {
 
   const selDateFmt = selDate ? new Date(selDate+'T12:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) : ''
 
-  // Styles — Vambe typography
+  // Styles — UI typography
   const page = {
     fontFamily:"'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
     minHeight:'100vh',background:'#fff',
@@ -4809,12 +4809,12 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
   })
 
   const TABS = [
-    {id:'config',    label:'⚙️ Configuración'},
-    {id:'cerebro',   label:'🧠 Cerebro Rabito'},
-    {id:'eventos',   label:'🔔 Eventos'},
-    {id:'plantillas',label:'💬 Plantillas'},
-    {id:'entrena',   label:'✏️ Entrenamiento'},
-    {id:'monitor',   label:'📊 Monitor'},
+    {id:'config',    icon:'⚙️', title:'Configuración', desc:'Identidad, WhatsApp y agenda'},
+    {id:'cerebro',   icon:'🧠', title:'Entrenar Rabito', desc:'Personalidad, productos y reglas'},
+    {id:'eventos',   icon:'🔔', title:'Automatizaciones', desc:'Alertas y disparadores'},
+    {id:'plantillas',icon:'💬', title:'Mensajes', desc:'Plantillas editables'},
+    {id:'entrena',   icon:'✏️', title:'Preguntas frecuentes', desc:'Respuestas guardadas'},
+    {id:'monitor',   icon:'📊', title:'Monitor', desc:'Pruebas y control'},
   ]
 
   const TONOS = ['profesional','amigable','formal','motivador']
@@ -4829,33 +4829,40 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
   return (
     <div>
       {/* Header */}
-      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
-        <div style={{fontSize:32}}>🤖</div>
-        <div style={{flex:1}}>
-          <div style={{fontSize:isMobile?15:16,fontWeight:800,color:B.primary}}>Centro de IA — Configuración y Entrenamiento</div>
-          <div style={{fontSize:12,color:B.mid}}>Todo se guarda automáticamente · Personaliza cómo Rabito se comunica</div>
+      <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:16,padding:'16px',border:'1px solid #E2E8F0',borderRadius:18,background:'linear-gradient(135deg,#FFFFFF 0%,#F8FAFF 70%,#EEF2FF 100%)',boxShadow:'0 10px 30px rgba(15,23,42,.05)',flexWrap:'wrap'}}>
+        <div style={{width:48,height:48,borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',background:B.primary,color:'#fff',fontSize:25,boxShadow:'0 12px 28px rgba(79,70,229,.25)'}}>🤖</div>
+        <div style={{flex:1,minWidth:220}}>
+          <div style={{fontSize:isMobile?16:18,fontWeight:900,color:'#0F172A',letterSpacing:'-0.02em'}}>Centro de IA Rabito</div>
+          <div style={{fontSize:12,color:'#64748B',marginTop:3}}>Entrena, conecta y controla a Rabito desde un solo panel. Todo se guarda automáticamente.</div>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
-          <span style={{fontSize:11,color:'#9ca3af'}}>💾 Guardado automático</span>
-          <span style={{fontSize:12,color:B.mid}}>IA activa:</span>
+        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',justifyContent:'flex-end'}}>
+          <span style={{fontSize:11,fontWeight:800,color:'#334155',background:'#fff',border:'1px solid #E2E8F0',borderRadius:99,padding:'7px 10px'}}>💾 Auto guardado</span>
+          <span style={{fontSize:11,fontWeight:800,color:iaConfig.siempreActivo?'#166534':'#92400e',background:iaConfig.siempreActivo?'#DCFCE7':'#FFF7ED',border:'1px solid '+(iaConfig.siempreActivo?'#86efac':'#fdba74'),borderRadius:99,padding:'7px 10px'}}>{iaConfig.siempreActivo?'🟢 24/7 activo':'⏰ Horario limitado'}</span>
           <button onClick={()=>upd(['activo'],!iaConfig.activo)}
-            style={{padding:'6px 16px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:700,fontSize:12,
+            style={{padding:'8px 16px',borderRadius:99,border:'none',cursor:'pointer',fontWeight:900,fontSize:12,boxShadow:iaConfig.activo?'0 8px 18px rgba(22,101,52,.16)':'none',
               background:iaConfig.activo?'#DCFCE7':'#F3F4F6',color:iaConfig.activo?'#14532d':'#6b7280'}}>
-            {iaConfig.activo?'🟢 ON':'⚪ OFF'}
+            {iaConfig.activo?'🟢 IA ON':'⚪ IA OFF'}
           </button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{display:'flex',gap:4,marginBottom:16,borderBottom:'2px solid #f0f4ff',flexWrap:'wrap'}}>
-        {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)}
-            style={{padding:'8px 14px',borderRadius:'8px 8px 0 0',border:'none',cursor:'pointer',fontSize:12,fontWeight:600,
-              background:tab===t.id?'#fff':'transparent',color:tab===t.id?B.primary:'#6b7280',
-              borderBottom:tab===t.id?'2px solid '+B.primary:'2px solid transparent',marginBottom:-2}}>
-            {t.label}
-          </button>
-        ))}
+      {/* Menu IA */}
+      <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,minmax(0,1fr))':'repeat(6,minmax(120px,1fr))',gap:10,marginBottom:18}}>
+        {TABS.map(t=>{
+          const active = tab===t.id
+          return (
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{textAlign:'left',padding:isMobile?'10px':'12px',borderRadius:16,border:active?'1.5px solid '+B.primary:'1px solid #E2E8F0',cursor:'pointer',
+                background:active?'linear-gradient(180deg,#FFFFFF 0%,#EEF2FF 100%)':'#FFFFFF',boxShadow:active?'0 10px 24px rgba(79,70,229,.12)':'0 4px 14px rgba(15,23,42,.04)',
+                transition:'all .18s ease',minHeight:isMobile?82:96}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                <div style={{width:30,height:30,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',background:active?B.primary:'#F1F5F9',color:active?'#fff':'#475569',fontSize:15}}>{t.icon}</div>
+                <div style={{fontSize:active?12:11,fontWeight:900,color:active?B.primary:'#0F172A',lineHeight:1.15}}>{t.title}</div>
+              </div>
+              <div style={{fontSize:10.5,color:'#64748B',lineHeight:1.25}}>{t.desc}</div>
+            </button>
+          )
+        })}
       </div>
 
       {/* TAB: CONFIG */}
@@ -6145,7 +6152,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     }
   }
 
-  const applyVambeTemplate = () => {
+  const applyRecommendedTrainingTemplate = () => {
     setCfg('siempreActivo', true)
     setCfg('tiempoEspera', 4)
     setCfg('personalidad', `Eres Rabito, asistente comercial de Rabbitts Capital. Respondes siempre como un asesor humano de WhatsApp: natural, directo, amable y orientado a agendar una reunión cuando el cliente muestra interés real. No dices que eres IA salvo que te lo pregunten. Nunca dices que estás con alta demanda, ocupado o que responderás después. Mantienes la conversación viva con una sola pregunta útil por mensaje. No prometes rentabilidades garantizadas, no inventas precios ni condiciones y no hablas mal de competidores.`)
@@ -6154,7 +6161,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     setCfg('pasosRabito', `Entender objetivo → Calificar capacidad → Recomendar camino → Invitar a reunión → Derivar a asesor humano cuando corresponda.`)
     setCfg('reglasRabito', `Siempre disponible 24/7.\nNunca responder alta demanda.\nNunca decir que no puede ayudar.\nNunca inventar precios, stock, rentabilidades ni beneficios tributarios.\nSi no sabe, pregunta dato clave o agenda.\nMáximo una pregunta por mensaje.\nMensajes cortos estilo WhatsApp.`)
     setCfg('objecionesRabito', `Si dicen "no tengo pie": explicar que depende del proyecto y que algunos permiten pie en cuotas, pero se debe revisar caso.\nSi preguntan "se paga solo": aclarar que ninguna renta se debe prometer como garantizada; se proyecta anual, no mensual.\nSi preguntan por IVA/DFL2: explicar que se revisa caso a caso con estructura tributaria.\nSi piden precio: pedir objetivo/comuna antes de cotizar para no recomendar cualquier cosa.`)
-    setMsg({ type:'success', text:'✅ Plantilla estilo Vambe aplicada a Rabito.' })
+    setMsg({ type:'success', text:'✅ Plantilla profesional aplicada a Rabito.' })
   }
 
   const toBase64 = (file) => new Promise((resolve, reject) => {
@@ -6296,10 +6303,10 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
             <span style={{fontSize:24}}>🧠</span>
             <div>
               <div style={{fontWeight:900,fontSize:15,color:B.primary}}>Capacita a Rabito</div>
-              <div style={{fontSize:11,color:B.mid}}>Como Vambe: personalidad, productos, pasos y conocimiento</div>
+              <div style={{fontSize:11,color:B.mid}}>Personalidad, productos, pasos y conocimiento</div>
             </div>
           </div>
-          <button onClick={applyVambeTemplate} style={{width:'100%',padding:'9px 12px',borderRadius:10,border:'none',background:B.primary,color:'#fff',fontSize:12,fontWeight:800,cursor:'pointer'}}>
+          <button onClick={applyRecommendedTrainingTemplate} style={{width:'100%',padding:'9px 12px',borderRadius:10,border:'none',background:B.primary,color:'#fff',fontSize:12,fontWeight:800,cursor:'pointer'}}>
             ⚡ Aplicar plantilla recomendada
           </button>
         </div>
@@ -6320,7 +6327,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
 
         {section==='personalidad' && <TextAreaBlock label="🎭 Personalidad de Rabito" hint="Esto queda grabado en el prompt principal. No dependas de feedback suelto." configKey="personalidad" minHeight={230}/>} 
         {section==='productos' && <TextAreaBlock label="🏢 Productos y servicios que Rabito puede ofrecer" hint="Describe Rabbitts, países, proyectos, renta corta, tributación, crédito y qué NO debe prometer." configKey="productosRabito" minHeight={260}/>} 
-        {section==='pasos' && <TextAreaBlock label="🧭 Pasos a seguir en cada conversación" hint="Define el flujo tipo Vambe: entender, calificar, recomendar y agendar." configKey="pasosRabito" minHeight={220}/>} 
+        {section==='pasos' && <TextAreaBlock label="🧭 Pasos a seguir en cada conversación" hint="Define el flujo: entender, calificar, recomendar y agendar." configKey="pasosRabito" minHeight={220}/>} 
         {section==='reglas' && (
           <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
             <TextAreaBlock label="🛡️ Reglas duras" hint="Prohibiciones, límites, cuándo escalar y frases que nunca debe decir." configKey="reglasRabito" minHeight={180}/>
