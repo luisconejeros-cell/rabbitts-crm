@@ -1,4 +1,4 @@
-// api/agent.js — Rabito coherente con memoria comercial y link de agenda configurable
+// api/agent.js — Rabito anti-loop con memoria comercial y agenda configurable
 // Agente comercial conversacional para Rabbitts Capital.
 // Backend puro para Vercel. No pegar JSX/HTML en este archivo.
 
@@ -211,11 +211,18 @@ function inferLocalIntent(message = '', conversationHistory = []) {
     .find(item => item?.role === 'assistant')?.content || ''
   const lastA = normalizeForCheck(lastAssistant)
 
-  if (/\b(si|sí|dale|ok|okay|perfecto|ya|agendemos|agenda|llamame|llámame|llamada|reunion|reunión)\b/i.test(message)) {
-    if (lastA.includes('agendar') || lastA.includes('calendly') || lastA.includes('calendario') || lastA.includes('llamada') || lastA.includes('reunion')) return 'acepta_agendar'
+  if (/me\s+preguntas|otra\s+vez|a\s+cada\s+rato|de\s+nuevo\s+lo\s+mismo|sigues\s+preguntando|seguiras\s+preguntando|seguirás\s+preguntando|penca|wn|weon|weón|funciona\s+mejor/i.test(message)) return 'frustracion'
+
+  if (/\b(donde|dónde|por\s+d[oó]nde|link|enlace)\b/i.test(message)) {
+    if (lastA.includes('agendar') || lastA.includes('agenda') || lastA.includes('reunion') || lastA.includes('reunión') || lastA.includes('proyectos') || lastA.includes('opciones')) return 'pide_link'
+  }
+
+  if (/\b(si|sí|dale|ok|okay|perfecto|ya|agendemos|agenda|llamame|llámame|llamada|reunion|reunión|quiero\s+agendar)\b/i.test(message)) {
+    if (lastA.includes('agendar') || lastA.includes('calendly') || lastA.includes('calendario') || lastA.includes('llamada') || lastA.includes('reunion') || lastA.includes('reunión')) return 'acepta_agendar'
     return 'afirmacion'
   }
 
+  if (/\b(inversion|inversi[oó]n|invertir|inversionista|generar\s+renta|comprar\s+para\s+invertir|para\s+invertir)\b/i.test(message)) return 'invertir'
   if (m.includes('precio') || m.includes('valor') || m.includes('cuanto') || m.includes('cuánto') || m.includes('uf')) return 'precio'
   if (m.includes('renta corta') || m.includes('airbnb') || m.includes('booking') || m.includes('diaria')) return 'renta_corta'
   if (m.includes('renta') || m.includes('sueldo') || m.includes('gano') || m.includes('ingreso') || m.includes('liquido') || m.includes('líquido')) return 'renta'
@@ -241,6 +248,7 @@ function deriveLeadUpdateFromMessage(message = {}) {
   else if (n.includes('vivir') || n.includes('habitacional')) update.modelo = 'vivir'
   else if (n.includes('retiro') || n.includes('jubilacion') || n.includes('jubilación')) update.modelo = 'retiro_inmobiliario'
   else if (n.includes('multicredito') || n.includes('multicrédito') || n.includes('varios departamentos')) update.modelo = 'multicredito'
+  else if (/\b(inversion|inversi[oó]n|invertir|inversionista|generar\s+renta|para\s+invertir)\b/.test(n)) update.modelo = 'inversion'
 
   const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
   if (emailMatch) update.email = emailMatch[0]
@@ -284,6 +292,24 @@ function extractNameCandidate(text = '') {
     if (/^[a-záéíóúñ]+\s+[a-záéíóúñ]+/i.test(line)) return line
   }
   return ''
+}
+
+function extractNumberedAnswers(text = '') {
+  const n = normalizeForCheck(text)
+  const result = {}
+  const incomeMatch = n.match(/\b(?:2|renta)\s*[:.-]?\s*(\d{3,8})(?:\s*(mil|k|m|mm|millones?)\b)?/i)
+  if (incomeMatch) {
+    const raw = `${incomeMatch[1]} ${incomeMatch[2] || ''}`.trim()
+    let value = parseMoneyToNumber(raw)
+    if (!value) {
+      const num = Number(incomeMatch[1])
+      value = num < 100000 ? num * 1000 : num
+    }
+    if (value) result.renta = value
+  }
+  if (/\b1\s*[:.-]?\s*no\b/.test(n) || /experiencia\s*[:.-]?\s*no\b/.test(n)) result.experiencia = 'Sin experiencia en Airbnb/Booking'
+  if (/\b3\s*[:.-]?\s*no\b/.test(n) || /propiedades?\s*[:.-]?\s*no\b/.test(n)) result.propiedades = 'No tiene propiedades'
+  return result
 }
 
 function extractLeadProfileFromHistory(leadData = {}, conversationHistory = [], currentMessage = '') {
@@ -331,9 +357,17 @@ function extractLeadProfileFromHistory(leadData = {}, conversationHistory = [], 
     }
 
     if (/renta\s+corta|airbnb|booking|diaria/.test(n)) profile.modelo = 'renta_corta'
-    if (/renta\s+tradicional|arriendo\s+tradicional/.test(n)) profile.modelo = 'renta_tradicional'
-    if (/retiro|jubilacion|jubilación/.test(n)) profile.modelo = 'retiro_inmobiliario'
-    if (/vivir|primera\s+vivienda/.test(n)) profile.modelo = 'vivir'
+    else if (/renta\s+tradicional|arriendo\s+tradicional/.test(n)) profile.modelo = 'renta_tradicional'
+    else if (/retiro|jubilacion|jubilación/.test(n)) profile.modelo = 'retiro_inmobiliario'
+    else if (/vivir|primera\s+vivienda/.test(n)) profile.modelo = 'vivir'
+    else if (/\b(inversion|inversi[oó]n|invertir|inversionista|generar\s+renta|para\s+invertir)\b/.test(n)) {
+      if (!profile.modelo || profile.modelo === 'vivir') profile.modelo = 'inversion'
+    }
+
+    const numbered = extractNumberedAnswers(text)
+    if (numbered.renta) profile.rentaIndividual = Math.max(profile.rentaIndividual || 0, numbered.renta)
+    if (numbered.experiencia) profile.experiencia = numbered.experiencia
+    if (numbered.propiedades) profile.propiedades = numbered.propiedades
 
     if (/stgo\s*centro|santiago\s*centro/.test(n)) profile.ubicacion = 'Santiago centro'
     else if (/nunoa|ñuñoa/.test(n)) profile.ubicacion = 'Ñuñoa'
@@ -399,6 +433,78 @@ function buildCoherentDeterministicReply({ message, leadData, agendaLink, conver
   const qualified = isProfileQualified(profile, rentaMin, rentaMinPareja)
   const missing = missingMeetingFields(profile)
   const hasContactAndMoney = !!profile.email && !!profile.nombre && (!!profile.rentaIndividual || !!profile.rentaPareja || !!profile.rentaTexto)
+  const hasInvestmentDirection = profile.modelo && profile.modelo !== 'vivir'
+  const knownFacts = [
+    hasInvestmentDirection ? `inversión${profile.modelo === 'renta_corta' ? ' para renta corta' : ''}` : '',
+    profile.ubicacion || '',
+    profile.rentaTexto ? `renta ${profile.rentaTexto}` : '',
+    profile.propiedades || '',
+    profile.experiencia || ''
+  ].filter(Boolean).join(', ')
+
+  if (intent === 'frustracion') {
+    if (qualified) {
+      return {
+        reply: `${saludo}tienes razón, me estaba repitiendo. Ya tengo claro: ${knownFacts || 'quieres invertir'}.
+
+El siguiente paso es revisar opciones reales y números en reunión. Agenda acá:
+${agendaLink}`,
+        action: 'calificado',
+        leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+      }
+    }
+    return {
+      reply: `${saludo}tienes razón, voy directo. Ya entendí que buscas invertir. Para avanzar sin vueltas, dime solo tu renta líquida aproximada o si vas a complementar con pareja.`,
+      action: 'conversando',
+      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+    }
+  }
+
+  if (intent === 'pide_link' && qualified) {
+    return {
+      reply: `${saludo}agenda por acá y lo vemos con números reales:
+${agendaLink}`,
+      action: 'calificado',
+      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+    }
+  }
+
+  if (/^chao|adios|adiós|bye/i.test(n)) {
+    return {
+      reply: qualified
+        ? `${saludo}dale, no te molesto más. Te dejo el link por si después quieres revisar opciones reales:
+${agendaLink}`
+        : `${saludo}dale, gracias por escribir. Si más adelante quieres revisar una inversión inmobiliaria, me escribes por acá.`,
+      action: qualified ? 'calificado' : 'no_interesado',
+      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+    }
+  }
+
+  if ((intent === 'invertir' || /para\s+invertir|inversion|inversi[oó]n/.test(n)) && (profile.rentaTexto || profile.ubicacion || profile.modelo)) {
+    if (qualified && (profile.ubicacion || profile.modelo === 'renta_corta')) {
+      return {
+        reply: `${saludo}perfecto, ya quedó claro que es inversión${profile.ubicacion ? ' en ' + profile.ubicacion : ''}. Con ${profile.rentaTexto || 'tu perfil'} podemos revisar alternativas reales.
+
+Agendemos y vemos proyectos, crédito y números:
+${agendaLink}`,
+        action: 'calificado',
+        leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+      }
+    }
+
+    const nextQuestion = !profile.modelo || profile.modelo === 'inversion'
+      ? '¿La quieres para renta corta o renta tradicional?'
+      : !profile.ubicacion
+        ? '¿Qué comuna o país te interesa evaluar?'
+        : !profile.rentaTexto
+          ? '¿Cuál es tu renta líquida mensual aproximada?'
+          : '¿Quieres que agendemos una llamada para revisar opciones?'
+    return {
+      reply: `${saludo}perfecto, ya quedó claro que es para invertir. ${nextQuestion}`,
+      action: qualified ? 'calificado' : 'conversando',
+      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo || 'inversion' })
+    }
+  }
 
   if ((profile.quiereAgendar || intent === 'acepta_agendar') && qualified && hasContactAndMoney && missing.length <= 1) {
     const rentaLine = profile.rentaPareja
@@ -409,7 +515,10 @@ function buildCoherentDeterministicReply({ message, leadData, agendaLink, conver
     const zona = profile.ubicacion ? ` en ${profile.ubicacion}` : ''
     const modelo = profile.modelo === 'renta_corta' ? 'renta corta' : (profile.modelo || 'inversión inmobiliaria')
     return {
-      reply: `${saludo}perfecto. Con ${rentaLine}, ${profile.propiedades ? profile.propiedades.toLowerCase() : 'tu perfil'} y foco en ${modelo}${zona}, sí corresponde agendar.\n\nEn la reunión revisamos crédito, pie, proyectos y números reales. Agenda acá:\n${agendaLink}`,
+      reply: `${saludo}perfecto. Con ${rentaLine}, ${profile.propiedades ? profile.propiedades.toLowerCase() : 'tu perfil'} y foco en ${modelo}${zona}, sí corresponde agendar.
+
+En la reunión revisamos crédito, pie, proyectos y números reales. Agenda acá:
+${agendaLink}`,
       action: 'calificado',
       leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
     }
@@ -417,15 +526,20 @@ function buildCoherentDeterministicReply({ message, leadData, agendaLink, conver
 
   if ((profile.quiereAgendar || intent === 'acepta_agendar') && qualified && missing.length > 0 && missing.length <= 3) {
     return {
-      reply: `${saludo}vamos bien. Para dejar la reunión bien tomada solo me falta: ${missing.join(', ')}.\n\nMe lo mandas por acá y te paso el link para agendar.`,
+      reply: `${saludo}vamos bien. Para dejar la reunión bien tomada solo me falta: ${missing.join(', ')}.
+
+Me lo mandas por acá y te paso el link para agendar.`,
       action: 'conversando',
       leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
     }
   }
 
-  if (/no\s+tengo\s+experiencia|sin\s+experiencia|por\s+eso\s+quiero\s+que\s+me\s+orienten/.test(n) && qualified && (profile.quiereAgendar || profile.email)) {
+  if (/no\s+tengo\s+experiencia|sin\s+experiencia|por\s+eso\s+quiero\s+que\s+me\s+orienten/.test(n) && qualified && (profile.quiereAgendar || profile.email || profile.interesReal)) {
     return {
-      reply: `${saludo}justamente para eso es la asesoría. No necesitas experiencia previa: revisamos si el edificio permite renta corta, números reales, costos y cómo se administraría.\n\nAgenda acá y lo vemos con calma:\n${agendaLink}`,
+      reply: `${saludo}justamente para eso es la asesoría. No necesitas experiencia previa: revisamos si el edificio permite renta corta, números reales, costos y cómo se administraría.
+
+Agenda acá y lo vemos con calma:
+${agendaLink}`,
       action: 'calificado',
       leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
     }
@@ -434,7 +548,9 @@ function buildCoherentDeterministicReply({ message, leadData, agendaLink, conver
   if (/^responde\b|me\s+respondes|contesta/.test(n)) {
     if (profile.rentaIndividual || profile.rentaPareja || profile.modelo || profile.ubicacion) {
       return {
-        reply: `${saludo}sí, te sigo. Ya tengo esto: ${profile.rentaTexto || 'renta por revisar'}${profile.modelo ? ', interés en ' + (profile.modelo === 'renta_corta' ? 'renta corta' : profile.modelo) : ''}${profile.ubicacion ? ', zona ' + profile.ubicacion : ''}.\n\n¿Quieres que lo llevemos a una reunión para revisar proyectos y números reales?`,
+        reply: `${saludo}sí, te sigo. Ya tengo esto: ${knownFacts || 'quieres invertir'}.
+
+¿Quieres que lo llevemos a una reunión para revisar proyectos y números reales?`,
         action: qualified ? 'calificado' : 'conversando',
         leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
       }
@@ -443,7 +559,10 @@ function buildCoherentDeterministicReply({ message, leadData, agendaLink, conver
 
   if (profile.email && (profile.rentaIndividual || profile.rentaPareja) && profile.interesReal && qualified) {
     return {
-      reply: `${saludo}perfecto, con esos datos ya puedo orientarte mejor. Calzas para revisar alternativas de ${profile.modelo === 'renta_corta' ? 'renta corta' : 'inversión'}${profile.ubicacion ? ' en ' + profile.ubicacion : ''}.\n\nTe dejo el link para agendar y revisar números reales:\n${agendaLink}`,
+      reply: `${saludo}perfecto, con esos datos ya puedo orientarte mejor. Calzas para revisar alternativas de ${profile.modelo === 'renta_corta' ? 'renta corta' : 'inversión'}${profile.ubicacion ? ' en ' + profile.ubicacion : ''}.
+
+Te dejo el link para agendar y revisar números reales:
+${agendaLink}`,
       action: 'calificado',
       leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
     }
@@ -457,13 +576,34 @@ function buildSafeFallback(message = '', leadData = {}, agendaLink = DEFAULT_AGE
   const name = getFirstName(leadData?.nombre)
   const saludo = name ? `${name}, ` : ''
   const calendarLine = agendaLink ? `\n${agendaLink}` : ''
+  const fallbackProfile = extractLeadProfileFromHistory(leadData, conversationHistory, message)
+  const alreadyInvestment = fallbackProfile.modelo && fallbackProfile.modelo !== 'vivir'
+  const alreadyQualified = isProfileQualified(fallbackProfile)
+
+  if (intent === 'frustracion') {
+    return alreadyQualified
+      ? `${saludo}tienes razón, no te vuelvo a preguntar lo mismo. Ya tengo claro que buscas invertir${fallbackProfile.ubicacion ? ' en ' + fallbackProfile.ubicacion : ''}. Agendemos y revisamos opciones reales:${calendarLine}`.trim()
+      : `${saludo}tienes razón, voy directo. Ya entendí que buscas invertir. Para avanzar, dime solo tu renta líquida aproximada o si complementas con pareja.`.trim()
+  }
+
+  if (intent === 'pide_link') {
+    return `${saludo}por acá puedes agendar y lo revisamos con números reales:${calendarLine}`.trim()
+  }
 
   if (intent === 'acepta_agendar') {
     return `${saludo}perfecto. Agendemos y revisamos tu caso con números reales: renta, crédito, pie y proyectos que calcen contigo.${calendarLine}`.trim()
   }
 
+  if (intent === 'invertir') {
+    if (fallbackProfile.rentaTexto || fallbackProfile.ubicacion || fallbackProfile.modelo) {
+      return `${saludo}perfecto, ya quedó claro que es para invertir${fallbackProfile.ubicacion ? ' en ' + fallbackProfile.ubicacion : ''}. ¿Prefieres enfocarlo en renta corta o renta tradicional?`.trim()
+    }
+    return `${saludo}perfecto, inversión. ¿Buscas renta corta, renta tradicional o plusvalía?`.trim()
+  }
+
   if (intent === 'afirmacion') {
-    return `${saludo}buenísimo. Para avanzar bien, dime una cosa: ¿buscas invertir para renta corta, renta tradicional o comprar para vivir?`.trim()
+    if (alreadyInvestment) return `${saludo}buenísimo. Sigamos con inversión. ¿Prefieres renta corta o renta tradicional?`.trim()
+    return `${saludo}buenísimo. Para avanzar bien, dime una cosa: ¿buscas renta corta, renta tradicional o plusvalía?`.trim()
   }
 
   if (intent === 'precio') {
@@ -503,10 +643,15 @@ function buildSafeFallback(message = '', leadData = {}, agendaLink = DEFAULT_AGE
   }
 
   if (intent === 'saludo') {
-    return `Hola${name ? ' ' + name : ''}. Soy Rabito de Rabbitts Capital. Para orientarte bien, ¿buscas invertir para renta corta, renta tradicional o comprar para vivir?`.trim()
+    return `Hola${name ? ' ' + name : ''}. Soy Rabito de Rabbitts Capital. Para orientarte bien, ¿buscas renta corta, renta tradicional o plusvalía?`.trim()
   }
 
-  return `${saludo}te entiendo. Para ayudarte bien necesito partir por esto: ¿estás buscando invertir para generar renta o comprar para vivir?`.trim()
+  if (alreadyInvestment) {
+    if (alreadyQualified) return `${saludo}ya tengo claro tu perfil. El siguiente paso es revisar opciones y números reales en reunión:${calendarLine}`.trim()
+    return `${saludo}ya tengo claro que buscas invertir. Para recomendarte bien, dime tu renta líquida aproximada o si comprarías con renta complementaria.`.trim()
+  }
+
+  return `${saludo}te sigo. Para ayudarte bien, dime si quieres renta corta, renta tradicional o plusvalía.`.trim()
 }
 
 function sanitizeConversationHistory(conversationHistory = []) {
@@ -799,6 +944,8 @@ ${guion || `- Si saluda: responde cálido y pregunta objetivo.
 - No uses lenguaje corporativo pesado.
 - No repitas exactamente respuestas anteriores.
 - Antes de preguntar algo, revisa la memoria comercial y el perfil consolidado. Si el dato ya aparece, NO lo vuelvas a pedir.
+- Si el cliente dice "inversión", "invertir" o "para invertir", eso YA responde la pregunta comprar para vivir vs invertir. Nunca vuelvas a preguntar eso.
+- Si el cliente reclama que repites preguntas, pide disculpas una sola vez y avanza con lo ya conocido. No vuelvas a preguntar datos ya entregados.
 - La falta de experiencia en Airbnb NO bloquea la reunión; es una razón para orientar y agendar.
 - Si el cliente ya entregó nombre, correo, renta y modelo, el siguiente paso es agendar, no seguir preguntando.
 - No hables como chatbot.
