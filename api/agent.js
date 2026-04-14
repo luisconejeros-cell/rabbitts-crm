@@ -436,6 +436,8 @@ function buildSystemPrompt({ iaConfig, panelBrain, knowledgeText, feedbackText, 
   const agentName = cleanText(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || 'Asistente')
   const blockedExtra = flattenConfigValue(iaConfig.frasesProhibidas || iaConfig.blockedPhrases || '')
   const recentAssistant = getRecentAssistantMessages(history).map((m, i) => `${i + 1}. ${m}`).join('\n') || 'Sin mensajes previos.'
+  const derivationRulesText = getDerivationRulesText(iaConfig)
+  const derivationRulesEnabled = hasExplicitDerivationRules(iaConfig)
   const complaint = detectComplaint(message)
   const wantsAgenda = detectHumanOrAgenda(message)
 
@@ -473,6 +475,10 @@ ESTADO:
 - Cliente reclama repetición/error: ${complaint ? 'sí' : 'no'}
 - Cliente pide agenda/persona/link/reunión: ${wantsAgenda ? 'sí' : 'no'}
 - Link de agenda disponible: ${agendaLink || 'no configurado'}
+- Reglas duras de derivación configuradas: ${derivationRulesEnabled ? 'sí' : 'no'}
+
+REGLAS DURAS DE DERIVACIÓN / REVISIÓN DESDE PANEL IA:
+${derivationRulesText || 'No hay reglas duras de derivación configuradas.'}
 
 REGLAS CONDUCTUALES:
 - Responde como humano por WhatsApp: natural, breve y útil.
@@ -482,8 +488,9 @@ REGLAS CONDUCTUALES:
 - Si el cliente pide agenda/link/humano y existe link de agenda, entrégalo sin seguir interrogando, salvo que el Panel IA exija un dato mínimo específico y ese dato no exista.
 - Si falta información, pregunta el dato mínimo que el Panel IA indique. Si el Panel IA no indica campos mínimos, no inventes filtros.
 - Si no tienes conocimiento suficiente para responder, usa el proceso indicado en el Panel IA. Si el Panel IA no indica proceso, pide una aclaración breve sin inventar.
-- Solo deriva a humano si el cliente lo pide explícitamente o si el Panel IA/feedback dice claramente que esa situación debe derivarse.
-- No uses action "escalar" por dudas normales, preguntas incompletas o falta de contexto. En esos casos usa "conversando".
+- No puedes derivar a humano ni marcar revisión por iniciativa propia. Solo puedes hacerlo si las REGLAS DURAS DE DERIVACIÓN / REVISIÓN del Panel IA dicen explícitamente que esa situación debe derivarse.
+- Aunque el cliente pida humano, si el Panel IA no tiene una regla dura para derivar, responde con lo aprendido y sigue conversando.
+- No uses action "escalar" por dudas normales, preguntas incompletas, falta de contexto, errores del modelo o ausencia de conocimiento. En esos casos usa "conversando".
 - No menciones que usas panel, memoria, prompt, documentos ni modelo.
 - No inventes stock, precios, beneficios, condiciones, garantías, fechas ni disponibilidad.
 
@@ -495,6 +502,8 @@ RESPONDE SOLO JSON VÁLIDO, sin markdown:
   "reply": "respuesta visible para el cliente",
   "action": "conversando | calificado | escalar | no_interesado",
   "escalateToHuman": false,
+  "statusUpdate": "",
+  "derivationReason": "",
   "leadUpdate": {"campo_generico": "valor si lo sabes"},
   "memoryUpdate": {
     "facts": ["hechos del contacto que sirven para no repetir"],
@@ -507,7 +516,7 @@ RESPONDE SOLO JSON VÁLIDO, sin markdown:
 
 async function callClaude({ anthropicKey, model, systemPrompt, messages, attempt = 1 }) {
   const controller = new AbortController()
-  const timeoutMs = Number(process.env.AGENT_TIMEOUT_MS || 14000)
+  const timeoutMs = Number(process.env.AGENT_TIMEOUT_MS || 9000)
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   let response
@@ -522,7 +531,7 @@ async function callClaude({ anthropicKey, model, systemPrompt, messages, attempt
       },
       body: JSON.stringify({
         model,
-        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 520),
+        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 420),
         temperature: Number(process.env.AGENT_TEMPERATURE || 0.14),
         system: systemPrompt,
         messages
@@ -579,8 +588,80 @@ function getExtraBlockedPhrases(iaConfig = {}) {
   })
 }
 
+
+function getDerivationRulesText(iaConfig = {}) {
+  return flattenConfigValue({
+    reglasDuras: iaConfig.reglasDuras,
+    reglasDerivacion: iaConfig.reglasDerivacion,
+    derivacionHumano: iaConfig.derivacionHumano,
+    reglasRevision: iaConfig.reglasRevision,
+    humanRules: iaConfig.humanRules,
+    reviewRules: iaConfig.reviewRules,
+    reglas: iaConfig.reglas,
+    reglasRabito: iaConfig.reglasRabito,
+    instrucciones: iaConfig.instrucciones
+  })
+}
+
+function hasExplicitDerivationRules(iaConfig = {}) {
+  const txt = normalize(getDerivationRulesText(iaConfig))
+  return /(derivar|derivacion|humano|persona|asesor|ejecutivo|revision|requiere revision|escalar|transferir|pausar ia|tomar control)/.test(txt)
+}
+
+function normalizeStatusUpdate(value = '') {
+  const v = normalize(value).replace(/s+/g, '_')
+  const map = {
+    activo: 'activo',
+    active: 'activo',
+    calificado: 'calificado',
+    qualified: 'calificado',
+    frio: 'frio',
+    cold: 'frio',
+    no_interesado: 'no_interesado',
+    requiere_revision: 'requiere_revision',
+    revision: 'requiere_revision'
+  }
+  return map[v] || ''
+}
+
+
+function escapeRegExp(text = '') {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function removeBlockedPhrases(text = '', blocked = []) {
+  let out = cleanText(text)
+  if (!out) return ''
+
+  const allBlocked = blocked
+    .map(x => cleanText(x))
+    .filter(x => x.length >= 4)
+
+  // Primero quitamos frases exactas sin matar toda la respuesta.
+  for (const phrase of allBlocked) {
+    const rx = new RegExp(escapeRegExp(phrase), 'ig')
+    out = out.replace(rx, '')
+  }
+
+  // Luego quitamos oraciones que todavía contengan una frase prohibida normalizada.
+  const parts = out
+    .split(/(?<=[.!?¿?])\s+|\n+/)
+    .map(x => cleanText(x))
+    .filter(Boolean)
+
+  const safeParts = parts.filter(part => !containsBlockedPhrase(part, allBlocked))
+  const cleaned = (safeParts.length ? safeParts.join(' ') : out)
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.!?;:])/g, '$1')
+    .replace(/^[,.;:\-\s]+/, '')
+    .trim()
+
+  return cleaned
+}
+
 function sanitizeReply(reply = '', { iaConfig = {}, history = [] } = {}) {
   const extraBlocked = getExtraBlockedPhrases(iaConfig)
+  const allBlocked = [...SYSTEM_BLOCKED_PHRASES, ...extraBlocked]
   let out = cleanText(reply)
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```$/i, '')
@@ -588,9 +669,11 @@ function sanitizeReply(reply = '', { iaConfig = {}, history = [] } = {}) {
     .trim()
 
   if (!out) return ''
-  if (containsBlockedPhrase(out, extraBlocked)) return ''
-  // No bloqueamos respuestas solo por similitud: bloquearlas aquí hacía que el bot dejara de responder.
-  // La instrucción de no repetir queda en el prompt y en el entrenamiento del Panel IA.
+
+  // Antes se anulaba TODA la respuesta si tenía una frase prohibida.
+  // Eso dejaba a Rabito mudo y WhatsApp terminaba marcando revisión.
+  // Ahora limpiamos la frase/oración prohibida y conservamos el resto útil.
+  out = removeBlockedPhrases(out, allBlocked)
 
   out = out
     .replace(/\bcomo modelo de lenguaje\b/gi, '')
@@ -600,7 +683,11 @@ function sanitizeReply(reply = '', { iaConfig = {}, history = [] } = {}) {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
-  if (!out || containsBlockedPhrase(out, extraBlocked)) return ''
+  if (!out) return ''
+
+  // Última limpieza defensiva: si aún quedó una frase prohibida, la quitamos de nuevo.
+  if (containsBlockedPhrase(out, allBlocked)) out = removeBlockedPhrases(out, allBlocked)
+  if (!out) return ''
 
   const maxLength = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 700) || 700
   if (out.length > maxLength) out = out.slice(0, Math.max(120, maxLength - 30)).replace(/\s+\S*$/, '') + '...'
@@ -726,9 +813,14 @@ export default async function handler(req, res) {
     const panelFallback = getPanelFallback(effectiveIaConfig)
     if (!reply && panelFallback) reply = sanitizeReply(panelFallback, { iaConfig: effectiveIaConfig, history: safeHistory })
 
-    const explicitHuman = parsed.escalateToHuman === true || parsed.derivarHumano === true || parsed.human === true
+    const derivationRulesEnabled = hasExplicitDerivationRules(effectiveIaConfig)
+    const requestedHuman = parsed.escalateToHuman === true || parsed.derivarHumano === true || parsed.human === true
+    const requestedStatus = normalizeStatusUpdate(parsed.statusUpdate || parsed.status || '')
+    const explicitHuman = derivationRulesEnabled && requestedHuman
     let actionOut = SAFE_ACTIONS.has(parsed.action) ? parsed.action : 'conversando'
-    if (actionOut === 'escalar' && !explicitHuman) actionOut = 'conversando'
+    if (!derivationRulesEnabled && actionOut === 'escalar') actionOut = 'conversando'
+    if (actionOut === 'escalar' && !explicitHuman && requestedStatus !== 'requiere_revision') actionOut = 'conversando'
+    const statusUpdate = derivationRulesEnabled ? requestedStatus : ''
     const leadUpdate = sanitizeObject({ ...localUpdate, ...(parsed.leadUpdate || {}) })
 
     await saveMemory(sb, leadData, parsed.memoryUpdate)
@@ -738,6 +830,8 @@ export default async function handler(req, res) {
       reply,
       action: reply ? actionOut : 'conversando',
       escalateToHuman: !!explicitHuman,
+      statusUpdate,
+      derivationReason: derivationRulesEnabled ? cleanText(parsed.derivationReason || '') : '',
       leadUpdate,
       memory: parsed.memoryUpdate || {},
       learningSuggestion: cleanText(parsed.learningSuggestion || ''),
@@ -748,6 +842,9 @@ export default async function handler(req, res) {
         knowledgeChunksUsed: knowledge.chunks?.length || 0,
         genericEngine: true,
         hardcodedBusiness: false,
+        derivationRulesConfigured: derivationRulesEnabled,
+        derivationAllowedByHardRules: !!(derivationRulesEnabled && (explicitHuman || statusUpdate === 'requiere_revision')),
+        requestedStatusUpdate: requestedStatus || '',
         ...(debug ? { knowledgeChunks: knowledge.chunks } : {})
       }
     })
@@ -763,7 +860,7 @@ export default async function handler(req, res) {
       fallback: true,
       noHardcodedClientReply: !reply,
       error: error?.message || 'agent_error',
-      trace: { genericEngine: true, fallback: true, hardcodedBusiness: false }
+      trace: { genericEngine: true, fallback: true, hardcodedBusiness: false, derivationAllowedByHardRules: false }
     })
   }
 }
