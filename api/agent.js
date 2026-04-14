@@ -146,6 +146,7 @@ async function readKnowledge(db, query = '', settings = {}) {
 function normalizeTrainingItem(x = {}) {
   return {
     original: clean(x.original || x.msg_content || x.message || x.before || x.incorrect || x.mensajeOriginal || x.pregunta || ''),
+    context: clean(x.context || x.pregunta || x.prompt || x.userMessage || x.cliente || x.entrada || ''),
     improved: clean(x.improved || x.correction || x.after || x.correct || x.respuestaCorrecta || x.mensajeMejorado || x.respuesta || ''),
     reason: clean(x.reason || x.feedback || x.explanation || x.instruccion || x.regla || x.razon || ''),
     active: x.active !== false && x.activo !== false
@@ -172,21 +173,37 @@ async function readTraining(db, query = '', settings = {}) {
     } catch {}
   }
 
-  const normalized = items.map(normalizeTrainingItem).filter(x => x.active && (x.original || x.improved || x.reason))
-  const ranked = normalized.map(x => ({ ...x, s: score(query, `${x.original}\n${x.reason}\n${x.improved}`) }))
-    .sort((a, b) => b.s - a.s)
-  const picked = ranked.filter(x => x.s > 0).slice(0, 8)
-  const final = picked.length ? picked : ranked.slice(0, 6)
+  const normalized = items.map(normalizeTrainingItem).filter(x => x.active && (x.context || x.original || x.improved || x.reason))
+  const ranked = normalized.map(x => {
+    const haystack = `${x.context}
+${x.original}
+${x.reason}
+${x.improved}`
+    return { ...x, s: score(query, haystack), haystack }
+  }).sort((a, b) => b.s - a.s)
+  const picked = ranked.filter(x => x.s > 0).slice(0, 10)
+  const final = picked.length ? picked : ranked.slice(0, 8)
 
   return {
     items: final,
-    text: final.map((x, i) => `### Aprendizaje ${i + 1}\nSituación: ${x.original || 'general'}\nRegla/razón: ${x.reason || 'sin razón'}\nRespuesta preferida: ${x.improved || 'sin respuesta exacta'}`).join('\n\n'),
-    used: final.map(x => ({ original: x.original, score: x.s }))
+    allItems: normalized,
+    text: final.map((x, i) => `### Aprendizaje ${i + 1}
+Contexto del cliente: ${x.context || 'general'}
+Respuesta mala/anterior: ${x.original || 'sin ejemplo'}
+Regla/razón: ${x.reason || 'sin razón'}
+Respuesta preferida: ${x.improved || 'sin respuesta exacta'}`).join('\n\n'),
+    used: final.map(x => ({ context: x.context, original: x.original, correction: x.improved, score: x.s }))
   }
 }
 
 function directTrainingReply(training, message, iaConfig) {
-  const exact = (training.items || []).find(x => x.improved && (normalize(x.original) === normalize(message) || x.s >= 6))
+  const q = normalize(message)
+  const exact = (training.items || []).find(x => x.improved && (
+    normalize(x.context) === q ||
+    normalize(x.original) === q ||
+    normalize(x.reason).includes(q) ||
+    x.s >= 5
+  ))
   if (!exact) return ''
   return cleanOutput(exact.improved, iaConfig)
 }
@@ -253,12 +270,31 @@ function parseOutput(raw = '') {
   return { reply: src, action: 'conversando', statusUpdate: '', leadUpdate: {}, memoryUpdate: {}, escalateToHuman: false, reason: '' }
 }
 
-function getFallback(iaConfig = {}, training = null) {
+function getFallback(iaConfig = {}, training = null, input = '') {
   const fromPanel = clean(iaConfig.mensajeFallback || iaConfig.fallbackMessage || iaConfig.respuestaFallback || '')
   if (fromPanel) return fromPanel
-  const fromTraining = (training?.items || []).find(x => x.improved && /fallback|cuando no sepas|respuesta base|saludo|inicio/i.test(`${x.original} ${x.reason}`))
-  if (fromTraining?.improved) return fromTraining.improved
-  return 'Te leo. Cuéntame un poco más para orientarte bien.'
+
+  const candidates = [
+    ...(training?.items || []),
+    ...(training?.allItems || [])
+  ].filter(x => x?.improved)
+
+  const byRule = candidates.find(x => /fallback|cuando no sepas|respuesta base|saludo|inicio|primera respuesta|mensaje inicial/i.test(`${x.context} ${x.original} ${x.reason}`))
+  if (byRule?.improved) return byRule.improved
+
+  const best = candidates
+    .map(x => ({ ...x, s2: score(input, `${x.context}
+${x.original}
+${x.reason}
+${x.improved}`) }))
+    .sort((a, b) => b.s2 - a.s2)[0]
+  if (best?.improved && best.s2 > 0) return best.improved
+
+  const scripted = clean(iaConfig.guion || iaConfig.pasosRabito || iaConfig.procesoVenta || '')
+  const offer = clean(iaConfig.oferta || iaConfig.productosRabito || iaConfig.productos || iaConfig.servicios || '')
+  if (scripted || offer) return 'Cuéntame un poco más para ayudarte con la mejor opción según lo que estás buscando.'
+
+  return ''
 }
 
 function validStatus(status = '', iaConfig = {}) {
@@ -296,7 +332,7 @@ export async function generateAgentResponse({
 
   const ANTHROPIC_KEY = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.CLAUDE_API_KEY)
   if (!ANTHROPIC_KEY) {
-    const fallback = cleanOutput(getFallback(iaConfig, training), iaConfig)
+    const fallback = cleanOutput(getFallback(iaConfig, training, input), iaConfig)
     console.error('[AGENT] missing Anthropic key')
     return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '', trace: { missingKey: true, trainingCount: training.items.length } }
   }
@@ -390,7 +426,7 @@ INSTRUCCIONES:
     }
   }
 
-  const fallback = cleanOutput(getFallback(iaConfig, training), iaConfig)
+  const fallback = cleanOutput(getFallback(iaConfig, training, input), iaConfig)
   return {
     reply: fallback,
     action: 'fallback_model_error',
