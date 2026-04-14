@@ -533,13 +533,13 @@ export default async function handler(req, res) {
     }
 
     if (!reply) {
-      // No derivamos automáticamente a humano. Solo dejamos alerta interna para que el CRM muestre revisión,
-      // pero la conversación queda en modo IA salvo que el Panel IA/agent pida escalamiento explícito.
+      // No mostrar mensajes internos al cliente ni en la bandeja como si fueran respuesta de Rabito.
+      // Solo marcamos la conversación para revisión. El motivo queda en logs/resultados del webhook.
       try {
         await sb.from('crm_conversations').update({ status: 'requiere_revision', updated_at: nowIso() }).eq('id', conv.id)
       } catch (_) {}
-      await saveMessage(sb, conv.id, 'assistant', '[Sistema] Rabito no generó respuesta visible. Revisar entrenamiento/conocimiento.', { internal: true })
-      results.push({ ok: true, convId: conv.id, skipped: 'agent_no_reply', action: 'review_only' })
+      console.warn('[WA] agent_no_reply:', { convId: conv.id, tel, agentError: agentData?.error || null, trace: agentData?.trace || null })
+      results.push({ ok: true, convId: conv.id, skipped: 'agent_no_reply', action: 'review_only', trace: agentData?.trace || null })
       continue
     }
 
