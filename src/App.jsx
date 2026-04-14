@@ -146,10 +146,24 @@ const isInternalSystemContent = (text='') => {
 
 const cleanVisibleLastMessage = (text='') => extractVisibleMessageContent(text)
 
+const isWaInternalId = (phone='') => {
+  const raw = String(phone || '').trim().toLowerCase()
+  const digits = raw.replace(/[^0-9]/g, '')
+  return raw.startsWith('wa-lid-') || digits === '3861276274900' || digits.startsWith('3861276')
+}
+const displayPhone = (phone='') => isWaInternalId(phone) ? 'WhatsApp sin número visible' : phone
+const displayConvName = (conv={}) => {
+  const name = String(conv?.nombre || '').trim()
+  const tel = String(conv?.telefono || '').trim()
+  if (name && !isWaInternalId(name)) return name
+  return displayPhone(tel) || 'Cliente WhatsApp'
+}
+
 // ─── Mini components ─────────────────────────────────────────────────────────
 // ─── WhatsApp Link Component ─────────────────────────────────────────────────
 const WaLink = ({phone, label=null}) => {
   if (!phone || phone === '—' || phone === '') return <span style={{color:'#9ca3af',fontSize:12}}>{label||'—'}</span>
+  if (isWaInternalId(phone)) return <span style={{color:'#9ca3af',fontSize:12}}>{label || 'WhatsApp sin número visible'}</span>
   const clean = phone.toString().replace(/[^0-9+]/g,'')
   const url = `https://wa.me/${clean.startsWith('+') ? clean.slice(1) : clean}`
   return (
@@ -5613,7 +5627,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
   // Une conversaciones duplicadas por el mismo teléfono.
   // Evolution puede enviar eventos paralelos del mismo número; sin esto el CRM muestra 2 filas
   // y al abrir una de ellas puede parecer "sin mensajes".
-  const phoneKey = (value='') => String(value || '').replace(/[^0-9]/g, '')
+  const phoneKey = (value='') => isWaInternalId(value) ? String(value || '').toLowerCase() : String(value || '').replace(/[^0-9]/g, '')
   const mergeConversationsByPhone = (items=[]) => {
     const groups = new Map()
     for (const c of items || []) {
@@ -5630,7 +5644,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
         ...base,
         _mergedIds: mergedIds,
         _duplicateCount: mergedIds.length,
-        nombre: base.nombre || sorted.find(c => c.nombre)?.nombre || base.telefono,
+        nombre: displayConvName(base) || displayConvName(sorted.find(c => c.nombre)) || displayPhone(base.telefono),
         last_message: cleanVisibleLastMessage(base.last_message) || cleanVisibleLastMessage(sorted.find(c => cleanVisibleLastMessage(c.last_message))?.last_message) || ''
       }
     }).sort((a,b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
@@ -6007,7 +6021,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                   <div key={conv.id} onClick={()=>setActiveConv(conv)}
                     style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:isActive?B.light:'#fff',transition:'background .15s'}}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:3}}>
-                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{conv.nombre||conv.telefono}{conv._duplicateCount>1 ? ` · ${conv._duplicateCount} registros unidos` : ''}</div>
+                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{displayConvName(conv)}{conv._duplicateCount>1 ? ` · ${conv._duplicateCount} registros unidos` : ''}</div>
                       <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
                         <span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:conv.mode==='ia'?'#E8EFFE':'#FEF9C3',color:conv.mode==='ia'?B.primary:'#713f12',fontWeight:700}}>
                           {conv.mode==='ia'?'🤖':'👤'}
@@ -6030,9 +6044,9 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
               {/* Header */}
               <div style={{flexShrink:0,padding:'10px 16px',borderBottom:'1px solid #dce8ff',background:'#fff',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
                 {isMobile && <button onClick={()=>setActiveConv(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:'#6366f1',padding:'0 4px'}}>←</button>}
-                <AV name={activeConv.nombre||activeConv.telefono} size={36}/>
+                <AV name={displayConvName(activeConv)} size={36}/>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{activeConv.nombre||activeConv.telefono}</div>
+                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{displayConvName(activeConv)}</div>
                   <div style={{fontSize:11,color:'#6b7280'}}><WaLink phone={activeConv.telefono}/>{activeConv.renta?' · Renta: '+activeConv.renta:''}{activeConv.modelo?' · '+activeConv.modelo:''}</div>
                 </div>
                 <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap'}}>
@@ -6214,8 +6228,8 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                         {selectedConvs.includes(c.id)&&<span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}
                       </div>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,fontWeight:600}}>{c.nombre||c.telefono}</div>
-                        <div style={{fontSize:10,color:'#9ca3af'}}>{c.telefono} · {c.status||'activo'}</div>
+                        <div style={{fontSize:12,fontWeight:600}}>{displayConvName(c)}</div>
+                        <div style={{fontSize:10,color:'#9ca3af'}}>{displayPhone(c.telefono)} · {c.status||'activo'}</div>
                       </div>
                     </div>
                   ))}
