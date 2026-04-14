@@ -1,5 +1,6 @@
-// api/agent.js — Motor genérico de aprendizaje para Rabito v6
-// No contiene guiones de negocio. Responde usando Panel IA + documentos + feedback + memoria.
+// api/agent.js — Rabito Engine genérico estable v9
+// Rol: generar SOLO la respuesta visible usando Panel IA + documentos + feedback + memoria.
+// No contiene negocio pregrabado. No deriva a humano/revisión salvo regla dura del panel.
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -7,18 +8,18 @@ const DEFAULT_MODEL = 'claude-3-5-haiku-20241022'
 const clean = (v = '') => String(v ?? '').trim()
 const nowIso = () => new Date().toISOString()
 
-const BUILT_IN_BLOCKED = [
+const BUILTIN_BLOCKED = [
+  '[Sistema]',
+  'Rabito no generó respuesta visible',
+  'Estoy acá. Revisemos esto paso a paso para ayudarte bien.',
+  'Para avanzar bien, dime cuál es el dato principal que quieres resolver ahora.',
+  'Para ayudarte bien necesito partir por esto',
   'alta demanda',
   'te respondo en unos minutos',
-  'te respondo en algunos minutos',
-  'estoy con alta demanda',
-  'soy una ia',
+  'soy una IA',
   'soy inteligencia artificial',
   'como modelo de lenguaje',
-  'no tengo acceso',
-  'para avanzar bien, dime cuál es el dato principal que quieres resolver ahora',
-  'para ayudarte bien necesito partir por esto',
-  '[sistema]'
+  'no tengo acceso al panel',
 ]
 
 function sb() {
@@ -28,12 +29,11 @@ function sb() {
 }
 
 function normalize(text = '') {
-  return String(text || '')
+  return clean(text)
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
 }
 
 function words(text = '') {
@@ -42,13 +42,13 @@ function words(text = '') {
 
 function flatten(value, depth = 0) {
   if (value == null || value === '') return ''
-  if (depth > 4) return ''
+  if (depth > 5) return ''
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return clean(value)
-  if (Array.isArray(value)) return value.slice(0, 120).map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
+  if (Array.isArray(value)) return value.slice(0, 200).map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
   if (typeof value === 'object') {
     return Object.entries(value)
       .filter(([k]) => !/password|token|secret|apikey|api_key|base64|image|file/i.test(k))
-      .slice(0, 120)
+      .slice(0, 200)
       .map(([k, v]) => {
         const txt = flatten(v, depth + 1)
         return txt ? `${k}: ${txt}` : ''
@@ -94,15 +94,16 @@ function parseModelOutput(raw = '') {
   const cleaned = stripFence(raw)
   const parsed = safeJson(cleaned) || safeJson(extractJson(cleaned))
   if (parsed && typeof parsed === 'object') {
-    const reply = typeof parsed.reply === 'object'
-      ? clean(parsed.reply.reply || parsed.reply.text || parsed.reply.message || '')
-      : clean(parsed.reply || parsed.message || parsed.text || '')
+    const replyValue = parsed.reply ?? parsed.message ?? parsed.text ?? ''
+    const reply = typeof replyValue === 'object'
+      ? clean(replyValue.reply || replyValue.text || replyValue.message || '')
+      : clean(replyValue)
     return {
       reply,
       action: clean(parsed.action || 'conversando'),
       statusUpdate: clean(parsed.statusUpdate || parsed.status || ''),
       escalateToHuman: parsed.escalateToHuman === true || parsed.derivarHumano === true || parsed.human === true,
-      derivationReason: clean(parsed.derivationReason || ''),
+      derivationReason: clean(parsed.derivationReason || parsed.reason || ''),
       leadUpdate: parsed.leadUpdate && typeof parsed.leadUpdate === 'object' ? parsed.leadUpdate : {},
       memoryUpdate: parsed.memoryUpdate && typeof parsed.memoryUpdate === 'object' ? parsed.memoryUpdate : {},
       learningSuggestion: clean(parsed.learningSuggestion || '')
@@ -110,42 +111,6 @@ function parseModelOutput(raw = '') {
   }
   if (cleaned && !cleaned.startsWith('{')) return { reply: cleaned, action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
   return { reply: '', action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
-}
-
-function blockedFromPanel(iaConfig = {}) {
-  const raw = flatten({
-    frasesProhibidas: iaConfig.frasesProhibidas,
-    blockedPhrases: iaConfig.blockedPhrases,
-    noDecir: iaConfig.noDecir,
-    reglasEntrenamiento: iaConfig.reglasEntrenamiento
-  })
-  const lines = raw.split('\n').map(clean).filter(Boolean)
-  const short = lines.filter(x => x.length >= 4 && x.length <= 180)
-  return [...BUILT_IN_BLOCKED, ...short]
-}
-
-function removeBlocked(reply = '', iaConfig = {}) {
-  let out = clean(reply).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').replace(/\*\*/g, '').trim()
-  if (!out) return ''
-  if (out.startsWith('{')) out = parseModelOutput(out).reply || ''
-  if (!out) return ''
-  const blocked = blockedFromPanel(iaConfig).filter(Boolean)
-  for (const phrase of blocked) {
-    const p = clean(phrase)
-    if (!p) continue
-    out = out.replace(new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '')
-  }
-  const badNorm = blocked.map(normalize).filter(Boolean)
-  const sentences = out.split(/(?<=[.!?])\s+|\n+/).map(clean).filter(Boolean)
-  const safe = sentences.filter(s => !badNorm.some(b => normalize(s).includes(b)))
-  out = (safe.length ? safe.join(' ') : out)
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^[-,.;:\s]+/, '')
-    .trim()
-  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 650) || 650
-  if (out.length > max) out = out.slice(0, Math.max(140, max - 20)).replace(/\s+\S*$/, '') + '...'
-  return out
 }
 
 async function setting(db, key, fallback = null) {
@@ -157,7 +122,15 @@ async function setting(db, key, fallback = null) {
 }
 
 async function loadSettings(db) {
-  const keys = ['ia_config', 'drive_content', 'rabito_knowledge', 'rabito_knowledge_chunks', 'agent_training', 'agent_rules', 'ia_knowledge']
+  const keys = [
+    'ia_config',
+    'agent_training',
+    'agent_rules',
+    'ia_knowledge',
+    'rabito_knowledge',
+    'rabito_knowledge_chunks',
+    'drive_content'
+  ]
   if (!db) return { map: {}, text: '' }
   try {
     const { data } = await db.from('crm_settings').select('key,value').in('key', keys)
@@ -166,22 +139,63 @@ async function loadSettings(db) {
       map[row.key] = row.value
       const txt = flatten(row.value)
       return txt ? `### ${row.key}\n${txt}` : ''
-    }).filter(Boolean).join('\n\n').slice(0, 28000)
+    }).filter(Boolean).join('\n\n').slice(0, 45000)
     return { map, text }
-  } catch { return { map: {}, text: '' } }
+  } catch (e) {
+    console.error('[AGENT] loadSettings error:', e?.message)
+    return { map: {}, text: '' }
+  }
+}
+
+function panelBlocked(iaConfig = {}) {
+  const raw = flatten({
+    frasesProhibidas: iaConfig.frasesProhibidas,
+    blockedPhrases: iaConfig.blockedPhrases,
+    noDecir: iaConfig.noDecir,
+    reglasEntrenamiento: iaConfig.reglasEntrenamiento,
+    reglas: iaConfig.reglas,
+    reglasDuras: iaConfig.reglasDuras,
+  })
+  const lines = raw.split('\n').map(clean).filter(x => x.length >= 4 && x.length <= 180)
+  return [...BUILTIN_BLOCKED, ...lines]
+}
+
+function removeBlocked(reply = '', iaConfig = {}) {
+  let out = clean(reply).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').replace(/\*\*/g, '').trim()
+  if (!out) return ''
+  if (out.startsWith('{')) out = parseModelOutput(out).reply || ''
+  if (!out) return ''
+
+  const blocked = panelBlocked(iaConfig).map(clean).filter(Boolean)
+  for (const phrase of blocked) {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    out = out.replace(new RegExp(escaped, 'ig'), '')
+  }
+
+  const badNorm = blocked.map(normalize).filter(Boolean)
+  const parts = out.split(/(?<=[.!?])\s+|\n+/).map(clean).filter(Boolean)
+  const safe = parts.filter(s => !badNorm.some(b => normalize(s).includes(b)))
+  out = (safe.length ? safe.join(' ') : out)
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^[-,.;:\s]+/, '')
+    .trim()
+
+  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 650) || 650
+  if (out.length > max) out = out.slice(0, Math.max(140, max - 20)).replace(/\s+\S*$/, '') + '...'
+  return out
 }
 
 function buildPanelBrain(iaConfig = {}) {
-  const blocks = []
   const priority = [
     'nombreAgente','assistantName','agentName','nombre',
     'personalidad','tono','rol','identidad',
-    'oferta','productos','servicios','catalogo','promesa',
-    'procesoVenta','pasos','flujo','guion',
-    'reglas','reglasDuras','reglasDerivacion','reglasRevision','instrucciones',
-    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas','agendaLink','linkAgenda',
-    'mensajeFallback','fallbackMessage','respuestaFallback'
+    'oferta','productos','servicios','catalogo','propuestaValor',
+    'procesoVenta','pasos','flujo','guion','metodoVenta',
+    'reglas','reglasDuras','reglasDerivacion','reglasRevision','instrucciones','noDecir','frasesProhibidas',
+    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas','agendaLink','linkAgenda','mensajeFallback','fallbackMessage'
   ]
+  const blocks = []
   const used = new Set()
   for (const key of priority) {
     if (!(key in iaConfig)) continue
@@ -194,7 +208,7 @@ function buildPanelBrain(iaConfig = {}) {
     const txt = flatten(value)
     if (txt) blocks.push(`### ${key}\n${txt}`)
   }
-  return blocks.join('\n\n').slice(0, 40000)
+  return blocks.join('\n\n').slice(0, 45000)
 }
 
 function getAgendaLink(iaConfig = {}, settingsText = '') {
@@ -205,11 +219,33 @@ function getAgendaLink(iaConfig = {}, settingsText = '') {
 }
 
 function score(query = '', txt = '') {
-  const qs = words(query).filter(w => w.length > 2)
+  const qs = [...new Set(words(query))]
   const nt = normalize(txt)
   let s = 0
-  for (const w of qs) if (nt.includes(w)) s += w.length > 4 ? 2 : 1
+  for (const w of qs) if (nt.includes(w)) s += w.length > 5 ? 3 : 1
   return s
+}
+
+function chunksFromSettings(settings = {}) {
+  const out = []
+  const v = settings.map?.rabito_knowledge_chunks
+  const arr = Array.isArray(v?.chunks) ? v.chunks : Array.isArray(v) ? v : []
+  arr.forEach((c, i) => out.push({
+    id: c.id || `settings-${i}`,
+    title: c.title || c.titulo || c.docName || c.nombre || 'Documento',
+    content: c.content || c.contenido || c.text || '',
+    tags: c.tags || c.carpeta || '',
+    activo: c.activo !== false
+  }))
+
+  const docs = settings.map?.rabito_knowledge?.docs || settings.map?.ia_config?.cerebroDocs || settings.map?.drive_content?.files || []
+  if (Array.isArray(docs)) {
+    docs.forEach((d, i) => {
+      const txt = d.content || d.text || d.contenido || d.extract || ''
+      if (txt) out.push({ id: d.id || `doc-${i}`, title: d.name || d.title || d.nombre || 'Documento', content: txt, tags: d.tags || '', activo: d.activo !== false })
+    })
+  }
+  return out
 }
 
 async function retrieveKnowledge(db, query = '', settings = {}) {
@@ -218,47 +254,65 @@ async function retrieveKnowledge(db, query = '', settings = {}) {
     const { data } = await db.from('crm_knowledge_chunks')
       .select('id,doc_id,title,titulo,content,contenido,tags,producto,canal,activo')
       .or('activo.is.null,activo.eq.true')
-      .limit(300)
-    if (Array.isArray(data)) chunks.push(...data)
+      .limit(400)
+    if (Array.isArray(data)) chunks.push(...data.map(c => ({ ...c, content: c.content || c.contenido, title: c.title || c.titulo })))
   } catch {}
-  const sk = settings.map?.rabito_knowledge_chunks
-  const sc = Array.isArray(sk?.chunks) ? sk.chunks : Array.isArray(sk) ? sk : []
-  if (sc.length) chunks.push(...sc.map((c, i) => ({
-    id: c.id || `settings-${i}`,
-    doc_id: c.doc_id || c.docId || 'settings',
-    title: c.title || c.titulo || c.docName || c.nombre || 'Documento',
-    content: c.content || c.contenido || c.text || '',
-    tags: c.tags || c.carpeta || '',
-    activo: c.activo !== false
-  })))
-  chunks = chunks.filter(c => c && c.activo !== false && clean(c.content || c.contenido))
-  if (!chunks.length) return { text: (settings.text || '').slice(0, 18000), chunks: [] }
-  const ranked = chunks.map(c => ({ ...c, _score: score(query, [c.title,c.titulo,c.tags,c.producto,c.canal,c.content,c.contenido].filter(Boolean).join(' ')) }))
+  chunks.push(...chunksFromSettings(settings))
+  chunks = chunks.filter(c => c && c.activo !== false && clean(c.content))
+
+  if (!chunks.length) return { text: (settings.text || '').slice(0, 22000), chunks: [] }
+
+  const ranked = chunks.map(c => ({ ...c, _score: score(query, [c.title, c.tags, c.producto, c.canal, c.content].filter(Boolean).join(' ')) }))
     .sort((a,b) => b._score - a._score)
-  const picked = (ranked.filter(c => c._score > 0).slice(0, 5).length ? ranked.filter(c => c._score > 0).slice(0, 5) : ranked.slice(0, 3))
+  const withScore = ranked.filter(c => c._score > 0).slice(0, 7)
+  const picked = withScore.length ? withScore : ranked.slice(0, 4)
+
   return {
-    text: picked.map((c, i) => `### Fragmento ${i+1}: ${clean(c.title || c.titulo || 'Documento')}\n${clean(c.content || c.contenido).slice(0, 1400)}`).join('\n\n'),
-    chunks: picked.map(c => ({ id: c.id, title: c.title || c.titulo, score: c._score || 0 }))
+    text: picked.map((c, i) => `### Documento ${i + 1}: ${clean(c.title || 'Documento')}\n${clean(c.content).slice(0, 1800)}`).join('\n\n'),
+    chunks: picked.map(c => ({ id: c.id, title: c.title, score: c._score || 0 }))
   }
 }
 
-async function loadFeedback(db, query = '') {
+function normalizeTrainingItem(x = {}) {
+  const original = clean(x.original || x.msg_content || x.message || x.before || x.incorrect || x.mensajeOriginal || '')
+  const improved = clean(x.improved || x.correction || x.after || x.correct || x.respuestaCorrecta || x.mensajeMejorado || '')
+  const reason = clean(x.reason || x.feedback || x.explanation || x.instruccion || x.regla || '')
+  const active = x.active !== false && x.activo !== false
+  return { original, improved, reason, active, raw: x }
+}
+
+async function loadTraining(db, query = '') {
   const items = []
   try {
-    const { data } = await db.from('crm_conv_feedback').select('msg_content,feedback,correction,improved,created_at').order('created_at', { ascending: false }).limit(80)
+    const { data } = await db.from('crm_conv_feedback')
+      .select('msg_content,feedback,correction,improved,created_at')
+      .order('created_at', { ascending: false })
+      .limit(120)
     if (Array.isArray(data)) items.push(...data)
   } catch {}
   try {
     const v = await setting(db, 'agent_training', [])
     const arr = Array.isArray(v) ? v : Array.isArray(v?.items) ? v.items : []
-    items.push(...arr.filter(x => x && x.active !== false))
+    items.push(...arr)
   } catch {}
-  const ranked = items.map(x => {
-    const txt = flatten(x)
-    return { txt, score: score(query, txt) }
-  }).filter(x => x.txt).sort((a,b) => b.score - a.score)
-  const picked = (ranked.filter(x => x.score > 0).slice(0, 6).length ? ranked.filter(x => x.score > 0).slice(0, 6) : ranked.slice(0, 4))
-  return { text: picked.map((x,i) => `### Feedback ${i+1}\n${x.txt.slice(0,1000)}`).join('\n\n'), count: picked.length }
+
+  const normalized = items.map(normalizeTrainingItem).filter(x => x.active && (x.improved || x.reason || x.original))
+  const ranked = normalized.map(x => ({ ...x, _score: score(query, [x.original, x.reason, x.improved].join(' ')) }))
+    .sort((a,b) => b._score - a._score)
+  const picked = (ranked.filter(x => x._score > 0).slice(0, 8).length ? ranked.filter(x => x._score > 0).slice(0, 8) : ranked.slice(0, 5))
+  return {
+    items: picked,
+    text: picked.map((x, i) => `### Aprendizaje ${i + 1}\nSituación/mensaje: ${x.original || 'general'}\nCorrección o regla: ${x.reason || 'sin explicación'}\nRespuesta preferida: ${x.improved || 'sin respuesta exacta'}`).join('\n\n'),
+    count: picked.length
+  }
+}
+
+function tryTrainingReply(training, message, iaConfig = {}) {
+  const direct = (training.items || []).find(x => x.improved && (x._score >= 3 || normalize(x.original) === normalize(message)))
+  if (!direct) return ''
+  let reply = direct.improved
+  // Evita copiar una respuesta que contiene datos personales rígidos si no corresponden; la IA luego la adaptará, pero fallback directo debe ser seguro.
+  return removeBlocked(reply, iaConfig)
 }
 
 async function loadMemory(db, leadData = {}) {
@@ -285,8 +339,11 @@ function sanitizeHistory(history = []) {
 }
 
 function conversationFacts(history = [], message = '', leadData = {}) {
-  const user = [...history, { role:'user', content: message }].filter(m => m.role === 'user').slice(-10).map((m,i) => `Cliente ${i+1}: ${clean(m.content).slice(0,400)}`)
-  const lead = Object.entries(leadData || {}).filter(([,v]) => v).slice(0, 20).map(([k,v]) => `${k}: ${clean(v).slice(0,250)}`)
+  const user = [...history, { role:'user', content: message }]
+    .filter(m => m.role === 'user')
+    .slice(-12)
+    .map((m,i) => `Cliente ${i+1}: ${clean(m.content).slice(0,420)}`)
+  const lead = Object.entries(leadData || {}).filter(([,v]) => v).slice(0, 25).map(([k,v]) => `${k}: ${clean(v).slice(0,250)}`)
   return [...user, ...lead].join('\n') || 'Sin datos previos.'
 }
 
@@ -302,18 +359,17 @@ function derivationRulesText(iaConfig = {}) {
 }
 
 function hasDerivationRules(iaConfig = {}) {
-  return /(derivar|humano|persona|asesor|ejecutivo|revision|escalar|transferir|tomar control)/.test(normalize(derivationRulesText(iaConfig)))
+  return /(derivar|humano|persona|asesor|ejecutivo|revision|revisión|escalar|transferir|tomar control)/.test(normalize(derivationRulesText(iaConfig)))
 }
 
 function normStatus(v = '') {
   const s = normalize(v).replace(/\s+/g, '_')
-  const allowed = ['activo','calificado','frio','no_interesado','requiere_revision']
-  return allowed.includes(s) ? s : ''
+  return ['activo','calificado','frio','no_interesado','requiere_revision'].includes(s) ? s : ''
 }
 
 function safeUpdate(obj = {}) {
   const out = {}
-  for (const [k,v] of Object.entries(obj || {}).slice(0,40)) {
+  for (const [k,v] of Object.entries(obj || {}).slice(0,50)) {
     const key = clean(k).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0,60)
     if (!key || /password|token|secret|apikey|api_key|created_at|updated_at/i.test(key)) continue
     const val = typeof v === 'object' ? flatten(v).slice(0,800) : clean(v).slice(0,800)
@@ -330,22 +386,40 @@ function extractLocalFields(message = '', leadData = {}, agendaLink = '') {
   return safeUpdate(out)
 }
 
-function buildPrompt({ agentName, panelBrain, knowledge, feedback, memory, facts, agendaLink, iaConfig, history, message }) {
+function panelFallback(iaConfig = {}, message = '', training = null) {
+  const fromTraining = tryTrainingReply(training || { items: [] }, message, iaConfig)
+  if (fromTraining) return fromTraining
+
+  const explicit = clean(iaConfig.fallbackMessage || iaConfig.mensajeFallback || iaConfig.respuestaFallback || '')
+  if (explicit) return explicit
+
+  const firstUseful = flatten({
+    proceso: iaConfig.pasos || iaConfig.procesoVenta || iaConfig.flujo,
+    faq: iaConfig.preguntasFrecuentes || iaConfig.faq,
+    oferta: iaConfig.oferta || iaConfig.productos || iaConfig.servicios,
+    entrenamiento: iaConfig.entrenamiento || iaConfig.respuestasGuardadas
+  }).split('\n').map(clean).find(x => x.length > 12 && x.length < 500)
+
+  if (firstUseful) return firstUseful
+  return 'Hola, te leo. Cuéntame qué necesitas y te ayudo.'
+}
+
+function buildPrompt({ agentName, panelBrain, knowledge, trainingText, memory, facts, agendaLink, iaConfig, history, message }) {
   const recentAssistant = history.filter(m => m.role === 'assistant').slice(-6).map((m,i) => `${i+1}. ${m.content}`).join('\n') || 'Sin mensajes previos.'
   const derivRules = derivationRulesText(iaConfig)
-  return `Eres ${agentName}. Eres un agente genérico de atención y ventas.
+  return `Eres ${agentName}. Eres un agente genérico de atención y ventas por WhatsApp.
 
 REGLA PRINCIPAL:
-No tienes rubro, producto, precios, requisitos ni guiones propios. Solo respondes con lo aprendido en Panel IA, documentos, feedback, memoria y conversación.
+No tienes rubro, productos, precios, requisitos ni guiones propios. Solo respondes usando lo aprendido en Panel IA, documentos, feedback, memoria y conversación.
 
 PANEL IA:
 ${panelBrain || 'Panel IA vacío.'}
 
-CONOCIMIENTO RELEVANTE:
+DOCUMENTOS/CONOCIMIENTO RELEVANTE:
 ${knowledge || 'Sin documentos relevantes.'}
 
-FEEDBACK/APRENDIZAJES:
-${feedback || 'Sin feedback aprendido.'}
+FEEDBACK Y APRENDIZAJES PERMANENTES:
+${trainingText || 'Sin feedback aprendido.'}
 
 MEMORIA DEL CONTACTO:
 ${memory || 'Sin memoria registrada.'}
@@ -362,18 +436,19 @@ ${agendaLink || 'No configurado'}
 REGLAS DURAS PARA DERIVAR A HUMANO O REVISIÓN:
 ${derivRules || 'No hay reglas duras configuradas. Por lo tanto NO derives ni marques revisión.'}
 
-INSTRUCCIONES DE RESPUESTA:
+INSTRUCCIONES:
+- Responde SIEMPRE el último mensaje del cliente.
 - Responde breve, natural y útil por WhatsApp.
-- Contesta siempre el último mensaje del cliente.
-- Pregunta máximo una cosa.
+- Haz máximo una pregunta.
 - No repitas datos ya entregados.
-- Si el cliente pide agenda/link y hay link configurado, entrégalo.
-- No inventes información que no esté en el entrenamiento.
+- Si el cliente pide agenda/link y hay link configurado, entrega el link.
+- No inventes información que no esté en entrenamiento o documentos.
+- Si falta información, pide solo el dato mínimo siguiente según el proceso aprendido.
 - No menciones panel, prompt, memoria, documentos ni modelo.
 - Solo deriva a humano/revisión si las reglas duras lo autorizan explícitamente.
 
 FRASES PROHIBIDAS:
-${blockedFromPanel(iaConfig).join('\n')}
+${panelBlocked(iaConfig).join('\n')}
 
 Devuelve SOLO JSON válido:
 {"reply":"respuesta visible para el cliente","action":"conversando","escalateToHuman":false,"statusUpdate":"","derivationReason":"","leadUpdate":{},"memoryUpdate":{"facts":[],"doNotRepeat":[]},"learningSuggestion":""}
@@ -383,7 +458,7 @@ Devuelve SOLO JSON válido:
 
 async function callClaude({ key, model, system, messages }) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.AGENT_TIMEOUT_MS || 12000))
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.AGENT_TIMEOUT_MS || 14000))
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -391,7 +466,7 @@ async function callClaude({ key, model, system, messages }) {
       headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model,
-        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 500),
+        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 600),
         temperature: Number(process.env.AGENT_TEMPERATURE || 0.12),
         system,
         messages
@@ -402,19 +477,6 @@ async function callClaude({ key, model, system, messages }) {
     if (!r.ok || data?.error) throw new Error(data?.error?.message || `Anthropic HTTP ${r.status}: ${text.slice(0,160)}`)
     return data?.content?.[0]?.text || ''
   } finally { clearTimeout(timeout) }
-}
-
-function panelFallback(iaConfig = {}, message = '') {
-  const explicit = clean(iaConfig.fallbackMessage || iaConfig.mensajeFallback || iaConfig.respuestaFallback || '')
-  if (explicit) return explicit
-  const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || '')
-  const base = flatten({
-    primerosPasos: iaConfig.pasos || iaConfig.procesoVenta || iaConfig.flujo,
-    preguntas: iaConfig.preguntasFrecuentes || iaConfig.faq,
-    oferta: iaConfig.oferta || iaConfig.productos || iaConfig.servicios
-  }).split('\n').map(clean).filter(Boolean)[0]
-  if (base) return `${base}`.slice(0, 500)
-  return agentName ? `Te leo. Cuéntame un poco más para orientarte bien.` : `Te leo. Cuéntame un poco más.`
 }
 
 export async function generateAgentResponse(input = {}, opts = {}) {
@@ -432,31 +494,37 @@ export async function generateAgentResponse(input = {}, opts = {}) {
   const agendaLink = getAgendaLink(iaConfig, settings.text)
   const facts = conversationFacts(history, message, leadData)
   const query = [message, facts, panelBrain].join('\n')
-  const [feedback, memory, knowledge] = await Promise.all([
-    loadFeedback(db, query),
+
+  const [training, memory, knowledge] = await Promise.all([
+    loadTraining(db, query),
     loadMemory(db, leadData),
     retrieveKnowledge(db, query, settings)
   ])
+
   const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || 'Asistente')
   const localUpdate = extractLocalFields(message, leadData, agendaLink)
+  const directTrainingReply = tryTrainingReply(training, message, iaConfig)
 
   if (!key) {
-    const reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
-    return { ok: false, reply, action: 'conversando', escalateToHuman: false, statusUpdate: '', leadUpdate: localUpdate, error: 'ANTHROPIC_KEY_missing', trace: { fallback: true, genericEngine: true, hardcodedBusiness: false } }
+    const reply = removeBlocked(directTrainingReply || panelFallback(iaConfig, message, training), iaConfig)
+    return { ok: false, reply, action: 'conversando', escalateToHuman: false, statusUpdate: '', leadUpdate: localUpdate, error: 'ANTHROPIC_KEY_missing', trace: { fallback: true, feedbackUsed: training.count, knowledgeChunksUsed: knowledge.chunks.length, genericEngine: true, hardcodedBusiness: false } }
   }
 
-  const system = buildPrompt({ agentName, panelBrain, knowledge: knowledge.text, feedback: feedback.text, memory, facts, agendaLink, iaConfig, history, message })
+  const system = buildPrompt({ agentName, panelBrain, knowledge: knowledge.text, trainingText: training.text, memory, facts, agendaLink, iaConfig, history, message })
   const messages = [...history, { role: 'user', content: message }]
 
   try {
+    console.log('[AGENT] Claude start', { model, hasPanel: !!panelBrain, training: training.count, chunks: knowledge.chunks.length })
     const raw = await callClaude({ key, model, system, messages })
     const parsed = parseModelOutput(raw)
     let reply = removeBlocked(parsed.reply, iaConfig)
-    if (!reply) reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
+    if (!reply) reply = removeBlocked(directTrainingReply || panelFallback(iaConfig, message, training), iaConfig)
+
     const rules = hasDerivationRules(iaConfig)
     const requestedStatus = rules ? normStatus(parsed.statusUpdate) : ''
     const requestedHuman = rules && parsed.escalateToHuman === true
     await saveMemory(db, leadData, parsed.memoryUpdate)
+
     return {
       ok: true,
       reply,
@@ -469,7 +537,8 @@ export async function generateAgentResponse(input = {}, opts = {}) {
       learningSuggestion: parsed.learningSuggestion || '',
       trace: {
         panelUsed: !!panelBrain,
-        feedbackUsed: feedback.count,
+        feedbackUsed: training.count,
+        trainingDirectCandidate: !!directTrainingReply,
         knowledgeChunksUsed: knowledge.chunks.length,
         agendaConfigured: !!agendaLink,
         derivationAllowedByHardRules: !!(requestedHuman || requestedStatus === 'requiere_revision'),
@@ -478,7 +547,8 @@ export async function generateAgentResponse(input = {}, opts = {}) {
       }
     }
   } catch (error) {
-    const reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
+    console.error('[AGENT] Claude error:', error?.message)
+    const reply = removeBlocked(directTrainingReply || panelFallback(iaConfig, message, training), iaConfig)
     return {
       ok: false,
       reply,
@@ -487,7 +557,7 @@ export async function generateAgentResponse(input = {}, opts = {}) {
       statusUpdate: '',
       leadUpdate: localUpdate,
       error: error?.message || 'agent_error',
-      trace: { genericEngine: true, fallback: true, hardcodedBusiness: false, derivationAllowedByHardRules: false }
+      trace: { genericEngine: true, fallback: true, feedbackUsed: training.count, knowledgeChunksUsed: knowledge.chunks.length, hardcodedBusiness: false, derivationAllowedByHardRules: false }
     }
   }
 }
