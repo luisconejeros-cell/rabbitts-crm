@@ -373,7 +373,7 @@ async function loadKnowledgeContext(iaConfig = {}) {
       if (row.key === 'drive_content' && Array.isArray(value.files)) {
         const txt = value.files
           .slice(0, 10)
-          .map(file => `📄 ${file.name || 'Documento'}:\n${String(file.content || '').slice(0, 9000)}`)
+          .map(file => `📄 ${file.name || 'Documento'}${file.categoria ? ' · Categoría: ' + file.categoria : ''}${file.carpeta ? ' · Carpeta: ' + file.carpeta : ''}:\n${String(file.content || '').slice(0, 9000)}`)
           .join('\n\n───────────\n\n')
         if (txt) blocks.push('═══ BASE DE CONOCIMIENTO INTERNA ═══\n' + txt)
       }
@@ -475,22 +475,35 @@ function buildLeadContext(leadData = {}) {
 }
 
 function buildTrainingBlocks(iaConfig = {}) {
-  if (!Array.isArray(iaConfig.entrenamiento)) return ''
+  const qa = Array.isArray(iaConfig.entrenamiento) ? iaConfig.entrenamiento : []
+  const permanentRules = Array.isArray(iaConfig.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento : []
 
-  return iaConfig.entrenamiento
+  const qaBlocks = qa
     .filter(item => item?.pregunta && item?.respuesta)
     .slice(0, 60)
     .map((item, index) => {
-      let block = `[${index + 1}] SI EL CLIENTE PREGUNTA O DICE ALGO SIMILAR A: "${item.pregunta}"\nRESPONDE CON ESTA IDEA: "${item.respuesta}"`
-      if (item.razon) block += `\nCONTEXTO: ${item.razon}`
+      let block = `[FAQ ${index + 1}] SI EL CLIENTE PREGUNTA O DICE ALGO SIMILAR A: "${item.pregunta}"
+RESPONDE CON ESTA IDEA: "${item.respuesta}"`
+      if (item.razon) block += `
+CONTEXTO: ${item.razon}`
       return block
     })
-    .join('\n\n')
+
+  const ruleBlocks = permanentRules
+    .filter(item => item?.title && item?.content)
+    .slice(0, 80)
+    .map((item, index) => `[REGLA PERMANENTE ${index + 1}] ${item.title}: ${item.content}`)
+
+  return [...ruleBlocks, ...qaBlocks].join('\n\n')
 }
 
 function getSystemPrompt({ iaConfig, calendly, rentaMin, rentaMinPareja, entrenamientoBlocks, knowledgeContext, memorySummary, leadData, currentIntent }) {
   const personalidad = cleanText(iaConfig.personalidad || 'Eres Rabito, asistente comercial de Rabbitts Capital Chile.')
   const guion = cleanText(iaConfig.guion)
+  const productosRabito = cleanText(iaConfig.productosRabito)
+  const pasosRabito = cleanText(iaConfig.pasosRabito)
+  const reglasRabito = cleanText(iaConfig.reglasRabito)
+  const objecionesRabito = cleanText(iaConfig.objecionesRabito)
 
   return `${personalidad}
 
@@ -505,6 +518,20 @@ No finjas ser Luis ni otra persona del equipo. Si preguntan qué eres, responde:
 3. Calificar con pocas preguntas: renta, pie/ahorros, comuna/país, timing y si compra solo o con renta complementaria.
 4. Si existe interés real, llevar a llamada/reunión.
 5. Mantener siempre la conversación activa. Nunca suenes caído, saturado o robótico.
+
+═══ CAPACITACIÓN RABITO DESDE CRM ═══
+${productosRabito ? `PRODUCTOS/SERVICIOS:
+${productosRabito}
+` : ''}
+${pasosRabito ? `PASOS A SEGUIR:
+${pasosRabito}
+` : ''}
+${reglasRabito ? `REGLAS DURAS:
+${reglasRabito}
+` : ''}
+${objecionesRabito ? `MANEJO DE OBJECIONES:
+${objecionesRabito}
+` : ''}
 
 ═══ CRITERIOS DE CALIFICACIÓN ═══
 Califica si cumple AL MENOS UNO:
