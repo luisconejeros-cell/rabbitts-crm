@@ -6097,71 +6097,62 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 // ─── Cerebro Rabito: Subir documentos como base de conocimiento ───────────────
 function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
   const [docs, setDocs] = React.useState([])
-  const [uploading, setUploading] = React.useState(false)
-  const [msg, setMsg] = React.useState(null)
-  const [section, setSection] = React.useState('personalidad')
-  const [docCategory, setDocCategory] = React.useState('General')
-  const [folderName, setFolderName] = React.useState('General')
-  const [newRule, setNewRule] = React.useState({ title:'', content:'' })
   const [rules, setRules] = React.useState([])
+  const [section, setSection] = React.useState('perfil')
+  const [msg, setMsg] = React.useState(null)
+  const [uploading, setUploading] = React.useState(false)
+  const [folderName, setFolderName] = React.useState('General')
+  const [docCategory, setDocCategory] = React.useState('General')
+  const [newRule, setNewRule] = React.useState({ title:'', content:'' })
+  const [testMsg, setTestMsg] = React.useState('Quiero invertir en renta corta en Santiago Centro')
+  const [testReply, setTestReply] = React.useState(null)
+  const [testing, setTesting] = React.useState(false)
   const fileRef = React.useRef(null)
-  const B = { primary:'#4F46E5', light:'#EEF2FF', mid:'#6b7280', border:'#E8EFFE' }
+  const B2 = { primary:'#4F46E5', light:'#EEF2FF', mid:'#64748B', border:'#E2E8F0' }
 
   const setCfg = (key, value) => upd && upd([key], value)
   const val = (key, fallback='') => iaConfig?.[key] ?? fallback
 
   React.useEffect(() => {
-    try {
-      const saved = Array.isArray(iaConfig?.cerebroDocs) ? iaConfig.cerebroDocs : []
-      setDocs(saved)
-    } catch(e) { setDocs([]) }
+    setDocs(Array.isArray(iaConfig?.cerebroDocs) ? iaConfig.cerebroDocs : [])
   }, [iaConfig?.cerebroDocs])
 
   React.useEffect(() => {
-    try {
-      const saved = Array.isArray(iaConfig?.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento : []
-      setRules(saved)
-    } catch(e) { setRules([]) }
+    setRules(Array.isArray(iaConfig?.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento : [])
   }, [iaConfig?.reglasEntrenamiento])
 
   const syncKnowledge = async (nextDocs = docs, nextRules = rules) => {
     const driveContent = {
-      files: (nextDocs || []).map(d => ({
-        name: d.nombre,
-        content: d.content,
-        categoria: d.categoria || 'General',
-        carpeta: d.carpeta || 'General'
-      })),
+      files: (nextDocs || []).map(d => ({ name:d.nombre, content:d.content, categoria:d.categoria || 'General', carpeta:d.carpeta || 'General' })),
       synced_at: new Date().toISOString(),
       source: 'rabito_cerebro'
     }
     const rabitoKnowledge = {
-      items: (nextRules || []).map(r => ({ title: r.title, content: r.content, type: 'regla_operativa' })),
+      items: (nextRules || []).map(r => ({ title:r.title, content:r.content, type:'regla_operativa' })),
       synced_at: new Date().toISOString(),
       source: 'rabito_training'
     }
-
     if (dbReady && supabase) {
-      await supabase.from('crm_settings').upsert({ key: 'drive_content', value: driveContent })
-      await supabase.from('crm_settings').upsert({ key: 'rabito_knowledge', value: rabitoKnowledge })
+      await supabase.from('crm_settings').upsert({ key:'drive_content', value:driveContent })
+      await supabase.from('crm_settings').upsert({ key:'rabito_knowledge', value:rabitoKnowledge })
     }
-    if (upd) {
-      upd(['cerebroDocs'], nextDocs)
-      upd(['reglasEntrenamiento'], nextRules)
-      upd(['driveConectado'], (nextDocs || []).length > 0 || (nextRules || []).length > 0)
-    }
+    upd && upd(['cerebroDocs'], nextDocs)
+    upd && upd(['reglasEntrenamiento'], nextRules)
+    upd && upd(['driveConectado'], (nextDocs || []).length > 0 || (nextRules || []).length > 0)
   }
 
   const applyRecommendedTrainingTemplate = () => {
+    setCfg('activo', true)
     setCfg('siempreActivo', true)
     setCfg('tiempoEspera', 4)
-    setCfg('personalidad', `Eres Rabito, asistente comercial de Rabbitts Capital. Respondes siempre como un asesor humano de WhatsApp: natural, directo, amable y orientado a agendar una reunión cuando el cliente muestra interés real. No dices que eres IA salvo que te lo pregunten. Nunca dices que estás con alta demanda, ocupado o que responderás después. Mantienes la conversación viva con una sola pregunta útil por mensaje. No prometes rentabilidades garantizadas, no inventas precios ni condiciones y no hablas mal de competidores.`)
-    setCfg('guion', `1. Saluda de forma breve y pregunta el objetivo: invertir para renta corta, renta tradicional o comprar para vivir.\n2. Diagnostica con pocas preguntas: renta líquida, pie/ahorros, país o comuna de interés, si compra solo o con renta complementaria.\n3. Educa sin vender de golpe: explica que Rabbitts revisa estrategia, crédito, tributación y rentabilidad real.\n4. Si el cliente muestra interés, entrega renta, pregunta por precio/proyecto o dice que quiere avanzar, invita a agendar reunión.\n5. Si pide humano, reclamo o caso complejo, escala.`)
-    setCfg('productosRabito', `Rabbitts Capital vende y estructura inversiones inmobiliarias en Chile, Paraguay y Florida. Servicios: búsqueda de proyectos, análisis de inversión, apoyo hipotecario, estrategia tributaria con Contabiliario, administración de renta corta/tradicional con RentaDays/Rentastik y planificación de retiro inmobiliario. La asesoría de compra normalmente no tiene costo directo para el cliente porque Rabbitts recibe comisión de la inmobiliaria.`)
-    setCfg('pasosRabito', `Entender objetivo → Calificar capacidad → Recomendar camino → Invitar a reunión → Derivar a asesor humano cuando corresponda.`)
-    setCfg('reglasRabito', `Siempre disponible 24/7.\nNunca responder alta demanda.\nNunca decir que no puede ayudar.\nNunca inventar precios, stock, rentabilidades ni beneficios tributarios.\nSi no sabe, pregunta dato clave o agenda.\nMáximo una pregunta por mensaje.\nMensajes cortos estilo WhatsApp.`)
-    setCfg('objecionesRabito', `Si dicen "no tengo pie": explicar que depende del proyecto y que algunos permiten pie en cuotas, pero se debe revisar caso.\nSi preguntan "se paga solo": aclarar que ninguna renta se debe prometer como garantizada; se proyecta anual, no mensual.\nSi preguntan por IVA/DFL2: explicar que se revisa caso a caso con estructura tributaria.\nSi piden precio: pedir objetivo/comuna antes de cotizar para no recomendar cualquier cosa.`)
-    setMsg({ type:'success', text:'✅ Plantilla profesional aplicada a Rabito.' })
+    setCfg('personalidad', `Eres Rabito, asistente comercial de Rabbitts Capital. Respondes como un asesor humano de WhatsApp: natural, directo, amable y vendedor. Tu objetivo es entender al cliente, calificarlo y llevarlo a una reunión cuando exista interés real. No dices que eres IA salvo que te lo pregunten. Nunca dices que estás con alta demanda, ocupado o que responderás después. Mantienes la conversación viva con una sola pregunta útil por mensaje. No prometes rentabilidades garantizadas, no inventas precios, no inventas stock, no inventas condiciones y no hablas mal de competidores.`)
+    setCfg('productosRabito', `Rabbitts Capital ayuda a personas a invertir en propiedades en Chile, Paraguay y Florida. Trabaja con venta de departamentos para inversión, renta corta, renta tradicional, planificación de retiro inmobiliario, apoyo hipotecario, estrategia tributaria con Contabiliario y administración de propiedades con RentaDays/Rentastik. La asesoría de compra normalmente no tiene costo directo para el cliente porque Rabbitts recibe comisión de la inmobiliaria.`)
+    setCfg('guion', `Flujo comercial obligatorio:\n1. Entender qué busca: renta corta, renta tradicional, retiro inmobiliario o comprar para vivir.\n2. Calificar sin abrumar: renta líquida, si compra solo o con pareja, si tiene propiedades, comuna o país de interés y ahorro/pie aproximado.\n3. Educar brevemente: explicar que Rabbitts revisa proyecto, crédito, tributación y rentabilidad real antes de recomendar.\n4. Si el cliente entrega renta suficiente, pide reunión o muestra intención clara de avanzar, entregar el link de agenda configurado.\n5. Si falta un dato clave, pedir solo un dato por mensaje.\n6. Si pide humano, está molesto o pregunta algo legal/tributario complejo, escalar.`)
+    setCfg('pasosRabito', `Entender objetivo → Calificar capacidad → Educar con criterio → Recomendar próximo paso → Agendar o escalar.`)
+    setCfg('reglasRabito', `Reglas duras:\n- Siempre disponible 24/7.\n- Nunca responder “alta demanda”.\n- Nunca decir “te respondo en unos minutos”.\n- Nunca repetir datos ya entregados por el cliente.\n- Nunca pedir nuevamente renta, email, nombre, modelo o propiedades si ya están en la conversación.\n- Nunca inventar precios, stock, rentabilidades, subsidios ni beneficios tributarios.\n- Máximo una pregunta por mensaje.\n- Mensajes cortos, naturales y estilo WhatsApp.\n- Si el cliente dice “quiero agendar” y ya calificó, enviar el link de agenda configurado.\n- Si el cliente no califica, orientar con respeto y no forzar reunión.`)
+    setCfg('objecionesRabito', `Objeciones y respuestas:\n- “No tengo experiencia”: responder que justamente la asesoría es para orientar y evitar errores.\n- “No tengo pie”: explicar que depende del proyecto y que algunos permiten pie en cuotas, sin prometer aprobación.\n- “Se paga solo”: aclarar que ninguna renta se debe prometer como garantizada; se proyecta anual, no mensual.\n- “Quiero renta corta”: explicar que no todos los edificios sirven y que se revisa ubicación, demanda, reglas del edificio y operación.\n- “Gano poco”: preguntar si compra con pareja o complementar renta; si no califica, entregar orientación general.\n- “Quiero agendar”: si ya hay renta y objetivo, enviar link de agenda.`)
+    setSection('test')
+    setMsg({ type:'success', text:'Configuración comercial recomendada aplicada y guardándose automáticamente.' })
   }
 
   const toBase64 = (file) => new Promise((resolve, reject) => {
@@ -6175,14 +6166,8 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     const name = file.name.toLowerCase()
     if (name.endsWith('.pdf') || name.endsWith('.docx') || name.endsWith('.doc')) {
       const base64 = await toBase64(file)
-      const mediaType = name.endsWith('.pdf')
-        ? 'application/pdf'
-        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      const r = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'extract', file: base64, mediaType, fileName: file.name })
-      })
+      const mediaType = name.endsWith('.pdf') ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      const r = await fetch('/api/agent', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action:'extract', file:base64, mediaType, fileName:file.name }) })
       const data = await r.json()
       if (!r.ok || data.error) throw new Error(data.error || 'Error extrayendo texto')
       return data.text || ''
@@ -6202,33 +6187,29 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     const newDocs = []
     for (const file of Array.from(files)) {
       try {
-        setMsg({ type: 'info', text: `Leyendo ${file.name}...` })
+        setMsg({ type:'info', text:`Leyendo ${file.name}...` })
         const text = await readFileText(file)
         const clean = text.replace(/[\x00-\x08\x0B\x0E-\x1F]/g, '').trim()
-        if (clean.length < 10) { setMsg({ type: 'error', text: `${file.name}: vacío o no legible` }); continue }
+        if (clean.length < 10) { setMsg({ type:'error', text:`${file.name}: vacío o no legible` }); continue }
         newDocs.push({
-          id: 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
-          nombre: file.name,
-          categoria: docCategory || 'General',
-          carpeta: folderName || 'General',
-          content: clean.slice(0, 18000),
-          chars: clean.length,
-          truncado: clean.length > 18000,
-          fecha: new Date().toISOString()
+          id:'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2,5),
+          nombre:file.name,
+          carpeta:folderName || 'General',
+          categoria:docCategory || 'General',
+          content:clean.slice(0, 18000),
+          chars:clean.length,
+          truncado:clean.length > 18000,
+          fecha:new Date().toISOString()
         })
-      } catch (e) {
-        setMsg({ type: 'error', text: `Error con ${file.name}: ${e.message}` })
+      } catch(e) {
+        setMsg({ type:'error', text:`Error con ${file.name}: ${e.message}` })
       }
     }
     if (newDocs.length) {
       const allDocs = [...docs, ...newDocs]
       setDocs(allDocs)
-      try {
-        await syncKnowledge(allDocs, rules)
-        setMsg({ type: 'success', text: `✅ ${newDocs.length} documento(s) cargado(s). Rabito ya puede leerlos.` })
-      } catch (e) {
-        setMsg({ type: 'error', text: 'Error guardando: ' + e.message })
-      }
+      try { await syncKnowledge(allDocs, rules); setMsg({ type:'success', text:`${newDocs.length} documento(s) cargado(s). Rabito ya puede usarlos.` }) }
+      catch(e) { setMsg({ type:'error', text:'Error guardando: ' + e.message }) }
     }
     setUploading(false)
     if (fileRef.current) fileRef.current.value = ''
@@ -6238,7 +6219,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     const updated = docs.filter(d => d.id !== docId)
     setDocs(updated)
     try { await syncKnowledge(updated, rules) } catch(e) {}
-    setMsg({ type: 'success', text: 'Documento eliminado' })
+    setMsg({ type:'success', text:'Documento eliminado.' })
   }
 
   const addRule = async () => {
@@ -6246,17 +6227,12 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
       setMsg({ type:'error', text:'Escribe título y regla antes de guardar.' })
       return
     }
-    const item = {
-      id: 'rule-' + Date.now(),
-      title: newRule.title.trim(),
-      content: newRule.content.trim(),
-      fecha: new Date().toISOString()
-    }
+    const item = { id:'rule-' + Date.now(), title:newRule.title.trim(), content:newRule.content.trim(), fecha:new Date().toISOString() }
     const next = [...rules, item]
     setRules(next)
     setNewRule({ title:'', content:'' })
     try { await syncKnowledge(docs, next) } catch(e) {}
-    setMsg({ type:'success', text:'✅ Regla guardada. Rabito la usará en futuras conversaciones.' })
+    setMsg({ type:'success', text:'Regla permanente guardada.' })
   }
 
   const deleteRule = async (id) => {
@@ -6265,140 +6241,145 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     try { await syncKnowledge(docs, next) } catch(e) {}
   }
 
+  const testRabito = async () => {
+    if (!testMsg.trim()) return setMsg({ type:'error', text:'Escribe un mensaje de prueba.' })
+    setTesting(true)
+    setTestReply(null)
+    try {
+      const r = await fetch('/api/agent', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message:testMsg, iaConfig, leadData:{nombre:'Cliente de prueba'}, conversationHistory:[] }) })
+      const data = await r.json()
+      setTestReply(data)
+      setMsg({ type:data?.ok?'success':'error', text:data?.ok?'Prueba ejecutada.':'Error probando Rabito.' })
+    } catch(e) { setMsg({ type:'error', text:'Error probando Rabito: ' + e.message }) }
+    setTesting(false)
+  }
+
   const totalChars = docs.reduce((s, d) => s + (Number(d.chars) || d.content?.length || 0), 0)
   const folders = [...new Set(docs.map(d => d.carpeta || 'General'))]
-  const sections = [
-    { id:'personalidad', icon:'🎭', title:'Personalidad', sub:'Tono, estilo y reglas base' },
-    { id:'productos', icon:'🏢', title:'Productos', sub:'Qué vende Rabbitts' },
-    { id:'pasos', icon:'🧭', title:'Pasos a seguir', sub:'Flujo comercial' },
-    { id:'reglas', icon:'🛡️', title:'Reglas duras', sub:'Prohibiciones y objeciones' },
-    { id:'docs', icon:'📚', title:'Documentos', sub:'Base de conocimiento' },
-    { id:'sugerencias', icon:'🧠', title:'Aprendizaje', sub:'Correcciones permanentes' },
+  const agendaConfigured = Boolean((iaConfig?.agendaLink || iaConfig?.calendlyLink || '').trim())
+  const checks = [val('personalidad','').length > 80, val('productosRabito','').length > 80, val('guion','').length > 80, val('reglasRabito','').length > 80, agendaConfigured, docs.length > 0 || rules.length > 0]
+  const score = Math.round((checks.filter(Boolean).length / checks.length) * 100)
+
+  const modules = [
+    { id:'perfil', icon:'🎯', title:'Perfil comercial', sub:'Identidad, oferta y agenda' },
+    { id:'reglas', icon:'🛡️', title:'Reglas de venta', sub:'Límites y objeciones' },
+    { id:'conocimiento', icon:'📚', title:'Conocimiento', sub:'Documentos y reglas' },
+    { id:'test', icon:'🧪', title:'Probar Rabito', sub:'Simula antes de vender' },
   ]
 
-  const SectionCard = ({item}) => (
-    <div onClick={() => setSection(item.id)} style={{border:'1px solid '+(section===item.id?B.primary:'#E2E8F0'),background:section===item.id?B.light:'#fff',borderRadius:12,padding:'12px',cursor:'pointer',display:'flex',gap:10,alignItems:'center'}}>
-      <div style={{width:34,height:34,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',background:section===item.id?B.primary:'#F3F4F6',color:section===item.id?'#fff':'#374151',fontSize:17}}>{item.icon}</div>
-      <div style={{minWidth:0}}>
-        <div style={{fontSize:13,fontWeight:800,color:section===item.id?B.primary:'#0F172A'}}>{item.title}</div>
-        <div style={{fontSize:11,color:B.mid,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{item.sub}</div>
-      </div>
+  const ModuleButton = ({item}) => {
+    const active = section === item.id
+    return (
+      <button onClick={() => setSection(item.id)} style={{width:'100%',textAlign:'left',border:'1px solid '+(active?B2.primary:'#E2E8F0'),background:active?'#F5F7FF':'#fff',borderRadius:14,padding:12,cursor:'pointer',display:'flex',gap:10,alignItems:'center',boxShadow:active?'0 10px 22px rgba(79,70,229,.10)':'none'}}>
+        <div style={{width:36,height:36,borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',background:active?B2.primary:'#F1F5F9',color:active?'#fff':'#475569',fontSize:17}}>{item.icon}</div>
+        <div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:900,color:active?B2.primary:'#0F172A'}}>{item.title}</div><div style={{fontSize:11,color:B2.mid}}>{item.sub}</div></div>
+      </button>
+    )
+  }
+
+  const TextAreaBlock = ({label, hint, configKey, minHeight=150}) => (
+    <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
+      <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:4}}>{label}</div>
+      <div style={{fontSize:12,color:B2.mid,marginBottom:10,lineHeight:1.45}}>{hint}</div>
+      <textarea value={val(configKey, '')} onChange={e=>setCfg(configKey, e.target.value)} style={{...sty.inp,minHeight,resize:'vertical',fontSize:12,lineHeight:1.5,fontFamily:'monospace',background:'#FBFDFF'}} />
     </div>
   )
 
-  const TextAreaBlock = ({label, hint, configKey, minHeight=170}) => (
-    <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
-      <div style={{fontSize:14,fontWeight:800,color:B.primary,marginBottom:4}}>{label}</div>
-      <div style={{fontSize:12,color:B.mid,marginBottom:10}}>{hint}</div>
-      <textarea value={val(configKey, '')} onChange={e=>setCfg(configKey, e.target.value)}
-        style={{...sty.inp,minHeight,resize:'vertical',fontSize:12,lineHeight:1.5,fontFamily:'monospace'}} />
-    </div>
+  const Health = ({ok, text}) => (
+    <div style={{display:'flex',alignItems:'center',gap:7,padding:'8px 10px',borderRadius:999,border:'1px solid '+(ok?'#BBF7D0':'#FED7AA'),background:ok?'#F0FDF4':'#FFF7ED',color:ok?'#166534':'#9A3412',fontSize:11,fontWeight:800}}><span>●</span>{text}</div>
   )
 
   return (
-    <div style={{display:'grid',gridTemplateColumns:'minmax(190px,240px) 1fr',gap:16}}>
-      <div style={{display:'flex',flexDirection:'column',gap:10}}>
-        <div style={{background:B.light,border:'1px solid '+B.border,borderRadius:12,padding:14}}>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
-            <span style={{fontSize:24}}>🧠</span>
-            <div>
-              <div style={{fontWeight:900,fontSize:15,color:B.primary}}>Capacita a Rabito</div>
-              <div style={{fontSize:11,color:B.mid}}>Personalidad, productos, pasos y conocimiento</div>
-            </div>
+    <div style={{display:'grid',gridTemplateColumns:'minmax(220px,280px) 1fr',gap:16}}>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{background:'linear-gradient(180deg,#FFFFFF 0%,#F5F7FF 100%)',border:'1px solid '+B2.border,borderRadius:18,padding:16,boxShadow:'0 8px 24px rgba(15,23,42,.05)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
+            <div style={{width:42,height:42,borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',background:B2.primary,color:'#fff',fontSize:21}}>🤖</div>
+            <div><div style={{fontWeight:900,fontSize:15,color:'#0F172A'}}>Entrenamiento Rabito</div><div style={{fontSize:11,color:B2.mid}}>Menos botones. Más ventas.</div></div>
           </div>
-          <button onClick={applyRecommendedTrainingTemplate} style={{width:'100%',padding:'9px 12px',borderRadius:10,border:'none',background:B.primary,color:'#fff',fontSize:12,fontWeight:800,cursor:'pointer'}}>
-            ⚡ Aplicar plantilla recomendada
-          </button>
+          <div style={{height:8,background:'#E2E8F0',borderRadius:999,overflow:'hidden',marginBottom:8}}><div style={{height:'100%',width:score+'%',background:score>=80?'#22C55E':score>=55?B2.primary:'#F59E0B',borderRadius:999}}/></div>
+          <div style={{fontSize:12,color:B2.mid,marginBottom:12}}><strong style={{color:'#0F172A'}}>{score}% listo.</strong> Mientras más completo esté, menos improvisa Rabito.</div>
+          <button onClick={applyRecommendedTrainingTemplate} style={{width:'100%',padding:'10px 12px',borderRadius:12,border:'none',background:B2.primary,color:'#fff',fontSize:12,fontWeight:900,cursor:'pointer',boxShadow:'0 10px 22px rgba(79,70,229,.18)'}}>Restaurar estrategia recomendada</button>
         </div>
-        {sections.map(s => <SectionCard key={s.id} item={s}/>)}
+        {modules.map(m => <ModuleButton key={m.id} item={m}/>) }
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14,display:'flex',flexDirection:'column',gap:8}}>
+          <div style={{fontSize:12,fontWeight:900,color:'#0F172A'}}>Estado real</div>
+          <Health ok={!!iaConfig?.activo} text={iaConfig?.activo?'IA encendida':'IA apagada'} />
+          <Health ok={!!iaConfig?.siempreActivo} text={iaConfig?.siempreActivo?'24/7 activo':'Con horario'} />
+          <Health ok={agendaConfigured} text={agendaConfigured?'Agenda configurada':'Falta link de agenda'} />
+          <Health ok={!!(docs.length || rules.length)} text={(docs.length || rules.length)?'Conocimiento cargado':'Sin conocimiento extra'} />
+        </div>
       </div>
 
       <div style={{display:'flex',flexDirection:'column',gap:14,minWidth:0}}>
         <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontSize:20,fontWeight:900,color:B.primary}}>{docs.length}</div><div style={{fontSize:11,color:B.mid}}>Documentos</div></div>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontSize:20,fontWeight:900,color:B.primary}}>{folders.length}</div><div style={{fontSize:11,color:B.mid}}>Carpetas</div></div>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontSize:20,fontWeight:900,color:B.primary}}>{rules.length}</div><div style={{fontSize:11,color:B.mid}}>Reglas</div></div>
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontSize:20,fontWeight:900,color:B.primary}}>{(totalChars/1000).toFixed(1)}k</div><div style={{fontSize:11,color:B.mid}}>Caracteres</div></div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:24,fontWeight:900,color:B2.primary}}>{docs.length}</div><div style={{fontSize:11,color:B2.mid,fontWeight:700}}>Documentos</div></div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:24,fontWeight:900,color:B2.primary}}>{folders.length}</div><div style={{fontSize:11,color:B2.mid,fontWeight:700}}>Carpetas</div></div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:24,fontWeight:900,color:B2.primary}}>{rules.length}</div><div style={{fontSize:11,color:B2.mid,fontWeight:700}}>Reglas</div></div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:24,fontWeight:900,color:B2.primary}}>{(totalChars/1000).toFixed(1)}k</div><div style={{fontSize:11,color:B2.mid,fontWeight:700}}>Caracteres</div></div>
         </div>
 
-        {msg && (
-          <div style={{padding:'10px 14px',borderRadius:8,fontSize:13,fontWeight:700,background:msg.type==='error'?'#FEF2F2':msg.type==='info'?'#EEF2FF':'#DCFCE7',color:msg.type==='error'?'#991b1b':msg.type==='info'?'#1B4FC8':'#14532d'}}>{msg.text}</div>
-        )}
+        {msg && <div style={{padding:'11px 14px',borderRadius:12,fontSize:13,fontWeight:800,background:msg.type==='error'?'#FEF2F2':msg.type==='info'?'#EEF2FF':'#DCFCE7',color:msg.type==='error'?'#991b1b':msg.type==='info'?'#1B4FC8':'#14532d'}}>{msg.text}</div>}
 
-        {section==='personalidad' && <TextAreaBlock label="🎭 Personalidad de Rabito" hint="Esto queda grabado en el prompt principal. No dependas de feedback suelto." configKey="personalidad" minHeight={230}/>} 
-        {section==='productos' && <TextAreaBlock label="🏢 Productos y servicios que Rabito puede ofrecer" hint="Describe Rabbitts, países, proyectos, renta corta, tributación, crédito y qué NO debe prometer." configKey="productosRabito" minHeight={260}/>} 
-        {section==='pasos' && <TextAreaBlock label="🧭 Pasos a seguir en cada conversación" hint="Define el flujo: entender, calificar, recomendar y agendar." configKey="pasosRabito" minHeight={220}/>} 
-        {section==='reglas' && (
-          <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
-            <TextAreaBlock label="🛡️ Reglas duras" hint="Prohibiciones, límites, cuándo escalar y frases que nunca debe decir." configKey="reglasRabito" minHeight={180}/>
-            <TextAreaBlock label="💬 Manejo de objeciones" hint="Qué responder ante precio, falta de pie, se paga solo, IVA, DFL2, miedo al crédito, etc." configKey="objecionesRabito" minHeight={180}/>
+        {section==='perfil' && <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
+            <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:4}}>Link de agenda que enviará Rabito</div>
+            <div style={{fontSize:12,color:B2.mid,marginBottom:10}}>No está amarrado a ningún proveedor. Puedes usar tu agenda del CRM, Calendly, Google Calendar, TidyCal u otro.</div>
+            <input value={iaConfig?.agendaLink || iaConfig?.calendlyLink || ''} onChange={e=>setCfg('agendaLink', e.target.value)} placeholder="https://tu-link-de-agenda.com/..." style={sty.inp}/>
           </div>
-        )}
+          <TextAreaBlock label="Personalidad" hint="Define cómo habla Rabito. Esto sí afecta al agente porque se guarda en la configuración principal." configKey="personalidad" />
+          <TextAreaBlock label="Oferta comercial" hint="Qué vende Rabbitts, en qué países, qué servicios incluye y qué no debe prometer." configKey="productosRabito" />
+          <TextAreaBlock label="Proceso de venta" hint="El camino que debe seguir: entender, calificar, educar y agendar." configKey="guion" />
+        </div>}
 
-        {section==='docs' && (
-          <div style={{display:'flex',flexDirection:'column',gap:14}}>
-            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
-              <div style={{fontWeight:800,fontSize:14,color:B.primary,marginBottom:4}}>📚 Base de conocimiento</div>
-              <div style={{fontSize:12,color:B.mid,marginBottom:12}}>Sube documentos por carpeta y categoría. Rabito los usará como contexto antes de responder.</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-                <Fld label="Carpeta"><input value={folderName} onChange={e=>setFolderName(e.target.value)} style={sty.inp} placeholder="Ej: Chile, Paraguay, Florida, Tributario"/></Fld>
-                <Fld label="Categoría"><select value={docCategory} onChange={e=>setDocCategory(e.target.value)} style={sty.inp}><option>General</option><option>Proyectos</option><option>Precios</option><option>Tributario</option><option>Crédito</option><option>Renta corta</option><option>Objeciones</option><option>Guiones</option></select></Fld>
-              </div>
-              <div onClick={() => fileRef.current && fileRef.current.click()} onDragOver={e => { e.preventDefault(); e.currentTarget.style.background='#EEF2FF' }} onDragLeave={e => { e.currentTarget.style.background='#f9fafb' }} onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files); e.currentTarget.style.background='#f9fafb' }} style={{border:'2px dashed '+B.border,borderRadius:12,padding:'28px',textAlign:'center',cursor:'pointer',background:'#f9fafb'}}>
-                <div style={{fontSize:30,marginBottom:8}}>📂</div>
-                <div style={{fontWeight:800,fontSize:14,color:B.primary}}>{uploading?'⏳ Procesando...':'Haz clic o arrastra archivos aquí'}</div>
-                <div style={{fontSize:12,color:B.mid,marginTop:4}}>PDF, DOCX, TXT, MD, CSV, HTML</div>
-                <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.html" style={{display:'none'}} onChange={e => uploadFiles(e.target.files)}/>
-              </div>
+        {section==='reglas' && <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
+          <TextAreaBlock label="Reglas duras" hint="Aquí van las instrucciones que Rabito no puede romper. Esto pesa más que el feedback suelto." configKey="reglasRabito" />
+          <TextAreaBlock label="Objeciones y respuestas" hint="Entrena cómo responder precio, pie, renta corta, IVA, DFL2, miedo al crédito y clientes que no califican." configKey="objecionesRabito" />
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
+            <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:4}}>Nueva regla permanente</div>
+            <div style={{fontSize:12,color:B2.mid,marginBottom:10}}>Úsalo cuando corrijas una mala respuesta. Ejemplo: “Si el cliente ya entregó renta, no volver a pedirla”.</div>
+            <Fld label="Título"><input value={newRule.title} onChange={e=>setNewRule({...newRule,title:e.target.value})} style={sty.inp} placeholder="Ej: No repetir datos ya entregados"/></Fld>
+            <div style={{height:8}}/>
+            <Fld label="Regla"><textarea value={newRule.content} onChange={e=>setNewRule({...newRule,content:e.target.value})} style={{...sty.inp,minHeight:90,resize:'vertical'}} placeholder="Describe exactamente cómo debe actuar Rabito..."/></Fld>
+            <button onClick={addRule} style={{marginTop:10,padding:'10px 14px',borderRadius:12,border:'none',background:B2.primary,color:'#fff',fontSize:12,fontWeight:900,cursor:'pointer'}}>Guardar regla</button>
+            {rules.length > 0 && <div style={{marginTop:14,borderTop:'1px solid #EEF2FF',paddingTop:12}}>{rules.map(r => <div key={r.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px 0',borderBottom:'1px solid #F1F5F9'}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:12,fontWeight:900,color:'#0F172A'}}>{r.title}</div><div style={{fontSize:12,color:B2.mid,marginTop:3,whiteSpace:'pre-wrap'}}>{r.content}</div></div><button onClick={() => deleteRule(r.id)} style={{border:'1px solid #FCA5A5',background:'#FEF2F2',color:'#991B1B',borderRadius:8,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'}}>Eliminar</button></div>)}</div>}
+          </div>
+        </div>}
+
+        {section==='conocimiento' && <div style={{display:'flex',flexDirection:'column',gap:14}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
+            <div style={{fontWeight:900,fontSize:14,color:'#0F172A',marginBottom:4}}>Base de conocimiento</div>
+            <div style={{fontSize:12,color:B2.mid,marginBottom:12}}>Sube material real: proyectos, preguntas frecuentes, guiones, tributario, renta corta y políticas comerciales.</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+              <Fld label="Carpeta"><input value={folderName} onChange={e=>setFolderName(e.target.value)} style={sty.inp} placeholder="Ej: Chile, Paraguay, Florida"/></Fld>
+              <Fld label="Categoría"><select value={docCategory} onChange={e=>setDocCategory(e.target.value)} style={sty.inp}><option>General</option><option>Proyectos</option><option>Precios</option><option>Tributario</option><option>Crédito</option><option>Renta corta</option><option>Objeciones</option><option>Guiones</option></select></Fld>
             </div>
-
-            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
-              <div style={{fontWeight:800,fontSize:13,color:B.primary,marginBottom:12}}>Documentos cargados ({docs.length})</div>
-              {docs.length === 0 && <div style={{textAlign:'center',color:B.mid,fontSize:13,padding:24}}>Sin documentos aún.</div>}
-              {docs.map(doc => (
-                <div key={doc.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,border:'1px solid #f0f4ff',marginBottom:6,background:'#f9fbff'}}>
-                  <span style={{fontSize:20}}>{doc.nombre?.endsWith('.pdf')?'📕':doc.nombre?.endsWith('.docx')||doc.nombre?.endsWith('.doc')?'📘':'📄'}</span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontWeight:700,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{doc.nombre}</div>
-                    <div style={{fontSize:11,color:B.mid}}>{doc.carpeta||'General'} · {doc.categoria||'General'} · {((Number(doc.chars)||doc.content?.length||0)/1000).toFixed(1)}k caracteres{doc.truncado && <span style={{color:'#f59e0b',fontWeight:700}}> · truncado</span>}</div>
-                  </div>
-                  <button onClick={() => deleteDoc(doc.id)} style={{padding:'4px 10px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontSize:11,fontWeight:700}}>🗑️</button>
-                </div>
-              ))}
+            <div onClick={() => fileRef.current && fileRef.current.click()} onDragOver={e => { e.preventDefault(); e.currentTarget.style.background='#EEF2FF' }} onDragLeave={e => { e.currentTarget.style.background='#F8FAFC' }} onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files); e.currentTarget.style.background='#F8FAFC' }} style={{border:'2px dashed '+B2.border,borderRadius:14,padding:'30px',textAlign:'center',cursor:'pointer',background:'#F8FAFC'}}>
+              <div style={{fontSize:28,marginBottom:8}}>📂</div><div style={{fontWeight:900,fontSize:14,color:B2.primary}}>{uploading?'Procesando...':'Subir documentos para entrenar'}</div><div style={{fontSize:12,color:B2.mid,marginTop:4}}>PDF, DOCX, TXT, MD, CSV, HTML</div>
+              <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.html" style={{display:'none'}} onChange={e => uploadFiles(e.target.files)}/>
             </div>
           </div>
-        )}
-
-        {section==='sugerencias' && (
-          <div style={{display:'flex',flexDirection:'column',gap:12}}>
-            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
-              <div style={{fontWeight:800,fontSize:14,color:B.primary,marginBottom:4}}>🧠 Aprendizaje permanente</div>
-              <div style={{fontSize:12,color:B.mid,marginBottom:12}}>Cuando corrijas a Rabito, guarda la corrección como regla. Esto sí queda grabado para futuras respuestas.</div>
-              <Fld label="Título de la regla"><input value={newRule.title} onChange={e=>setNewRule({...newRule,title:e.target.value})} style={sty.inp} placeholder="Ej: Nunca decir alta demanda"/></Fld>
-              <div style={{height:8}}/>
-              <Fld label="Contenido de la regla"><textarea value={newRule.content} onChange={e=>setNewRule({...newRule,content:e.target.value})} style={{...sty.inp,minHeight:120,resize:'vertical'}} placeholder="Describe exactamente cómo debe actuar Rabito..."/></Fld>
-              <button onClick={addRule} style={{marginTop:10,padding:'9px 14px',borderRadius:10,border:'none',background:B.primary,color:'#fff',fontSize:12,fontWeight:800,cursor:'pointer'}}>Guardar regla permanente</button>
-            </div>
-            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
-              <div style={{fontWeight:800,fontSize:13,color:B.primary,marginBottom:12}}>Reglas guardadas ({rules.length})</div>
-              {rules.length === 0 && <div style={{textAlign:'center',color:B.mid,fontSize:13,padding:18}}>Aún no hay reglas permanentes.</div>}
-              {rules.map(r => (
-                <div key={r.id} style={{border:'1px solid #f0f4ff',background:'#f9fbff',borderRadius:10,padding:12,marginBottom:8}}>
-                  <div style={{display:'flex',alignItems:'center',gap:10}}>
-                    <div style={{flex:1,fontSize:13,fontWeight:800,color:'#0F172A'}}>{r.title}</div>
-                    <button onClick={()=>deleteRule(r.id)} style={{padding:'4px 9px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontSize:11,fontWeight:700}}>Eliminar</button>
-                  </div>
-                  <div style={{fontSize:12,color:'#4b5563',marginTop:6,whiteSpace:'pre-wrap'}}>{r.content}</div>
-                </div>
-              ))}
-            </div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
+            <div style={{fontWeight:900,fontSize:13,color:'#0F172A',marginBottom:12}}>Documentos cargados</div>
+            {docs.length === 0 && <div style={{textAlign:'center',color:B2.mid,fontSize:13,padding:24}}>Sin documentos aún. Rabito puede vender, pero improvisará más.</div>}
+            {docs.map(doc => <div key={doc.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,border:'1px solid #EEF2FF',marginBottom:7,background:'#FBFDFF'}}><span style={{fontSize:20}}>{doc.nombre?.endsWith('.pdf')?'📕':doc.nombre?.endsWith('.docx')||doc.nombre?.endsWith('.doc')?'📘':'📄'}</span><div style={{flex:1,minWidth:0}}><div style={{fontWeight:800,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{doc.nombre}</div><div style={{fontSize:11,color:B2.mid}}>{doc.carpeta||'General'} · {doc.categoria||'General'} · {((Number(doc.chars)||doc.content?.length||0)/1000).toFixed(1)}k caracteres{doc.truncado && <span style={{color:'#F59E0B',fontWeight:800}}> · truncado</span>}</div></div><button onClick={() => deleteDoc(doc.id)} style={{padding:'5px 10px',borderRadius:8,border:'1px solid #FCA5A5',background:'#FEF2F2',color:'#991B1B',cursor:'pointer',fontSize:11,fontWeight:800}}>Eliminar</button></div>)}
           </div>
-        )}
+        </div>}
+
+        {section==='test' && <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}>
+            <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:4}}>Prueba rápida de Rabito</div>
+            <div style={{fontSize:12,color:B2.mid,marginBottom:10}}>Antes de conectar campañas, prueba si responde natural, si no repite datos y si lleva a reunión cuando corresponde.</div>
+            <textarea value={testMsg} onChange={e=>setTestMsg(e.target.value)} style={{...sty.inp,minHeight:90,resize:'vertical'}} placeholder="Escribe como si fueras un cliente..." />
+            <button onClick={testRabito} disabled={testing} style={{marginTop:10,padding:'10px 14px',borderRadius:12,border:'none',background:B2.primary,color:'#fff',fontSize:12,fontWeight:900,cursor:'pointer',opacity:testing?0.6:1}}>{testing?'Probando...':'Probar respuesta'}</button>
+          </div>
+          {testReply && <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}><div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',marginBottom:10}}><div style={{fontSize:14,fontWeight:900,color:'#0F172A'}}>Respuesta generada</div><div style={{fontSize:11,fontWeight:900,color:testReply?.action==='calificado'?'#166534':'#475569',background:testReply?.action==='calificado'?'#DCFCE7':'#F1F5F9',borderRadius:999,padding:'6px 10px'}}>Acción: {testReply?.action || '—'}</div></div><div style={{fontSize:13,lineHeight:1.55,color:'#0F172A',whiteSpace:'pre-wrap',background:'#F8FAFC',border:'1px solid #EEF2FF',borderRadius:12,padding:14}}>{testReply?.reply || testReply?.error || 'Sin respuesta'}</div></div>}
+          <div style={{background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:14,padding:16}}><div style={{fontSize:13,fontWeight:900,color:'#0F172A',marginBottom:8}}>Criterio para aprobar la respuesta</div><div style={{fontSize:12,color:B2.mid,lineHeight:1.7}}>Debe sonar humana, ser breve, no pedir datos repetidos, no prometer rentabilidad, hacer una sola pregunta y avanzar a reunión cuando el cliente ya entregó renta, objetivo y correo.</div></div>
+        </div>}
       </div>
     </div>
   )
 }
-
 
 // ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
 function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agendaSettings={}, setAgendaSettings}) {
