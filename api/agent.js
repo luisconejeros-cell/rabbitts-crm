@@ -1,8 +1,8 @@
-// api/agent.js — Rabito Vambe-style Plus
+// api/agent.js — Rabito coherente con memoria comercial y link de agenda configurable
 // Agente comercial conversacional para Rabbitts Capital.
 // Backend puro para Vercel. No pegar JSX/HTML en este archivo.
 
-const DEFAULT_CALENDLY = 'https://calendly.com/agenda-rabbittscapital/60min'
+const DEFAULT_AGENDA_LINK = 'https://crm.rabbittscapital.com/agenda'
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001'
 
 const ALLOWED_LEAD_KEYS = new Set(['nombre', 'renta', 'modelo', 'email'])
@@ -45,6 +45,53 @@ const ROBOTIC_PATTERNS = [
 
 function cleanText(value = '') {
   return String(value || '').trim()
+}
+
+function cleanUrl(url = '') {
+  return cleanText(url)
+    .replace(/[).,;]+$/g, '')
+    .replace(/^<|>$/g, '')
+}
+
+function findAgendaUrlInText(text = '') {
+  const raw = String(text || '')
+  const matches = raw.match(/https?:\/\/[^\s\]}")<>]+/gi) || []
+  if (!matches.length) return ''
+
+  const preferred = matches.find(url => {
+    const idx = raw.indexOf(url)
+    const window = normalizeForCheck(raw.slice(Math.max(0, idx - 90), idx + url.length + 90))
+    return /(agenda|agendar|reunion|reunión|llamada|cita|calendario|calendar|booking|book|meet|calendly)/.test(window)
+  })
+
+  return cleanUrl(preferred || matches[0])
+}
+
+function resolveAgendaLink(iaConfig = {}, knowledgeContext = '') {
+  const direct = [
+    iaConfig.agendaLink,
+    iaConfig.linkAgenda,
+    iaConfig.reunionLink,
+    iaConfig.linkReunion,
+    iaConfig.meetingLink,
+    iaConfig.bookingLink,
+    iaConfig.urlAgenda,
+    iaConfig.calendlyLink // compatibilidad con versiones anteriores del CRM
+  ].map(cleanUrl).find(Boolean)
+  if (direct) return direct
+
+  const textSources = [
+    iaConfig.reglasRabito,
+    iaConfig.pasosRabito,
+    iaConfig.guion,
+    iaConfig.productosRabito,
+    iaConfig.objecionesRabito,
+    Array.isArray(iaConfig.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento.map(r => `${r?.title || ''}\n${r?.content || ''}`).join('\n') : '',
+    Array.isArray(iaConfig.entrenamiento) ? iaConfig.entrenamiento.map(r => `${r?.pregunta || ''}\n${r?.respuesta || ''}`).join('\n') : '',
+    knowledgeContext
+  ].join('\n\n')
+
+  return findAgendaUrlInText(textSources) || DEFAULT_AGENDA_LINK
 }
 
 function sleep(ms) {
@@ -125,11 +172,23 @@ function parseMoneyToNumber(text = '') {
     .replace(/\./g, '')
     .replace(/,/g, '.')
 
-  const millionMatch = raw.match(/(\d+(?:\.\d+)?)\s*(m|mm|millon|millones)/i)
+  // 2.5m, 2,5 millones, 2 millones. No confundir la "m" de "mensual" con millones.
+  const millionMatch = raw.match(/\b(\d+(?:\.\d+)?)\s*(mm|millon(?:es)?|m\b)/i)
   if (millionMatch) return Math.round(Number(millionMatch[1]) * 1000000)
+
+  // 900 mil, 2500 mil, 900k.
+  const thousandMatch = raw.match(/\b(\d+(?:\.\d+)?)\s*(mil|k)\b/i)
+  if (thousandMatch) return Math.round(Number(thousandMatch[1]) * 1000)
 
   const numberMatch = raw.match(/\b(\d{6,8})\b/)
   if (numberMatch) return Number(numberMatch[1])
+
+  // En WhatsApp muchos escriben "2500 mensual" para decir $2.500.000.
+  const shortMonthlyMatch = raw.match(/\b(\d{3,5})\b/)
+  if (shortMonthlyMatch && /(mensual|liquido|líquido|renta|sueldo|gano|ingreso|hacemos|sumamos|pareja)/.test(raw)) {
+    const value = Number(shortMonthlyMatch[1])
+    if (value >= 500 && value <= 99999) return value * 1000
+  }
 
   return 0
 }
@@ -211,11 +270,193 @@ function buildMemorySummary(leadData = {}, conversationHistory = []) {
   return [...new Set(items)].join('\n') || 'Sin memoria comercial suficiente todavía.'
 }
 
-function buildSafeFallback(message = '', leadData = {}, calendly = DEFAULT_CALENDLY, conversationHistory = []) {
+function extractNameCandidate(text = '') {
+  const lines = String(text || '')
+    .split(/\n+/)
+    .map(line => cleanText(line))
+    .filter(Boolean)
+
+  for (const line of lines) {
+    if (/@/.test(line)) continue
+    if (/\d/.test(line)) continue
+    const n = normalizeForCheck(line)
+    if (/^(no|si|sí|renta|airbnb|booking|stgo|santiago|quiero|gano|pero|responde)\b/.test(n)) continue
+    if (/^[a-záéíóúñ]+\s+[a-záéíóúñ]+/i.test(line)) return line
+  }
+  return ''
+}
+
+function extractLeadProfileFromHistory(leadData = {}, conversationHistory = [], currentMessage = '') {
+  const profile = {
+    nombre: cleanText(leadData.nombre),
+    telefono: cleanText(leadData.telefono),
+    email: cleanText(leadData.email),
+    rentaIndividual: 0,
+    rentaPareja: 0,
+    rentaTexto: cleanText(leadData.renta),
+    modelo: cleanText(leadData.modelo),
+    ubicacion: '',
+    propiedades: '',
+    experiencia: '',
+    quiereAgendar: false,
+    interesReal: false
+  }
+
+  const allMessages = [
+    ...(Array.isArray(conversationHistory) ? conversationHistory : []),
+    { role: 'user', content: String(currentMessage || '') }
+  ]
+  const allUserText = normalizeForCheck(allMessages.filter(m => m?.role === 'user').map(m => m.content || '').join(' '))
+
+  for (const item of allMessages) {
+    if (item?.role !== 'user') continue
+    const text = String(item.content || '')
+    const n = normalizeForCheck(text)
+
+    const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
+    if (emailMatch) profile.email = emailMatch[0]
+
+    const nameCandidate = extractNameCandidate(text)
+    if (nameCandidate && (!profile.nombre || profile.nombre.startsWith('+'))) profile.nombre = nameCandidate
+
+    const income = parseMoneyToNumber(text)
+    if (income) {
+      const isCouple = /(pareja|esposa|esposo|conyuge|c[oó]nyuge|entre\s+los\s+dos|juntos|sumamos|hacemos|familiar|familia)/i.test(n)
+      const contextSaysCouple = /pareja|entre\s+los\s+dos|juntos|hacemos|sumamos/.test(allUserText)
+      if (isCouple || (income >= 2000000 && contextSaysCouple)) {
+        profile.rentaPareja = Math.max(profile.rentaPareja || 0, income)
+      } else {
+        profile.rentaIndividual = Math.max(profile.rentaIndividual || 0, income)
+      }
+    }
+
+    if (/renta\s+corta|airbnb|booking|diaria/.test(n)) profile.modelo = 'renta_corta'
+    if (/renta\s+tradicional|arriendo\s+tradicional/.test(n)) profile.modelo = 'renta_tradicional'
+    if (/retiro|jubilacion|jubilación/.test(n)) profile.modelo = 'retiro_inmobiliario'
+    if (/vivir|primera\s+vivienda/.test(n)) profile.modelo = 'vivir'
+
+    if (/stgo\s*centro|santiago\s*centro/.test(n)) profile.ubicacion = 'Santiago centro'
+    else if (/nunoa|ñuñoa/.test(n)) profile.ubicacion = 'Ñuñoa'
+    else if (/florida|miami|orlando/.test(n)) profile.ubicacion = 'Florida / USA'
+    else if (/paraguay/.test(n)) profile.ubicacion = 'Paraguay'
+
+    if (/no\s+tengo\s+propiedades|sin\s+propiedades|no\s+tengo\s+ninguna\s+propiedad/.test(n)) profile.propiedades = 'No tiene propiedades'
+    else if (/tengo\s+\d+\s+propiedad|tengo\s+\d+\s+dpto|tengo\s+\d+\s+departamento/.test(n)) profile.propiedades = text
+
+    if (/no\s+tengo\s+experiencia|sin\s+experiencia|primera\s+vez/.test(n)) profile.experiencia = 'Sin experiencia en Airbnb/Booking'
+    else if (/tengo\s+experiencia|manejo\s+airbnb|ya\s+arriendo\s+por\s+airbnb/.test(n)) profile.experiencia = 'Con experiencia en Airbnb/Booking'
+
+    if (/agendar|agenda|reuni[oó]n|llamada|quiero\s+hablar|calendly/.test(n)) profile.quiereAgendar = true
+    if (/renta\s+corta|airbnb|booking|dpto|departamento|invertir|stgo\s*centro|santiago\s*centro|iva|dfl2|credito|cr[eé]dito/.test(n)) profile.interesReal = true
+  }
+
+  if (!profile.rentaTexto) {
+    if (profile.rentaPareja) profile.rentaTexto = `${formatCLP(profile.rentaPareja)} conjunta`
+    else if (profile.rentaIndividual) profile.rentaTexto = formatCLP(profile.rentaIndividual)
+  }
+
+  return profile
+}
+
+function isProfileQualified(profile = {}, rentaMin = 1500000, rentaMinPareja = 2000000) {
+  return (
+    Number(profile.rentaIndividual || 0) >= rentaMin ||
+    Number(profile.rentaPareja || 0) >= rentaMinPareja ||
+    (profile.quiereAgendar && (profile.rentaIndividual || profile.rentaPareja || profile.email))
+  )
+}
+
+function missingMeetingFields(profile = {}) {
+  const missing = []
+  if (!profile.nombre || profile.nombre.startsWith('+')) missing.push('nombre completo')
+  if (!profile.email) missing.push('correo')
+  if (!profile.rentaIndividual && !profile.rentaPareja && !profile.rentaTexto) missing.push('renta líquida')
+  if (!profile.propiedades) missing.push('si tienes propiedades')
+  if (!profile.modelo) missing.push('modelo de inversión')
+  return missing
+}
+
+function buildProfileSummary(profile = {}) {
+  const rows = []
+  if (profile.nombre) rows.push(`Nombre: ${profile.nombre}`)
+  if (profile.email) rows.push(`Correo: ${profile.email}`)
+  if (profile.rentaIndividual) rows.push(`Renta individual detectada: ${formatCLP(profile.rentaIndividual)}`)
+  if (profile.rentaPareja) rows.push(`Renta conjunta/pareja detectada: ${formatCLP(profile.rentaPareja)}`)
+  if (profile.rentaTexto && !profile.rentaIndividual && !profile.rentaPareja) rows.push(`Renta declarada: ${profile.rentaTexto}`)
+  if (profile.modelo) rows.push(`Modelo/interés: ${profile.modelo}`)
+  if (profile.ubicacion) rows.push(`Zona/país de interés: ${profile.ubicacion}`)
+  if (profile.propiedades) rows.push(`Propiedades: ${profile.propiedades}`)
+  if (profile.experiencia) rows.push(`Experiencia: ${profile.experiencia}`)
+  if (profile.quiereAgendar) rows.push('El cliente pidió agendar reunión')
+  return rows.join('\n') || 'Sin perfil consolidado aún.'
+}
+
+function buildCoherentDeterministicReply({ message, leadData, agendaLink, conversationHistory, profile, rentaMin, rentaMinPareja }) {
+  const intent = inferLocalIntent(message, conversationHistory)
+  const n = normalizeForCheck(message)
+  const name = getFirstName(profile?.nombre || leadData?.nombre)
+  const saludo = name ? `${name}, ` : ''
+  const qualified = isProfileQualified(profile, rentaMin, rentaMinPareja)
+  const missing = missingMeetingFields(profile)
+  const hasContactAndMoney = !!profile.email && !!profile.nombre && (!!profile.rentaIndividual || !!profile.rentaPareja || !!profile.rentaTexto)
+
+  if ((profile.quiereAgendar || intent === 'acepta_agendar') && qualified && hasContactAndMoney && missing.length <= 1) {
+    const rentaLine = profile.rentaPareja
+      ? `renta conjunta de ${formatCLP(profile.rentaPareja)}`
+      : profile.rentaIndividual
+        ? `renta de ${formatCLP(profile.rentaIndividual)}`
+        : `renta declarada de ${profile.rentaTexto}`
+    const zona = profile.ubicacion ? ` en ${profile.ubicacion}` : ''
+    const modelo = profile.modelo === 'renta_corta' ? 'renta corta' : (profile.modelo || 'inversión inmobiliaria')
+    return {
+      reply: `${saludo}perfecto. Con ${rentaLine}, ${profile.propiedades ? profile.propiedades.toLowerCase() : 'tu perfil'} y foco en ${modelo}${zona}, sí corresponde agendar.\n\nEn la reunión revisamos crédito, pie, proyectos y números reales. Agenda acá:\n${agendaLink}`,
+      action: 'calificado',
+      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
+    }
+  }
+
+  if ((profile.quiereAgendar || intent === 'acepta_agendar') && qualified && missing.length > 0 && missing.length <= 3) {
+    return {
+      reply: `${saludo}vamos bien. Para dejar la reunión bien tomada solo me falta: ${missing.join(', ')}.\n\nMe lo mandas por acá y te paso el link para agendar.`,
+      action: 'conversando',
+      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
+    }
+  }
+
+  if (/no\s+tengo\s+experiencia|sin\s+experiencia|por\s+eso\s+quiero\s+que\s+me\s+orienten/.test(n) && qualified && (profile.quiereAgendar || profile.email)) {
+    return {
+      reply: `${saludo}justamente para eso es la asesoría. No necesitas experiencia previa: revisamos si el edificio permite renta corta, números reales, costos y cómo se administraría.\n\nAgenda acá y lo vemos con calma:\n${agendaLink}`,
+      action: 'calificado',
+      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
+    }
+  }
+
+  if (/^responde\b|me\s+respondes|contesta/.test(n)) {
+    if (profile.rentaIndividual || profile.rentaPareja || profile.modelo || profile.ubicacion) {
+      return {
+        reply: `${saludo}sí, te sigo. Ya tengo esto: ${profile.rentaTexto || 'renta por revisar'}${profile.modelo ? ', interés en ' + (profile.modelo === 'renta_corta' ? 'renta corta' : profile.modelo) : ''}${profile.ubicacion ? ', zona ' + profile.ubicacion : ''}.\n\n¿Quieres que lo llevemos a una reunión para revisar proyectos y números reales?`,
+        action: qualified ? 'calificado' : 'conversando',
+        leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
+      }
+    }
+  }
+
+  if (profile.email && (profile.rentaIndividual || profile.rentaPareja) && profile.interesReal && qualified) {
+    return {
+      reply: `${saludo}perfecto, con esos datos ya puedo orientarte mejor. Calzas para revisar alternativas de ${profile.modelo === 'renta_corta' ? 'renta corta' : 'inversión'}${profile.ubicacion ? ' en ' + profile.ubicacion : ''}.\n\nTe dejo el link para agendar y revisar números reales:\n${agendaLink}`,
+      action: 'calificado',
+      leadUpdate: onlyAllowedLeadUpdate({ nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
+    }
+  }
+
+  return null
+}
+
+function buildSafeFallback(message = '', leadData = {}, agendaLink = DEFAULT_AGENDA_LINK, conversationHistory = []) {
   const intent = inferLocalIntent(message, conversationHistory)
   const name = getFirstName(leadData?.nombre)
   const saludo = name ? `${name}, ` : ''
-  const calendarLine = calendly ? `\n${calendly}` : ''
+  const calendarLine = agendaLink ? `\n${agendaLink}` : ''
 
   if (intent === 'acepta_agendar') {
     return `${saludo}perfecto. Agendemos y revisamos tu caso con números reales: renta, crédito, pie y proyectos que calcen contigo.${calendarLine}`.trim()
@@ -295,14 +536,14 @@ function stripDuplicateGreeting(out = '', safeHistory = []) {
     .trim()
 }
 
-function sanitizeFinalReply(reply = '', message = '', leadData = {}, calendly = DEFAULT_CALENDLY, conversationHistory = []) {
+function sanitizeFinalReply(reply = '', message = '', leadData = {}, agendaLink = DEFAULT_AGENDA_LINK, conversationHistory = []) {
   let out = removeAgentMetadata(reply)
     .replace(/\*\*/g, '')
     .replace(/^[\s"']+|[\s"']+$/g, '')
     .trim()
 
   if (!out || containsForbiddenReply(out) || looksRobotic(out)) {
-    out = buildSafeFallback(message, leadData, calendly, conversationHistory)
+    out = buildSafeFallback(message, leadData, agendaLink, conversationHistory)
   }
 
   const replacements = [
@@ -320,7 +561,7 @@ function sanitizeFinalReply(reply = '', message = '', leadData = {}, calendly = 
   }
 
   if (containsForbiddenReply(out) || looksRobotic(out)) {
-    out = buildSafeFallback(message, leadData, calendly, conversationHistory)
+    out = buildSafeFallback(message, leadData, agendaLink, conversationHistory)
   }
 
   out = stripDuplicateGreeting(out, conversationHistory)
@@ -497,7 +738,7 @@ CONTEXTO: ${item.razon}`
   return [...ruleBlocks, ...qaBlocks].join('\n\n')
 }
 
-function getSystemPrompt({ iaConfig, calendly, rentaMin, rentaMinPareja, entrenamientoBlocks, knowledgeContext, memorySummary, leadData, currentIntent }) {
+function getSystemPrompt({ iaConfig, agendaLink, rentaMin, rentaMinPareja, entrenamientoBlocks, knowledgeContext, memorySummary, leadData, currentIntent }) {
   const personalidad = cleanText(iaConfig.personalidad || 'Eres Rabito, asistente comercial de Rabbitts Capital Chile.')
   const guion = cleanText(iaConfig.guion)
   const productosRabito = cleanText(iaConfig.productosRabito)
@@ -557,6 +798,9 @@ ${guion || `- Si saluda: responde cálido y pregunta objetivo.
 - Tono chileno, comercial, claro, cercano y seguro.
 - No uses lenguaje corporativo pesado.
 - No repitas exactamente respuestas anteriores.
+- Antes de preguntar algo, revisa la memoria comercial y el perfil consolidado. Si el dato ya aparece, NO lo vuelvas a pedir.
+- La falta de experiencia en Airbnb NO bloquea la reunión; es una razón para orientar y agendar.
+- Si el cliente ya entregó nombre, correo, renta y modelo, el siguiente paso es agendar, no seguir preguntando.
 - No hables como chatbot.
 - No uses listas largas salvo que el cliente las pida.
 - No prometas rentabilidades garantizadas.
@@ -576,9 +820,10 @@ Nunca escribas ni insinúes:
 Si hay error, incertidumbre o falta información, respondes igual con una pregunta útil.
 
 ═══ CUÁNDO AGENDAR ═══
-Usa esta URL cuando corresponda: ${calendly}
+Usa el link de agenda configurable del CRM o el que esté escrito en la base de conocimiento: ${agendaLink}
+No lo llames Calendly salvo que el link realmente sea de Calendly. Si mañana se cambia de proveedor, usas el nuevo link sin mencionar la marca.
 Invita con naturalidad, por ejemplo:
-"Perfecto. Agendemos y revisamos tu caso con números reales: renta, crédito, pie y proyectos que calcen contigo.\n${calendly}"
+"Perfecto. Agendemos y revisamos tu caso con números reales: renta, crédito, pie y proyectos que calcen contigo.\n${agendaLink}"
 
 ═══ MEMORIA COMERCIAL DE ESTA CONVERSACIÓN ═══
 ${memorySummary}
@@ -644,25 +889,60 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, error: 'No message' })
   }
 
-  const calendly = cleanText(iaConfig.calendlyLink || DEFAULT_CALENDLY)
   const rentaMin = Number(iaConfig.rentaMinima) || 1500000
   const rentaMinPareja = Number(iaConfig.rentaMinimaPareja) || 2000000
   const entrenamientoBlocks = buildTrainingBlocks(iaConfig)
   const safeHistory = sanitizeConversationHistory(conversationHistory)
   const currentIntent = inferLocalIntent(message, safeHistory)
   const localUpdate = deriveLeadUpdateFromMessage(message)
-  const memorySummary = buildMemorySummary({ ...leadData, ...localUpdate }, [...safeHistory, { role: 'user', content: String(message) }])
+  const profile = extractLeadProfileFromHistory({ ...leadData, ...localUpdate }, safeHistory, message)
+  const profileLeadData = {
+    ...leadData,
+    ...localUpdate,
+    nombre: profile.nombre || leadData.nombre,
+    email: profile.email || leadData.email,
+    renta: profile.rentaTexto || leadData.renta || localUpdate.renta,
+    modelo: profile.modelo || leadData.modelo || localUpdate.modelo
+  }
+  const memorySummary = [
+    buildMemorySummary(profileLeadData, [...safeHistory, { role: 'user', content: String(message) }]),
+    '═══ PERFIL CONSOLIDADO DESDE TODA LA CONVERSACIÓN ═══',
+    buildProfileSummary(profile)
+  ].filter(Boolean).join('\n')
   const knowledgeContext = await loadKnowledgeContext(iaConfig)
+  const agendaLink = cleanText(resolveAgendaLink(iaConfig, knowledgeContext))
+
+  const deterministic = buildCoherentDeterministicReply({
+    message,
+    leadData: profileLeadData,
+    agendaLink,
+    conversationHistory: safeHistory,
+    profile,
+    rentaMin,
+    rentaMinPareja
+  })
+
+  if (deterministic) {
+    console.log('[Agent] deterministic reply | action:', deterministic.action, '| profile:', JSON.stringify(profile))
+    return res.status(200).json({
+      ok: true,
+      reply: sanitizeFinalReply(deterministic.reply, message, profileLeadData, agendaLink, safeHistory),
+      action: deterministic.action,
+      leadUpdate: deterministic.leadUpdate || onlyAllowedLeadUpdate(localUpdate),
+      memory: memorySummary,
+      deterministic: true
+    })
+  }
 
   const systemPrompt = getSystemPrompt({
     iaConfig,
-    calendly,
+    agendaLink,
     rentaMin,
     rentaMinPareja,
     entrenamientoBlocks,
     knowledgeContext,
     memorySummary,
-    leadData: { ...leadData, ...localUpdate },
+    leadData: profileLeadData,
     currentIntent
   })
 
@@ -681,8 +961,8 @@ export default async function handler(req, res) {
 
     const rawReply = data?.content?.[0]?.text || ''
     const parsed = extractActionAndData(rawReply)
-    const finalReply = sanitizeFinalReply(parsed.reply, message, { ...leadData, ...localUpdate }, calendly, safeHistory)
-    const leadUpdate = onlyAllowedLeadUpdate({ ...localUpdate, ...parsed.leadUpdate })
+    const finalReply = sanitizeFinalReply(parsed.reply, message, profileLeadData, agendaLink, safeHistory)
+    const leadUpdate = onlyAllowedLeadUpdate({ ...localUpdate, ...parsed.leadUpdate, nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo })
 
     let finalAction = parsed.action || 'conversando'
     if (currentIntent === 'no_interesado') finalAction = 'no_interesado'
@@ -703,9 +983,9 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       ok: true,
-      reply: buildSafeFallback(message, { ...leadData, ...localUpdate }, calendly, safeHistory),
+      reply: buildSafeFallback(message, profileLeadData, agendaLink, safeHistory),
       action: currentIntent === 'humano' ? 'escalar' : currentIntent === 'no_interesado' ? 'no_interesado' : 'conversando',
-      leadUpdate: localUpdate,
+      leadUpdate: onlyAllowedLeadUpdate({ ...localUpdate, nombre: profile.nombre, email: profile.email, renta: profile.rentaTexto, modelo: profile.modelo }),
       fallback: true,
       error: error?.message || 'agent_error'
     })
