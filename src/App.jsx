@@ -4511,6 +4511,17 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
   const evoHeaders = { 'Content-Type': 'application/json', 'apikey': EVO_KEY }
 
+  const normalizeQrSrc = (qr) => {
+    if (!qr) return ''
+    const value = String(qr)
+    if (value.startsWith('data:image')) return value
+    return `data:image/png;base64,${value}`
+  }
+
+  const getQrFromResponse = (data) => {
+    return data?.base64 || data?.qrcode?.base64 || data?.qrcode || data?.qr || data?.code || data?.data?.base64 || data?.data?.qrcode?.base64 || ''
+  }
+
   React.useEffect(() => { loadNumeros() }, [dbReady])
 
   const loadNumeros = async () => {
@@ -4546,16 +4557,21 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       const createData = await createRes.json()
       if (!createData.instance) throw new Error('No se pudo crear la instancia')
 
-      // 2. Abrir manager para escanear QR
-      setStatusMsg({type:'info', text:'Abriendo panel de conexión...'})
-      await new Promise(r => setTimeout(r, 1000))
-      
-      // Abrir manager en nueva pestaña
-      const managerUrl = `${EVO_URL}/manager`
-      window.open(managerUrl, '_blank')
-      
-      setQrData({ instanceName, qr: null, nombre: newName.trim(), managerUrl })
-      setStatusMsg({type:'info', text:`Instancia creada. Escanea el QR en el panel que se abrió → busca "${instanceName}" → "Get QR Code"`})
+      // 2. Pedir QR directamente a Evolution API y mostrarlo dentro del CRM
+      setStatusMsg({type:'loading', text:'Instancia creada. Generando código QR...'})
+
+      let qrBase64 = getQrFromResponse(createData)
+      if (!qrBase64) {
+        const qrRes = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, { headers: evoHeaders })
+        const qrJson = await qrRes.json()
+        qrBase64 = getQrFromResponse(qrJson)
+      }
+
+      setQrData({ instanceName, qr: qrBase64 ? normalizeQrSrc(qrBase64) : null, nombre: newName.trim() })
+      setStatusMsg(qrBase64
+        ? {type:'info', text:'Escanea el código QR con WhatsApp Business para conectar este número.'}
+        : {type:'info', text:'Instancia creada. Si el QR no aparece, presiona “Actualizar QR”.'}
+      )
 
       // 3. Polling para detectar conexión
       let attempts = 0
@@ -4608,12 +4624,20 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   // ── Refrescar QR ─────────────────────────────────────────────────────────
   const refreshQr = async () => {
     if (!qrData?.instanceName) return
+    setStatusMsg({type:'loading', text:'Actualizando código QR...'})
     try {
       const qrRes = await fetch(`${EVO_URL}/instance/connect/${qrData.instanceName}`, { headers: evoHeaders })
       const qrJson = await qrRes.json()
-      const qrBase64 = qrJson?.base64 || qrJson?.qrcode?.base64
-      if (qrBase64) setQrData(prev => ({...prev, qr: qrBase64}))
-    } catch(_) {}
+      const qrBase64 = getQrFromResponse(qrJson)
+      if (qrBase64) {
+        setQrData(prev => ({...prev, qr: normalizeQrSrc(qrBase64)}))
+        setStatusMsg({type:'info', text:'QR actualizado. Escanéalo desde WhatsApp Business.'})
+      } else {
+        setStatusMsg({type:'error', text:'Evolution no devolvió QR. Revisa que la instancia no esté ya conectada o intenta nuevamente.'})
+      }
+    } catch(e) {
+      setStatusMsg({type:'error', text:'Error al actualizar QR: ' + e.message})
+    }
   }
 
   const eliminarNumero = async (num) => {
@@ -4642,8 +4666,21 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
   return (
     <div>
-      {/* Info */}
-      
+      {/* Acciones WhatsApp */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',marginBottom:12}}>
+        <div>
+          <div style={{fontSize:13,fontWeight:800,color:B.primary}}>📱 Números WhatsApp conectados</div>
+          <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>Conecta uno o más números de WhatsApp Business para Rabito IA y el CRM.</div>
+        </div>
+        <button
+          onClick={()=>{setShowForm(true);setStatusMsg(null)}}
+          disabled={showForm || connecting || !!qrData}
+          style={{...sty.btnP,fontSize:12,opacity:showForm || connecting || !!qrData ? 0.55 : 1,cursor:showForm || connecting || !!qrData ? 'not-allowed' : 'pointer'}}
+        >
+          {showForm ? 'Formulario abierto' : '➕ Conectar número'}
+        </button>
+      </div>
+
       {/* Mensaje de estado */}
       {statusMsg && (
         <div style={{
@@ -4669,7 +4706,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
       {numeros.map(num => (
         <div key={num.id} style={{background:num.activo?'#fff':'#f9fafb',border:'1px solid '+(num.activo?'#E2E8F0':'#f0f0f0'),borderRadius:10,padding:'12px 14px',marginBottom:8}}>
-          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>\
+          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
             <div style={{width:10,height:10,borderRadius:'50%',background:num.activo?'#22c55e':'#9ca3af',flexShrink:0}}/>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{num.nombre}</div>
