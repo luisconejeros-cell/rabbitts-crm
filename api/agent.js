@@ -1,54 +1,42 @@
-// api/agent.js — Rabito Engine genérico estable v9
-// Rol: generar SOLO la respuesta visible usando Panel IA + documentos + feedback + memoria.
-// No contiene negocio pregrabado. No deriva a humano/revisión salvo regla dura del panel.
+// api/agent.js — Rabito genérico estable
+// Principio: el agente NO trae negocio pregrabado. Responde desde Panel IA + documentos + feedback + memoria.
 
 import { createClient } from '@supabase/supabase-js'
 
-const DEFAULT_MODEL = 'claude-3-5-haiku-20241022'
 const clean = (v = '') => String(v ?? '').trim()
+const normalize = (v = '') => clean(v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 const nowIso = () => new Date().toISOString()
 
-const BUILTIN_BLOCKED = [
-  '[Sistema]',
-  'Rabito no generó respuesta visible',
-  'Estoy acá. Revisemos esto paso a paso para ayudarte bien.',
-  'Para avanzar bien, dime cuál es el dato principal que quieres resolver ahora.',
-  'Para ayudarte bien necesito partir por esto',
-  'alta demanda',
-  'te respondo en unos minutos',
-  'soy una IA',
-  'soy inteligencia artificial',
-  'como modelo de lenguaje',
-  'no tengo acceso al panel',
-]
-
-function sb() {
+function getSupabase() {
   const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
   const key = clean(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
-  return url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null
+  if (!url || !key) return null
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 }
 
-function normalize(text = '') {
-  return clean(text)
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
+function safeJson(text = '') {
+  try { return JSON.parse(text) } catch { return null }
 }
 
-function words(text = '') {
-  return normalize(text).split(/[^a-z0-9ñ]+/i).filter(w => w.length > 2)
+function stripCodeFence(text = '') {
+  return clean(text).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+}
+
+function extractJson(text = '') {
+  const src = stripCodeFence(text)
+  const first = src.indexOf('{')
+  const last = src.lastIndexOf('}')
+  if (first === -1 || last === -1 || last <= first) return ''
+  return src.slice(first, last + 1)
 }
 
 function flatten(value, depth = 0) {
-  if (value == null || value === '') return ''
-  if (depth > 5) return ''
+  if (value == null || depth > 5) return ''
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return clean(value)
-  if (Array.isArray(value)) return value.slice(0, 200).map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
+  if (Array.isArray(value)) return value.map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
   if (typeof value === 'object') {
     return Object.entries(value)
-      .filter(([k]) => !/password|token|secret|apikey|api_key|base64|image|file/i.test(k))
-      .slice(0, 200)
+      .filter(([k]) => !/token|apikey|api_key|secret|password|key$/i.test(k))
       .map(([k, v]) => {
         const txt = flatten(v, depth + 1)
         return txt ? `${k}: ${txt}` : ''
@@ -59,61 +47,19 @@ function flatten(value, depth = 0) {
   return ''
 }
 
-function safeJson(text, fallback = null) {
-  try { return text ? JSON.parse(text) : fallback } catch { return fallback }
+function words(text = '') {
+  return normalize(text).replace(/[^a-z0-9ñáéíóúü\s]/gi, ' ').split(/\s+/).filter(w => w.length >= 3)
 }
 
-function stripFence(text = '') {
-  return clean(text).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+function score(query = '', text = '') {
+  const qs = [...new Set(words(query))]
+  const nt = normalize(text)
+  let s = 0
+  for (const w of qs) if (nt.includes(w)) s += w.length >= 6 ? 3 : 1
+  return s
 }
 
-function extractJson(text = '') {
-  const src = stripFence(text)
-  const start = src.indexOf('{')
-  if (start < 0) return ''
-  let depth = 0, inStr = false, esc = false
-  for (let i = start; i < src.length; i++) {
-    const ch = src[i]
-    if (inStr) {
-      if (esc) { esc = false; continue }
-      if (ch === '\\') { esc = true; continue }
-      if (ch === '"') inStr = false
-      continue
-    }
-    if (ch === '"') { inStr = true; continue }
-    if (ch === '{') depth++
-    if (ch === '}') {
-      depth--
-      if (depth === 0) return src.slice(start, i + 1)
-    }
-  }
-  return ''
-}
-
-function parseModelOutput(raw = '') {
-  const cleaned = stripFence(raw)
-  const parsed = safeJson(cleaned) || safeJson(extractJson(cleaned))
-  if (parsed && typeof parsed === 'object') {
-    const replyValue = parsed.reply ?? parsed.message ?? parsed.text ?? ''
-    const reply = typeof replyValue === 'object'
-      ? clean(replyValue.reply || replyValue.text || replyValue.message || '')
-      : clean(replyValue)
-    return {
-      reply,
-      action: clean(parsed.action || 'conversando'),
-      statusUpdate: clean(parsed.statusUpdate || parsed.status || ''),
-      escalateToHuman: parsed.escalateToHuman === true || parsed.derivarHumano === true || parsed.human === true,
-      derivationReason: clean(parsed.derivationReason || parsed.reason || ''),
-      leadUpdate: parsed.leadUpdate && typeof parsed.leadUpdate === 'object' ? parsed.leadUpdate : {},
-      memoryUpdate: parsed.memoryUpdate && typeof parsed.memoryUpdate === 'object' ? parsed.memoryUpdate : {},
-      learningSuggestion: clean(parsed.learningSuggestion || '')
-    }
-  }
-  if (cleaned && !cleaned.startsWith('{')) return { reply: cleaned, action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
-  return { reply: '', action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
-}
-
-async function setting(db, key, fallback = null) {
+async function readSetting(db, key, fallback = null) {
   if (!db) return fallback
   try {
     const { data } = await db.from('crm_settings').select('value').eq('key', key).single()
@@ -121,466 +67,338 @@ async function setting(db, key, fallback = null) {
   } catch { return fallback }
 }
 
-async function loadSettings(db) {
-  const keys = [
-    'ia_config',
-    'agent_training',
-    'agent_rules',
-    'ia_knowledge',
-    'rabito_knowledge',
-    'rabito_knowledge_chunks',
-    'drive_content'
-  ]
+async function readSettings(db) {
   if (!db) return { map: {}, text: '' }
+  const keys = ['ia_config', 'agent_training', 'rabito_knowledge', 'rabito_knowledge_chunks', 'drive_content', 'ia_knowledge', 'agent_rules']
   try {
     const { data } = await db.from('crm_settings').select('key,value').in('key', keys)
     const map = {}
-    const text = (data || []).map(row => {
-      map[row.key] = row.value
-      const txt = flatten(row.value)
-      return txt ? `### ${row.key}\n${txt}` : ''
-    }).filter(Boolean).join('\n\n').slice(0, 45000)
+    for (const row of data || []) map[row.key] = row.value
+    const text = Object.entries(map).map(([k, v]) => {
+      const txt = flatten(v)
+      return txt ? `### ${k}\n${txt}` : ''
+    }).filter(Boolean).join('\n\n').slice(0, 35000)
     return { map, text }
   } catch (e) {
-    console.error('[AGENT] loadSettings error:', e?.message)
+    console.error('[AGENT] readSettings error:', e.message)
     return { map: {}, text: '' }
   }
 }
 
-function panelBlocked(iaConfig = {}) {
-  const raw = flatten({
-    frasesProhibidas: iaConfig.frasesProhibidas,
-    blockedPhrases: iaConfig.blockedPhrases,
-    noDecir: iaConfig.noDecir,
-    reglasEntrenamiento: iaConfig.reglasEntrenamiento,
-    reglas: iaConfig.reglas,
-    reglasDuras: iaConfig.reglasDuras,
-  })
-  const lines = raw.split('\n').map(clean).filter(x => x.length >= 4 && x.length <= 180)
-  return [...BUILTIN_BLOCKED, ...lines]
+function mergeIaConfig(reqConfig = {}, settings = {}) {
+  const saved = settings.map?.ia_config && typeof settings.map.ia_config === 'object' ? settings.map.ia_config : {}
+  return { ...saved, ...(reqConfig && typeof reqConfig === 'object' ? reqConfig : {}) }
 }
 
-function removeBlocked(reply = '', iaConfig = {}) {
-  let out = clean(reply).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').replace(/\*\*/g, '').trim()
-  if (!out) return ''
-  if (out.startsWith('{')) out = parseModelOutput(out).reply || ''
-  if (!out) return ''
-
-  const blocked = panelBlocked(iaConfig).map(clean).filter(Boolean)
-  for (const phrase of blocked) {
-    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    out = out.replace(new RegExp(escaped, 'ig'), '')
-  }
-
-  const badNorm = blocked.map(normalize).filter(Boolean)
-  const parts = out.split(/(?<=[.!?])\s+|\n+/).map(clean).filter(Boolean)
-  const safe = parts.filter(s => !badNorm.some(b => normalize(s).includes(b)))
-  out = (safe.length ? safe.join(' ') : out)
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^[-,.;:\s]+/, '')
-    .trim()
-
-  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 650) || 650
-  if (out.length > max) out = out.slice(0, Math.max(140, max - 20)).replace(/\s+\S*$/, '') + '...'
-  return out
-}
-
-function buildPanelBrain(iaConfig = {}) {
-  const priority = [
-    'nombreAgente','assistantName','agentName','nombre',
-    'personalidad','tono','rol','identidad',
-    'oferta','productos','servicios','catalogo','propuestaValor',
-    'procesoVenta','pasos','flujo','guion','metodoVenta',
-    'reglas','reglasDuras','reglasDerivacion','reglasRevision','instrucciones','noDecir','frasesProhibidas',
-    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas','agendaLink','linkAgenda','mensajeFallback','fallbackMessage'
-  ]
-  const blocks = []
-  const used = new Set()
-  for (const key of priority) {
-    if (!(key in iaConfig)) continue
-    used.add(key)
-    const txt = flatten(iaConfig[key])
-    if (txt) blocks.push(`### ${key}\n${txt}`)
-  }
-  for (const [key, value] of Object.entries(iaConfig || {})) {
-    if (used.has(key) || /token|key|secret|password|activo|created|updated/i.test(key)) continue
-    const txt = flatten(value)
-    if (txt) blocks.push(`### ${key}\n${txt}`)
-  }
-  return blocks.join('\n\n').slice(0, 45000)
-}
-
-function getAgendaLink(iaConfig = {}, settingsText = '') {
-  const direct = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.urlAgenda || iaConfig.calendlyLink || process.env.DEFAULT_AGENDA_LINK || '')
-  if (direct) return direct
-  const match = String(settingsText || '').match(/https?:\/\/[^\s)\]"']+/i)
-  return match ? match[0] : ''
-}
-
-function score(query = '', txt = '') {
-  const qs = [...new Set(words(query))]
-  const nt = normalize(txt)
-  let s = 0
-  for (const w of qs) if (nt.includes(w)) s += w.length > 5 ? 3 : 1
-  return s
-}
-
-function chunksFromSettings(settings = {}) {
+function knowledgeFromSettings(settings = {}) {
   const out = []
-  const v = settings.map?.rabito_knowledge_chunks
-  const arr = Array.isArray(v?.chunks) ? v.chunks : Array.isArray(v) ? v : []
-  arr.forEach((c, i) => out.push({
-    id: c.id || `settings-${i}`,
-    title: c.title || c.titulo || c.docName || c.nombre || 'Documento',
-    content: c.content || c.contenido || c.text || '',
-    tags: c.tags || c.carpeta || '',
-    activo: c.activo !== false
-  }))
 
-  const docs = settings.map?.rabito_knowledge?.docs || settings.map?.ia_config?.cerebroDocs || settings.map?.drive_content?.files || []
-  if (Array.isArray(docs)) {
-    docs.forEach((d, i) => {
-      const txt = d.content || d.text || d.contenido || d.extract || ''
-      if (txt) out.push({ id: d.id || `doc-${i}`, title: d.name || d.title || d.nombre || 'Documento', content: txt, tags: d.tags || '', activo: d.activo !== false })
-    })
+  const chunksValue = settings.map?.rabito_knowledge_chunks
+  const chunks = Array.isArray(chunksValue?.chunks) ? chunksValue.chunks : Array.isArray(chunksValue) ? chunksValue : []
+  for (const c of chunks) {
+    const content = clean(c.content || c.contenido || c.text || c.texto)
+    if (content) out.push({ title: clean(c.title || c.titulo || c.docName || c.nombre || 'Conocimiento'), content, active: c.activo !== false })
   }
-  return out
+
+  const docsGroups = [
+    settings.map?.rabito_knowledge?.docs,
+    settings.map?.ia_config?.cerebroDocs,
+    settings.map?.drive_content?.files,
+    settings.map?.ia_knowledge?.docs
+  ]
+  for (const group of docsGroups) {
+    if (!Array.isArray(group)) continue
+    for (const d of group) {
+      const content = clean(d.content || d.contenido || d.text || d.extract || d.body)
+      if (content) out.push({ title: clean(d.name || d.title || d.nombre || 'Documento'), content, active: d.activo !== false })
+    }
+  }
+  return out.filter(x => x.active && x.content)
 }
 
-async function retrieveKnowledge(db, query = '', settings = {}) {
-  let chunks = []
-  try {
-    const { data } = await db.from('crm_knowledge_chunks')
-      .select('id,doc_id,title,titulo,content,contenido,tags,producto,canal,activo')
-      .or('activo.is.null,activo.eq.true')
-      .limit(400)
-    if (Array.isArray(data)) chunks.push(...data.map(c => ({ ...c, content: c.content || c.contenido, title: c.title || c.titulo })))
-  } catch {}
-  chunks.push(...chunksFromSettings(settings))
-  chunks = chunks.filter(c => c && c.activo !== false && clean(c.content))
+async function readKnowledge(db, query = '', settings = {}) {
+  const rows = []
+  if (db) {
+    try {
+      const { data } = await db.from('crm_knowledge_chunks')
+        .select('id,title,titulo,content,contenido,tags,producto,canal,activo')
+        .limit(300)
+      for (const c of data || []) {
+        const content = clean(c.content || c.contenido)
+        if (content && c.activo !== false) rows.push({ title: clean(c.title || c.titulo || 'Conocimiento'), content, tags: flatten([c.tags, c.producto, c.canal]) })
+      }
+    } catch {}
+  }
 
-  if (!chunks.length) return { text: (settings.text || '').slice(0, 22000), chunks: [] }
+  rows.push(...knowledgeFromSettings(settings))
+  if (!rows.length) return { text: settings.text.slice(0, 18000), used: [] }
 
-  const ranked = chunks.map(c => ({ ...c, _score: score(query, [c.title, c.tags, c.producto, c.canal, c.content].filter(Boolean).join(' ')) }))
-    .sort((a,b) => b._score - a._score)
-  const withScore = ranked.filter(c => c._score > 0).slice(0, 7)
-  const picked = withScore.length ? withScore : ranked.slice(0, 4)
-
+  const ranked = rows.map((r, i) => ({ ...r, i, s: score(query, `${r.title}\n${r.tags || ''}\n${r.content}`) }))
+    .sort((a, b) => b.s - a.s)
+  const picked = ranked.filter(r => r.s > 0).slice(0, 6)
+  const final = picked.length ? picked : ranked.slice(0, 4)
   return {
-    text: picked.map((c, i) => `### Documento ${i + 1}: ${clean(c.title || 'Documento')}\n${clean(c.content).slice(0, 1800)}`).join('\n\n'),
-    chunks: picked.map(c => ({ id: c.id, title: c.title, score: c._score || 0 }))
+    text: final.map((r, idx) => `### Conocimiento ${idx + 1}: ${r.title}\n${r.content.slice(0, 2200)}`).join('\n\n'),
+    used: final.map(r => ({ title: r.title, score: r.s }))
   }
 }
 
 function normalizeTrainingItem(x = {}) {
-  const original = clean(x.original || x.msg_content || x.message || x.before || x.incorrect || x.mensajeOriginal || '')
-  const improved = clean(x.improved || x.correction || x.after || x.correct || x.respuestaCorrecta || x.mensajeMejorado || '')
-  const reason = clean(x.reason || x.feedback || x.explanation || x.instruccion || x.regla || '')
-  const active = x.active !== false && x.activo !== false
-  return { original, improved, reason, active, raw: x }
-}
-
-async function loadTraining(db, query = '') {
-  const items = []
-  try {
-    const { data } = await db.from('crm_conv_feedback')
-      .select('msg_content,feedback,correction,improved,created_at')
-      .order('created_at', { ascending: false })
-      .limit(120)
-    if (Array.isArray(data)) items.push(...data)
-  } catch {}
-  try {
-    const v = await setting(db, 'agent_training', [])
-    const arr = Array.isArray(v) ? v : Array.isArray(v?.items) ? v.items : []
-    items.push(...arr)
-  } catch {}
-
-  const normalized = items.map(normalizeTrainingItem).filter(x => x.active && (x.improved || x.reason || x.original))
-  const ranked = normalized.map(x => ({ ...x, _score: score(query, [x.original, x.reason, x.improved].join(' ')) }))
-    .sort((a,b) => b._score - a._score)
-  const picked = (ranked.filter(x => x._score > 0).slice(0, 8).length ? ranked.filter(x => x._score > 0).slice(0, 8) : ranked.slice(0, 5))
   return {
-    items: picked,
-    text: picked.map((x, i) => `### Aprendizaje ${i + 1}\nSituación/mensaje: ${x.original || 'general'}\nCorrección o regla: ${x.reason || 'sin explicación'}\nRespuesta preferida: ${x.improved || 'sin respuesta exacta'}`).join('\n\n'),
-    count: picked.length
+    original: clean(x.original || x.msg_content || x.message || x.before || x.incorrect || x.mensajeOriginal || x.pregunta || ''),
+    improved: clean(x.improved || x.correction || x.after || x.correct || x.respuestaCorrecta || x.mensajeMejorado || x.respuesta || ''),
+    reason: clean(x.reason || x.feedback || x.explanation || x.instruccion || x.regla || x.razon || ''),
+    active: x.active !== false && x.activo !== false
   }
 }
 
-function tryTrainingReply(training, message, iaConfig = {}) {
-  const direct = (training.items || []).find(x => x.improved && (x._score >= 3 || normalize(x.original) === normalize(message)))
-  if (!direct) return ''
-  let reply = direct.improved
-  // Evita copiar una respuesta que contiene datos personales rígidos si no corresponden; la IA luego la adaptará, pero fallback directo debe ser seguro.
-  return removeBlocked(reply, iaConfig)
-}
+async function readTraining(db, query = '', settings = {}) {
+  const items = []
 
-async function loadMemory(db, leadData = {}) {
-  const key = clean(leadData.telefono || leadData.phone || leadData.email || leadData.nombre || leadData.name)
-  if (!db || !key) return ''
-  try {
-    const { data } = await db.from('crm_ai_memory').select('value,updated_at').eq('key', key).order('updated_at', { ascending: false }).limit(1)
-    return flatten(data?.[0]?.value || '').slice(0, 8000)
-  } catch { return '' }
-}
+  const saved = settings.map?.agent_training
+  const savedArr = Array.isArray(saved) ? saved : Array.isArray(saved?.items) ? saved.items : []
+  items.push(...savedArr)
 
-async function saveMemory(db, leadData = {}, memoryUpdate = {}) {
-  if (!db || !memoryUpdate || typeof memoryUpdate !== 'object') return
-  const key = clean(leadData.telefono || leadData.phone || leadData.email || leadData.nombre || leadData.name)
-  if (!key) return
-  try { await db.from('crm_ai_memory').upsert({ key, value: memoryUpdate, updated_at: nowIso() }, { onConflict: 'key' }) } catch {}
-}
+  const iaTraining = settings.map?.ia_config?.entrenamiento
+  if (Array.isArray(iaTraining)) items.push(...iaTraining)
 
-function sanitizeHistory(history = []) {
-  return (Array.isArray(history) ? history : [])
-    .filter(m => m && m.role && clean(m.content) && !clean(m.content).startsWith('[Sistema]'))
-    .slice(-24)
-    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content).slice(0, 1400) }))
-}
-
-function conversationFacts(history = [], message = '', leadData = {}) {
-  const user = [...history, { role:'user', content: message }]
-    .filter(m => m.role === 'user')
-    .slice(-12)
-    .map((m,i) => `Cliente ${i+1}: ${clean(m.content).slice(0,420)}`)
-  const lead = Object.entries(leadData || {}).filter(([,v]) => v).slice(0, 25).map(([k,v]) => `${k}: ${clean(v).slice(0,250)}`)
-  return [...user, ...lead].join('\n') || 'Sin datos previos.'
-}
-
-function derivationRulesText(iaConfig = {}) {
-  return flatten({
-    reglasDuras: iaConfig.reglasDuras,
-    reglasDerivacion: iaConfig.reglasDerivacion,
-    derivacionHumano: iaConfig.derivacionHumano,
-    reglasRevision: iaConfig.reglasRevision,
-    humanRules: iaConfig.humanRules,
-    reviewRules: iaConfig.reviewRules
-  })
-}
-
-function hasDerivationRules(iaConfig = {}) {
-  return /(derivar|humano|persona|asesor|ejecutivo|revision|revisión|escalar|transferir|tomar control)/.test(normalize(derivationRulesText(iaConfig)))
-}
-
-function normStatus(v = '') {
-  const s = normalize(v).replace(/\s+/g, '_')
-  return ['activo','calificado','frio','no_interesado','requiere_revision'].includes(s) ? s : ''
-}
-
-function safeUpdate(obj = {}) {
-  const out = {}
-  for (const [k,v] of Object.entries(obj || {}).slice(0,50)) {
-    const key = clean(k).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0,60)
-    if (!key || /password|token|secret|apikey|api_key|created_at|updated_at/i.test(key)) continue
-    const val = typeof v === 'object' ? flatten(v).slice(0,800) : clean(v).slice(0,800)
-    if (val) out[key] = val
+  if (db) {
+    try {
+      const { data } = await db.from('crm_conv_feedback')
+        .select('msg_content,feedback,correction,improved,created_at')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      items.push(...(data || []))
+    } catch {}
   }
+
+  const normalized = items.map(normalizeTrainingItem).filter(x => x.active && (x.original || x.improved || x.reason))
+  const ranked = normalized.map(x => ({ ...x, s: score(query, `${x.original}\n${x.reason}\n${x.improved}`) }))
+    .sort((a, b) => b.s - a.s)
+  const picked = ranked.filter(x => x.s > 0).slice(0, 8)
+  const final = picked.length ? picked : ranked.slice(0, 6)
+
+  return {
+    items: final,
+    text: final.map((x, i) => `### Aprendizaje ${i + 1}\nSituación: ${x.original || 'general'}\nRegla/razón: ${x.reason || 'sin razón'}\nRespuesta preferida: ${x.improved || 'sin respuesta exacta'}`).join('\n\n'),
+    used: final.map(x => ({ original: x.original, score: x.s }))
+  }
+}
+
+function directTrainingReply(training, message, iaConfig) {
+  const exact = (training.items || []).find(x => x.improved && (normalize(x.original) === normalize(message) || x.s >= 6))
+  if (!exact) return ''
+  return cleanOutput(exact.improved, iaConfig)
+}
+
+function panelText(iaConfig = {}) {
+  const priority = [
+    'nombreAgente','agentName','nombre','rol','identidad','personalidad','tono',
+    'oferta','productos','servicios','catalogo','propuestaValor','beneficios',
+    'procesoVenta','pasos','flujo','guion','metodoVenta',
+    'reglas','reglasDuras','reglasDerivacion','reglasRevision','instrucciones','noDecir','frasesProhibidas',
+    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas',
+    'agendaLink','linkAgenda','urlAgenda','mensajeFallback','fallbackMessage'
+  ]
+  const used = new Set()
+  const blocks = []
+  for (const k of priority) {
+    if (!(k in iaConfig)) continue
+    used.add(k)
+    const txt = flatten(iaConfig[k])
+    if (txt) blocks.push(`### ${k}\n${txt}`)
+  }
+  for (const [k, v] of Object.entries(iaConfig)) {
+    if (used.has(k) || /token|apikey|secret|password/i.test(k)) continue
+    const txt = flatten(v)
+    if (txt) blocks.push(`### ${k}\n${txt}`)
+  }
+  return blocks.join('\n\n').slice(0, 30000)
+}
+
+function blockedPhrases(iaConfig = {}) {
+  const raw = flatten([iaConfig.frasesProhibidas, iaConfig.noDecir, iaConfig.blockedPhrases, iaConfig.reglasDuras])
+  return raw.split('\n').map(clean).filter(x => x.length >= 4 && x.length <= 180)
+}
+
+function cleanOutput(reply = '', iaConfig = {}) {
+  let out = stripCodeFence(reply)
+  if (!out) return ''
+  if (out.startsWith('{')) out = parseOutput(out).reply || ''
+  out = clean(out.replace(/\[ACCION:[^\]]+\]/gi, '').replace(/\[DATOS:[^\]]+\]/gi, '').replace(/\*\*/g, ''))
+  for (const p of blockedPhrases(iaConfig)) {
+    const re = new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig')
+    out = out.replace(re, '')
+  }
+  out = out.replace(/\s{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 700) || 700
+  if (out.length > max) out = out.slice(0, Math.max(160, max - 20)).replace(/\s+\S*$/, '') + '...'
   return out
 }
 
-function extractLocalFields(message = '', leadData = {}, agendaLink = '') {
-  const out = { ...(leadData || {}) }
-  const email = String(message).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
-  if (email) out.email = email
-  if (agendaLink) out.agenda_link = agendaLink
-  return safeUpdate(out)
+function parseOutput(raw = '') {
+  const src = stripCodeFence(raw)
+  const parsed = safeJson(src) || safeJson(extractJson(src))
+  if (parsed && typeof parsed === 'object') {
+    return {
+      reply: clean(parsed.reply || parsed.message || parsed.text || ''),
+      action: clean(parsed.action || 'conversando'),
+      statusUpdate: clean(parsed.statusUpdate || parsed.status || ''),
+      leadUpdate: parsed.leadUpdate && typeof parsed.leadUpdate === 'object' ? parsed.leadUpdate : {},
+      memoryUpdate: parsed.memoryUpdate && typeof parsed.memoryUpdate === 'object' ? parsed.memoryUpdate : {},
+      escalateToHuman: parsed.escalateToHuman === true,
+      reason: clean(parsed.reason || parsed.derivationReason || '')
+    }
+  }
+  return { reply: src, action: 'conversando', statusUpdate: '', leadUpdate: {}, memoryUpdate: {}, escalateToHuman: false, reason: '' }
 }
 
-function panelFallback(iaConfig = {}, message = '', training = null) {
-  const fromTraining = tryTrainingReply(training || { items: [] }, message, iaConfig)
-  if (fromTraining) return fromTraining
-
-  const explicit = clean(iaConfig.fallbackMessage || iaConfig.mensajeFallback || iaConfig.respuestaFallback || '')
-  if (explicit) return explicit
-
-  const firstUseful = flatten({
-    proceso: iaConfig.pasos || iaConfig.procesoVenta || iaConfig.flujo,
-    faq: iaConfig.preguntasFrecuentes || iaConfig.faq,
-    oferta: iaConfig.oferta || iaConfig.productos || iaConfig.servicios,
-    entrenamiento: iaConfig.entrenamiento || iaConfig.respuestasGuardadas
-  }).split('\n').map(clean).find(x => x.length > 12 && x.length < 500)
-
-  if (firstUseful) return firstUseful
-  return 'Hola, te leo. Cuéntame qué necesitas y te ayudo.'
+function getFallback(iaConfig = {}, training = null) {
+  const fromPanel = clean(iaConfig.mensajeFallback || iaConfig.fallbackMessage || iaConfig.respuestaFallback || '')
+  if (fromPanel) return fromPanel
+  const fromTraining = (training?.items || []).find(x => x.improved && /fallback|cuando no sepas|respuesta base|saludo|inicio/i.test(`${x.original} ${x.reason}`))
+  if (fromTraining?.improved) return fromTraining.improved
+  return 'Te leo. Cuéntame un poco más para orientarte bien.'
 }
 
-function buildPrompt({ agentName, panelBrain, knowledge, trainingText, memory, facts, agendaLink, iaConfig, history, message }) {
-  const recentAssistant = history.filter(m => m.role === 'assistant').slice(-6).map((m,i) => `${i+1}. ${m.content}`).join('\n') || 'Sin mensajes previos.'
-  const derivRules = derivationRulesText(iaConfig)
-  return `Eres ${agentName}. Eres un agente genérico de atención y ventas por WhatsApp.
+function validStatus(status = '', iaConfig = {}) {
+  const s = normalize(status).replace(/\s+/g, '_')
+  const allowed = ['activo', 'calificado', 'frio', 'no_interesado']
+  if (allowed.includes(s)) return s
+  if (s === 'requiere_revision') {
+    const rules = normalize(flatten([iaConfig.reglasDuras, iaConfig.reglasRevision, iaConfig.reglasDerivacion]))
+    return /requiere_revision|requiere revision|derivar a revision/.test(rules) ? s : ''
+  }
+  return ''
+}
 
-REGLA PRINCIPAL:
-No tienes rubro, productos, precios, requisitos ni guiones propios. Solo respondes usando lo aprendido en Panel IA, documentos, feedback, memoria y conversación.
+export async function generateAgentResponse({
+  message,
+  conversationHistory = [],
+  iaConfig: reqIaConfig = {},
+  leadData = {},
+  debug = false
+} = {}) {
+  const input = clean(message)
+  if (!input) return { reply: '', action: 'sin_mensaje', leadUpdate: {}, statusUpdate: '', trace: { error: 'empty_message' } }
+
+  const db = getSupabase()
+  const settings = await readSettings(db)
+  const iaConfig = mergeIaConfig(reqIaConfig, settings)
+  const panel = panelText(iaConfig)
+  const knowledge = await readKnowledge(db, input, settings)
+  const training = await readTraining(db, input, settings)
+  const direct = directTrainingReply(training, input, iaConfig)
+
+  if (direct) {
+    return { reply: direct, action: 'conversando', leadUpdate: {}, statusUpdate: '', trace: { directTraining: true, trainingUsed: training.used } }
+  }
+
+  const ANTHROPIC_KEY = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.CLAUDE_API_KEY)
+  if (!ANTHROPIC_KEY) {
+    const fallback = cleanOutput(getFallback(iaConfig, training), iaConfig)
+    console.error('[AGENT] missing Anthropic key')
+    return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '', trace: { missingKey: true, trainingCount: training.items.length } }
+  }
+
+  const agentName = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Asistente')
+  const agenda = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.urlAgenda || iaConfig.calendlyLink || '')
+
+  const system = `Eres ${agentName}. Eres un agente comercial genérico.
+
+REGLA CENTRAL:
+No tienes negocio, producto, guion ni oferta propia en el código. Solo puedes vender, explicar y orientar usando lo que está en el PANEL IA, CONOCIMIENTO, DOCUMENTOS y APRENDIZAJES.
 
 PANEL IA:
-${panelBrain || 'Panel IA vacío.'}
+${panel || 'Panel IA sin información suficiente.'}
 
-DOCUMENTOS/CONOCIMIENTO RELEVANTE:
-${knowledge || 'Sin documentos relevantes.'}
+APRENDIZAJES Y FEEDBACK PERMANENTE:
+${training.text || 'Sin aprendizajes cargados.'}
 
-FEEDBACK Y APRENDIZAJES PERMANENTES:
-${trainingText || 'Sin feedback aprendido.'}
+CONOCIMIENTO RELEVANTE:
+${knowledge.text || 'Sin documentos relevantes.'}
 
-MEMORIA DEL CONTACTO:
-${memory || 'Sin memoria registrada.'}
+DATOS DEL CONTACTO:
+${flatten(leadData) || 'Sin datos estructurados.'}
 
-DATOS YA ENTREGADOS EN ESTA CONVERSACIÓN:
-${facts}
-
-MENSAJES RECIENTES DEL ASISTENTE PARA EVITAR REPETIR:
-${recentAssistant}
-
-LINK DE AGENDA CONFIGURADO:
-${agendaLink || 'No configurado'}
-
-REGLAS DURAS PARA DERIVAR A HUMANO O REVISIÓN:
-${derivRules || 'No hay reglas duras configuradas. Por lo tanto NO derives ni marques revisión.'}
+LINK DE AGENDA DISPONIBLE:
+${agenda || 'No configurado'}
 
 INSTRUCCIONES:
-- Responde SIEMPRE el último mensaje del cliente.
-- Responde breve, natural y útil por WhatsApp.
-- Haz máximo una pregunta.
-- No repitas datos ya entregados.
-- Si el cliente pide agenda/link y hay link configurado, entrega el link.
-- No inventes información que no esté en entrenamiento o documentos.
-- Si falta información, pide solo el dato mínimo siguiente según el proceso aprendido.
-- No menciones panel, prompt, memoria, documentos ni modelo.
-- Solo deriva a humano/revisión si las reglas duras lo autorizan explícitamente.
+- Responde en español natural de WhatsApp.
+- Sé breve, claro y vendedor.
+- No repitas preguntas ya respondidas en el historial.
+- Usa el feedback y reglas del panel por sobre tu criterio general.
+- Si el cliente ya entregó lo necesario según el panel, avanza al siguiente paso definido en el panel.
+- Si corresponde agendar y hay link de agenda, entrega el link.
+- No inventes precios, condiciones, promesas ni datos que no estén en el conocimiento.
+- Solo deriva a humano o revisión si las reglas duras del panel lo indican explícitamente.
+- Devuelve SOLO JSON válido, sin markdown:
+{"reply":"mensaje visible al cliente","action":"conversando|calificado|agenda|sin_datos","statusUpdate":"activo|calificado|frio|no_interesado|","leadUpdate":{},"memoryUpdate":{},"escalateToHuman":false}`
 
-FRASES PROHIBIDAS:
-${panelBlocked(iaConfig).join('\n')}
+  const msgs = []
+  const hist = Array.isArray(conversationHistory) ? conversationHistory.slice(-16) : []
+  for (const h of hist) {
+    const role = h.role === 'assistant' ? 'assistant' : 'user'
+    const content = clean(h.content)
+    if (content) msgs.push({ role, content })
+  }
+  msgs.push({ role: 'user', content: input })
 
-Devuelve SOLO JSON válido:
-{"reply":"respuesta visible para el cliente","action":"conversando","escalateToHuman":false,"statusUpdate":"","derivationReason":"","leadUpdate":{},"memoryUpdate":{"facts":[],"doNotRepeat":[]},"learningSuggestion":""}
+  const modelCandidates = [
+    clean(process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL),
+    'claude-3-5-haiku-latest',
+    'claude-3-5-haiku-20241022',
+    'claude-haiku-4-5-20251001'
+  ].filter(Boolean)
 
-Último mensaje del cliente: ${clean(message)}`
-}
-
-async function callClaude({ key, model, system, messages }) {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.AGENT_TIMEOUT_MS || 14000))
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model,
-        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 600),
-        temperature: Number(process.env.AGENT_TEMPERATURE || 0.12),
-        system,
-        messages
+  let lastError = ''
+  for (const model of [...new Set(modelCandidates)]) {
+    try {
+      console.log('[AGENT] Claude start', model)
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({ model, max_tokens: 700, temperature: 0.25, system, messages: msgs })
       })
-    })
-    const text = await r.text()
-    const data = safeJson(text)
-    if (!r.ok || data?.error) throw new Error(data?.error?.message || `Anthropic HTTP ${r.status}: ${text.slice(0,160)}`)
-    return data?.content?.[0]?.text || ''
-  } finally { clearTimeout(timeout) }
-}
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok || data.error) throw new Error(data?.error?.message || `HTTP ${r.status}`)
 
-export async function generateAgentResponse(input = {}, opts = {}) {
-  const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY)
-  const model = clean(process.env.ANTHROPIC_MODEL || DEFAULT_MODEL)
-  const message = clean(input.message)
-  if (!message) return { ok: false, reply: '', error: 'missing_message' }
+      const raw = data?.content?.map(c => c.text || '').join('\n').trim() || ''
+      const parsed = parseOutput(raw)
+      const reply = cleanOutput(parsed.reply, iaConfig)
+      if (!reply) throw new Error('empty_model_reply')
 
-  const db = opts.db || sb()
-  const settings = await loadSettings(db)
-  const iaConfig = { ...(settings.map.ia_config || {}), ...(input.iaConfig || {}) }
-  const history = sanitizeHistory(input.conversationHistory || [])
-  const leadData = input.leadData || {}
-  const panelBrain = buildPanelBrain(iaConfig)
-  const agendaLink = getAgendaLink(iaConfig, settings.text)
-  const facts = conversationFacts(history, message, leadData)
-  const query = [message, facts, panelBrain].join('\n')
-
-  const [training, memory, knowledge] = await Promise.all([
-    loadTraining(db, query),
-    loadMemory(db, leadData),
-    retrieveKnowledge(db, query, settings)
-  ])
-
-  const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || 'Asistente')
-  const localUpdate = extractLocalFields(message, leadData, agendaLink)
-  const directTrainingReply = tryTrainingReply(training, message, iaConfig)
-
-  if (!key) {
-    const reply = removeBlocked(directTrainingReply || panelFallback(iaConfig, message, training), iaConfig)
-    return { ok: false, reply, action: 'conversando', escalateToHuman: false, statusUpdate: '', leadUpdate: localUpdate, error: 'ANTHROPIC_KEY_missing', trace: { fallback: true, feedbackUsed: training.count, knowledgeChunksUsed: knowledge.chunks.length, genericEngine: true, hardcodedBusiness: false } }
-  }
-
-  const system = buildPrompt({ agentName, panelBrain, knowledge: knowledge.text, trainingText: training.text, memory, facts, agendaLink, iaConfig, history, message })
-  const messages = [...history, { role: 'user', content: message }]
-
-  try {
-    console.log('[AGENT] Claude start', { model, hasPanel: !!panelBrain, training: training.count, chunks: knowledge.chunks.length })
-    const raw = await callClaude({ key, model, system, messages })
-    const parsed = parseModelOutput(raw)
-    let reply = removeBlocked(parsed.reply, iaConfig)
-    if (!reply) reply = removeBlocked(directTrainingReply || panelFallback(iaConfig, message, training), iaConfig)
-
-    const rules = hasDerivationRules(iaConfig)
-    const requestedStatus = rules ? normStatus(parsed.statusUpdate) : ''
-    const requestedHuman = rules && parsed.escalateToHuman === true
-    await saveMemory(db, leadData, parsed.memoryUpdate)
-
-    return {
-      ok: true,
-      reply,
-      action: parsed.action || 'conversando',
-      escalateToHuman: requestedHuman,
-      statusUpdate: requestedStatus,
-      derivationReason: rules ? clean(parsed.derivationReason || '') : '',
-      leadUpdate: safeUpdate({ ...localUpdate, ...(parsed.leadUpdate || {}) }),
-      memory: parsed.memoryUpdate || {},
-      learningSuggestion: parsed.learningSuggestion || '',
-      trace: {
-        panelUsed: !!panelBrain,
-        feedbackUsed: training.count,
-        trainingDirectCandidate: !!directTrainingReply,
-        knowledgeChunksUsed: knowledge.chunks.length,
-        agendaConfigured: !!agendaLink,
-        derivationAllowedByHardRules: !!(requestedHuman || requestedStatus === 'requiere_revision'),
-        genericEngine: true,
-        hardcodedBusiness: false
+      const statusUpdate = validStatus(parsed.statusUpdate, iaConfig)
+      console.log('[AGENT] Claude ok', { model, chars: reply.length, statusUpdate })
+      return {
+        reply,
+        action: parsed.action || 'conversando',
+        statusUpdate,
+        leadUpdate: parsed.leadUpdate || {},
+        memoryUpdate: parsed.memoryUpdate || {},
+        escalateToHuman: parsed.escalateToHuman === true && /humano|ejecutivo|asesor|derivar/i.test(flatten([iaConfig.reglasDuras, iaConfig.reglasDerivacion])),
+        trace: debug ? { model, knowledgeUsed: knowledge.used, trainingUsed: training.used } : undefined
       }
-    }
-  } catch (error) {
-    console.error('[AGENT] Claude error:', error?.message)
-    const reply = removeBlocked(directTrainingReply || panelFallback(iaConfig, message, training), iaConfig)
-    return {
-      ok: false,
-      reply,
-      action: 'conversando',
-      escalateToHuman: false,
-      statusUpdate: '',
-      leadUpdate: localUpdate,
-      error: error?.message || 'agent_error',
-      trace: { genericEngine: true, fallback: true, feedbackUsed: training.count, knowledgeChunksUsed: knowledge.chunks.length, hardcodedBusiness: false, derivationAllowedByHardRules: false }
+    } catch (e) {
+      lastError = e.message
+      console.error('[AGENT] Claude error', model, e.message)
     }
   }
-}
 
-async function extractDocument({ file, mediaType }) {
-  const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY)
-  if (!key) throw new Error('ANTHROPIC_KEY missing')
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'pdfs-2024-09-25' },
-    body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL || DEFAULT_MODEL,
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: [
-        { type: 'document', source: { type: 'base64', media_type: mediaType, data: file } },
-        { type: 'text', text: 'Extrae y devuelve todo el texto útil de este documento, sin inventar.' }
-      ] }]
-    })
-  })
-  const txt = await r.text()
-  const data = safeJson(txt)
-  if (!r.ok || data?.error) throw new Error(data?.error?.message || `extract_error ${r.status}`)
-  return data?.content?.[0]?.text || ''
+  const fallback = cleanOutput(getFallback(iaConfig, training), iaConfig)
+  return {
+    reply: fallback,
+    action: 'fallback_model_error',
+    statusUpdate: '',
+    leadUpdate: {},
+    memoryUpdate: {},
+    trace: { fallback: true, error: lastError, trainingCount: training.items.length, knowledgeCount: knowledge.used.length }
+  }
 }
 
 export default async function handler(req, res) {
@@ -588,12 +406,14 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   if (req.method === 'OPTIONS') return res.status(200).end()
-  if (req.method !== 'POST') return res.status(405).json({ ok:false, error:'Use POST' })
-  const body = req.body || {}
-  if (body.action === 'extract' && body.file) {
-    try { return res.status(200).json({ ok:true, text: await extractDocument({ file: body.file, mediaType: body.mediaType }) }) }
-    catch (e) { return res.status(200).json({ ok:false, error:e.message, text:'' }) }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' })
+
+  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false } = req.body || {}
+  try {
+    const result = await generateAgentResponse({ message, conversationHistory, iaConfig, leadData, debug })
+    return res.status(200).json(result)
+  } catch (e) {
+    console.error('[AGENT] fatal', e.message)
+    return res.status(200).json({ reply: '', error: e.message, action: 'error', leadUpdate: {}, statusUpdate: '' })
   }
-  const result = await generateAgentResponse(body)
-  return res.status(200).json(result)
 }
