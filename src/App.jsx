@@ -4500,14 +4500,21 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   const [loading, setLoading]       = React.useState(true)
   const [showForm, setShowForm]     = React.useState(false)
   const [testing, setTesting]       = React.useState(null)
-  const [qrData, setQrData]         = React.useState(null)   // { instanceName, qr }
+  const [qrData, setQrData]         = React.useState(null)   // { instanceName, qr, nombre }
   const [connecting, setConnecting] = React.useState(false)
   const [newName, setNewName]       = React.useState('')
   const [statusMsg, setStatusMsg]   = React.useState(null)   // { type, text }
+  const autoWebhookRunning = React.useRef(false)
 
   const EVO_URL = 'https://wa.rabbittscapital.com'
   const EVO_KEY = 'rabbitts2024'
   const WEBHOOK_URL = 'https://crm.rabbittscapital.com/api/whatsapp'
+  const WEBHOOK_EVENTS = [
+    'CONNECTION_UPDATE',
+    'QRCODE_UPDATED',
+    'MESSAGES_UPSERT',
+    'MESSAGES_UPDATE'
+  ]
 
   const evoHeaders = { 'Content-Type': 'application/json', 'apikey': EVO_KEY }
 
@@ -4529,22 +4536,76 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
     setLoading(true)
     try {
       const { data } = await supabase.from('crm_settings').select('value').eq('key','wa_numeros').single()
-      setNumeros(data?.value || [])
+      const list = data?.value || []
+      setNumeros(list)
+      ensureWebhooksForNumbers(list)
     } catch(_) { setNumeros([]) }
     setLoading(false)
   }
 
   const saveNumeros = async (list) => {
     if (!dbReady || !supabase) return
-    await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: list })
+    await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: list }, { onConflict: 'key' })
     setNumeros(list)
+  }
+
+  const configurarWebhook = async (instanceName) => {
+    if (!instanceName) throw new Error('Falta instanceName')
+    const res = await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
+      method: 'POST',
+      headers: evoHeaders,
+      body: JSON.stringify({
+        url: WEBHOOK_URL,
+        enabled: true,
+        webhookByEvents: false,
+        webhookBase64: false,
+        events: WEBHOOK_EVENTS
+      })
+    })
+    const txt = await res.text()
+    let data = null
+    try { data = txt ? JSON.parse(txt) : null } catch(_) {}
+    if (!res.ok) throw new Error(data?.message || data?.error || txt || 'No se pudo configurar el webhook')
+    return data
+  }
+
+  const ensureWebhooksForNumbers = async (list = numeros) => {
+    if (autoWebhookRunning.current) return
+    const activeNumbers = (list || []).filter(n => n?.activo && n?.instanceName)
+    if (!activeNumbers.length) return
+
+    autoWebhookRunning.current = true
+    try {
+      const fixedIds = []
+      for (const num of activeNumbers) {
+        try {
+          await configurarWebhook(num.instanceName)
+          fixedIds.push(num.id)
+        } catch (e) {
+          console.warn('[WA] auto webhook error:', num.instanceName, e.message)
+        }
+      }
+
+      if (fixedIds.length) {
+        const updated = (list || []).map(n => fixedIds.includes(n.id)
+          ? {...n, webhookUrl: WEBHOOK_URL, webhookEvents: WEBHOOK_EVENTS, webhookAutoCheckedAt: new Date().toISOString()}
+          : n
+        )
+        setNumeros(updated)
+        if (dbReady && supabase) {
+          await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: updated }, { onConflict: 'key' })
+        }
+      }
+    } finally {
+      autoWebhookRunning.current = false
+    }
   }
 
   // ── Conectar nuevo número via QR ──────────────────────────────────────────
   const conectarNumero = async () => {
     if (!newName.trim()) { setStatusMsg({type:'error', text:'Ingresa un nombre para este número'}); return }
     setConnecting(true)
-    setStatusMsg({type:'loading', text:'Creando instancia...'})
+    setStatusMsg({type:'loading', text:'Creando instancia en Evolution API...'})
     setQrData(null)
 
     const instanceName = 'rabbitts_' + Date.now()
@@ -4552,14 +4613,19 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       // 1. Crear instancia
       const createRes = await fetch(`${EVO_URL}/instance/create`, {
         method: 'POST', headers: evoHeaders,
-        body: JSON.stringify({ instanceName, integration: "WHATSAPP-BAILEYS", qrcode: true })
+        body: JSON.stringify({ instanceName, integration: 'WHATSAPP-BAILEYS', qrcode: true })
       })
-      const createData = await createRes.json()
-      if (!createData.instance) throw new Error('No se pudo crear la instancia')
+      const createTxt = await createRes.text()
+      let createData = null
+      try { createData = createTxt ? JSON.parse(createTxt) : null } catch(_) {}
+      if (!createRes.ok || !createData?.instance) throw new Error(createData?.message || createData?.error || createTxt || 'No se pudo crear la instancia')
 
-      // 2. Pedir QR directamente a Evolution API y mostrarlo dentro del CRM
-      setStatusMsg({type:'loading', text:'Instancia creada. Generando código QR...'})
+      // 2. Configurar webhook inmediatamente. Rabito depende de esto.
+      setStatusMsg({type:'loading', text:'Instancia creada. Activando webhook para Rabito...'})
+      await configurarWebhook(instanceName)
 
+      // 3. Pedir QR directamente a Evolution API y mostrarlo dentro del CRM
+      setStatusMsg({type:'loading', text:'Webhook activo. Generando código QR...'})
       let qrBase64 = getQrFromResponse(createData)
       if (!qrBase64) {
         const qrRes = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, { headers: evoHeaders })
@@ -4569,34 +4635,40 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
       setQrData({ instanceName, qr: qrBase64 ? normalizeQrSrc(qrBase64) : null, nombre: newName.trim() })
       setStatusMsg(qrBase64
-        ? {type:'info', text:'Escanea el código QR con WhatsApp Business para conectar este número.'}
-        : {type:'info', text:'Instancia creada. Si el QR no aparece, presiona “Actualizar QR”.'}
+        ? {type:'info', text:'Webhook activo. Escanea el código QR con WhatsApp Business para conectar este número.'}
+        : {type:'info', text:'Webhook activo. Si el QR no aparece, presiona “Actualizar QR”.'}
       )
 
-      // 3. Polling para detectar conexión
+      // 4. Polling para detectar conexión y guardar número
       let attempts = 0
       const poll = setInterval(async () => {
         attempts++
-        if (attempts > 30) { clearInterval(poll); setConnecting(false); return }
+        if (attempts > 40) { clearInterval(poll); setConnecting(false); return }
         try {
           const stateRes = await fetch(`${EVO_URL}/instance/connectionState/${instanceName}`, { headers: evoHeaders })
           const stateData = await stateRes.json()
           const state = stateData?.instance?.state || stateData?.state || stateData?.connectionStatus
           if (state === 'open') {
             clearInterval(poll)
-            // Obtener número conectado
+
+            // Reforzar webhook al quedar open. Es idempotente.
+            await configurarWebhook(instanceName)
+
             const infoRes = await fetch(`${EVO_URL}/instance/fetchInstances?instanceName=${instanceName}`, { headers: evoHeaders })
             const infoData = await infoRes.json()
             const instanceInfo = Array.isArray(infoData) ? infoData[0] : infoData
-            const phone = instanceInfo?.ownerJid?.split('@')[0] || instanceInfo?.owner?.split('@')[0] || instanceName
+            const rawPhone = instanceInfo?.ownerJid?.split('@')[0] || instanceInfo?.owner?.split('@')[0] || ''
+            const cleanPhone = rawPhone ? '+' + rawPhone.replace(/\D/g,'') : ''
 
             const newNum = {
               id: 'wa-' + Date.now(),
               nombre: newName.trim(),
-              numero: phone ? '+' + phone : '',
+              numero: cleanPhone,
               instanceName,
               evoUrl: EVO_URL,
               evoKey: EVO_KEY,
+              webhookUrl: WEBHOOK_URL,
+              webhookEvents: WEBHOOK_EVENTS,
               activo: true,
               createdAt: new Date().toISOString()
             }
@@ -4605,14 +4677,11 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
             setNewName('')
             setShowForm(false)
             setConnecting(false)
-            // Configurar webhook AUTOMÁTICAMENTE al conectar
-            await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
-              method: 'POST', headers: evoHeaders,
-              body: JSON.stringify({ url: WEBHOOK_URL, enabled: true, webhookByEvents: false, events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_SET', 'SEND_MESSAGE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'CONTACTS_SET', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CHATS_SET', 'CHATS_UPSERT', 'CHATS_UPDATE'] })
-            })
-            setStatusMsg({type:'success', text:`✅ ${newNum.nombre} conectado y webhook configurado automáticamente`})
+            setStatusMsg({type:'success', text:`✅ ${newNum.nombre} conectado. Webhook activo y Rabito listo para responder.`})
           }
-        } catch(_) {}
+        } catch(e) {
+          console.warn('[WA] polling error:', e.message)
+        }
       }, 3000)
 
     } catch(err) {
@@ -4626,12 +4695,13 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
     if (!qrData?.instanceName) return
     setStatusMsg({type:'loading', text:'Actualizando código QR...'})
     try {
+      await configurarWebhook(qrData.instanceName)
       const qrRes = await fetch(`${EVO_URL}/instance/connect/${qrData.instanceName}`, { headers: evoHeaders })
       const qrJson = await qrRes.json()
       const qrBase64 = getQrFromResponse(qrJson)
       if (qrBase64) {
         setQrData(prev => ({...prev, qr: normalizeQrSrc(qrBase64)}))
-        setStatusMsg({type:'info', text:'QR actualizado. Escanéalo desde WhatsApp Business.'})
+        setStatusMsg({type:'info', text:'QR actualizado y webhook activo. Escanéalo desde WhatsApp Business.'})
       } else {
         setStatusMsg({type:'error', text:'Evolution no devolvió QR. Revisa que la instancia no esté ya conectada o intenta nuevamente.'})
       }
@@ -4649,7 +4719,10 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   }
 
   const toggleActivo = async (id) => {
-    await saveNumeros(numeros.map(n => n.id === id ? {...n, activo: !n.activo} : n))
+    const updated = numeros.map(n => n.id === id ? {...n, activo: !n.activo} : n)
+    await saveNumeros(updated)
+    const changed = updated.find(n => n.id === id)
+    if (changed?.activo) ensureWebhooksForNumbers(updated)
   }
 
   const testConnection = async (num) => {
@@ -4657,8 +4730,8 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
     try {
       const r = await fetch(`${EVO_URL}/instance/connectionState/${num.instanceName}`, { headers: evoHeaders })
       const d = await r.json()
-      const state = d?.instance?.state
-      if (state === 'open') alert(`✅ Conectado\nNúmero: ${num.numero}\nEstado: Activo`)
+      const state = d?.instance?.state || d?.state || d?.connectionStatus
+      if (state === 'open') alert(`✅ Conectado\nNúmero: ${num.numero || 'No detectado'}\nEstado: Activo`)
       else alert(`⚠️ Estado: ${state || 'desconectado'}`)
     } catch(e) { alert('Error: ' + e.message) }
     setTesting(null)
@@ -4670,7 +4743,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',marginBottom:12}}>
         <div>
           <div style={{fontSize:13,fontWeight:800,color:B.primary}}>📱 Números WhatsApp conectados</div>
-          <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>Conecta uno o más números de WhatsApp Business para Rabito IA y el CRM.</div>
+          <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>Conecta uno o más números de WhatsApp Business. El webhook de Rabito se activa automáticamente.</div>
         </div>
         <button
           onClick={()=>{setShowForm(true);setStatusMsg(null)}}
@@ -4712,7 +4785,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
               <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{num.nombre}</div>
               <div style={{fontSize:11,color:'#6b7280',marginTop:1}}>
                 {num.numero && <span style={{marginRight:8}}>📞 {num.numero}</span>}
-                <span style={{fontFamily:'monospace',fontSize:10}}>{num.instanceName?.slice(0,20)}...</span>
+                <span style={{fontFamily:'monospace',fontSize:10}}>{num.instanceName?.slice(0,24)}...</span>
               </div>
             </div>
             <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center',flexWrap:'wrap'}}>
@@ -4725,7 +4798,6 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
                 style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',color:B.primary,fontWeight:600}}>
                 {testing===num.id?'...':'Probar'}
               </button>
-
               <button onClick={()=>eliminarNumero(num)}
                 style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>✕</button>
             </div>
