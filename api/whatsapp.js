@@ -69,18 +69,43 @@ function collectJids(value, out = []) {
 function allJids(o = {}) {
   return [...new Set([
     o?.key?.remoteJid,
+    o?.key?.remoteJidAlt,
+    o?.key?.participant,
+    o?.key?.participantAlt,
     o?.remoteJid,
+    o?.remoteJidAlt,
+    o?.senderPn,
+    o?.participantAlt,
+    o?.phoneNumber,
     o?.jid,
     o?.from,
     o?.sender,
     o?.participant,
     o?.data?.key?.remoteJid,
+    o?.data?.key?.remoteJidAlt,
+    o?.data?.key?.participant,
+    o?.data?.key?.participantAlt,
     o?.data?.remoteJid,
+    o?.data?.remoteJidAlt,
+    o?.data?.senderPn,
+    o?.data?.phoneNumber,
     o?.data?.sender,
     o?.data?.from,
     o?.data?.participant,
     ...collectJids(o)
   ].map(clean).filter(Boolean))]
+}
+
+function collectValuesByKey(value, keyRegex, out = []) {
+  if (!value || out.length > 120) return out
+  if (Array.isArray(value)) { for (const item of value) collectValuesByKey(item, keyRegex, out); return out }
+  if (typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if (keyRegex.test(k) && (typeof v === 'string' || typeof v === 'number')) out.push(clean(v))
+      collectValuesByKey(v, keyRegex, out)
+    }
+  }
+  return out
 }
 
 function jidOf(o = {}) {
@@ -93,21 +118,34 @@ function digitsFromJid(jid = '') {
 }
 
 function lidOfAny(o = {}) {
-  const lidJid = allJids(o).find(j => /@lid$/i.test(j)) || ''
+  const lidJid = allJids(o).find(j => /@lid$/i.test(j)) || collectValuesByKey(o, /(^|_)lid$|lidJid|remoteJidLid|senderLid/i).find(Boolean) || ''
   return lidJid ? digitsFromJid(lidJid) : ''
 }
 
 function phoneOfAny(o = {}) {
-  const jids = allJids(o)
   const lid = lidOfAny(o)
+
+  // Primero intentamos campos PN explícitos. Baileys/Evolution nuevos pueden enviar remoteJidAlt, participantAlt, senderPn o phoneNumber.
+  const explicitPn = collectValuesByKey(o, /remoteJidAlt|participantAlt|senderPn|ownerPn|descOwnerPn|phoneNumber|pnJid|senderPhone/i)
+    .map(digitsFromJid)
+    .filter(Boolean)
+    .find(d => d.length >= 8) || ''
+  if (explicitPn) return explicitPn
+
+  const jids = allJids(o)
   const candidates = jids
     .filter(j => /@(s\.whatsapp\.net|c\.us)$/i.test(j))
     .map(digitsFromJid)
     .filter(Boolean)
 
-  // WhatsApp LID puede venir como 386... y NO es teléfono real. Si aparece junto a @lid, se descarta.
+  // WhatsApp LID puede aparecer como número falso, típico +386... en algunos eventos.
+  // Si hay señales de LID, no convertimos ese valor en teléfono real.
   const real = candidates.find(d => !(lid && /^386\d{6,}$/.test(d))) || ''
-  return real
+  if (real) return real
+
+  const suspect386 = candidates.find(d => /^386\d{6,}$/.test(d)) || ''
+  if (suspect386) return ''
+  return ''
 }
 
 function telOf(phone = '', lid = '') {
@@ -432,8 +470,12 @@ export default async function handler(req, res) {
   const results = []
   for (const m of rawMessages) {
     const jids = allJids(m)
-    const lid = lidOfAny(m)
+    let lid = lidOfAny(m)
     const phone = phoneOfAny(m)
+    if (!phone && !lid) {
+      const suspect = allJids(m).map(digitsFromJid).find(d => /^386\d{6,}$/.test(d))
+      if (suspect) lid = suspect
+    }
     const tel = telOf(phone, lid)
     const text = textOf(m)
     const name = nameOf(m)
