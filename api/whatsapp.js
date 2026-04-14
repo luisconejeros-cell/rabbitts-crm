@@ -1,529 +1,368 @@
-// api/agent.js — Motor genérico de aprendizaje para Rabito v6
-// No contiene guiones de negocio. Responde usando Panel IA + documentos + feedback + memoria.
+// api/whatsapp.js — Webhook estable Rabbitts CRM
+// Flujo simple y probado: recibir -> guardar -> generar respuesta -> enviar por Evolution -> guardar respuesta.
 
 import { createClient } from '@supabase/supabase-js'
+import { generateAgentResponse } from './agent.js'
 
-const DEFAULT_MODEL = 'claude-3-5-haiku-20241022'
 const clean = (v = '') => String(v ?? '').trim()
 const nowIso = () => new Date().toISOString()
 
-const BUILT_IN_BLOCKED = [
-  'alta demanda',
-  'te respondo en unos minutos',
-  'te respondo en algunos minutos',
-  'estoy con alta demanda',
-  'soy una ia',
-  'soy inteligencia artificial',
-  'como modelo de lenguaje',
-  'no tengo acceso',
-  'para avanzar bien, dime cuál es el dato principal que quieres resolver ahora',
-  'para ayudarte bien necesito partir por esto',
-  '[sistema]'
-]
-
-function sb() {
+function getSupabase() {
   const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
   const key = clean(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
-  return url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null
+  if (!url || !key) return null
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 }
 
-function normalize(text = '') {
-  return String(text || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+function eventName(body = {}) {
+  return clean(body.event || body.type || body.eventName || body.action || '').toLowerCase().replace(/_/g, '.')
 }
 
-function words(text = '') {
-  return normalize(text).split(/[^a-z0-9ñ]+/i).filter(w => w.length > 2)
+function unwrapMessage(message = {}) {
+  let m = message || {}
+  if (m.ephemeralMessage?.message) m = m.ephemeralMessage.message
+  if (m.viewOnceMessage?.message) m = m.viewOnceMessage.message
+  if (m.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message
+  if (m.documentWithCaptionMessage?.message) m = m.documentWithCaptionMessage.message
+  return m
 }
 
-function flatten(value, depth = 0) {
-  if (value == null || value === '') return ''
-  if (depth > 4) return ''
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return clean(value)
-  if (Array.isArray(value)) return value.slice(0, 120).map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
-  if (typeof value === 'object') {
-    return Object.entries(value)
-      .filter(([k]) => !/password|token|secret|apikey|api_key|base64|image|file/i.test(k))
-      .slice(0, 120)
-      .map(([k, v]) => {
-        const txt = flatten(v, depth + 1)
-        return txt ? `${k}: ${txt}` : ''
-      })
-      .filter(Boolean)
-      .join('\n')
-  }
-  return ''
+function extractText(raw = {}) {
+  const m = unwrapMessage(raw.message || raw.msg || raw)
+  return clean(
+    m.conversation ||
+    m.extendedTextMessage?.text ||
+    m.imageMessage?.caption ||
+    m.videoMessage?.caption ||
+    m.documentMessage?.caption ||
+    m.buttonsResponseMessage?.selectedDisplayText ||
+    m.buttonsResponseMessage?.selectedButtonId ||
+    m.listResponseMessage?.title ||
+    m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    m.templateButtonReplyMessage?.selectedDisplayText ||
+    m.templateButtonReplyMessage?.selectedId ||
+    m.interactiveResponseMessage?.body?.text ||
+    m.reactionMessage?.text ||
+    ''
+  )
 }
 
-function safeJson(text, fallback = null) {
-  try { return text ? JSON.parse(text) : fallback } catch { return fallback }
+function extractMessages(body = {}) {
+  const d = body.data
+  if (Array.isArray(d)) return d
+  if (Array.isArray(d?.messages)) return d.messages
+  if (Array.isArray(d?.message)) return d.message
+  if (d?.key || d?.message || d?.remoteJid || d?.from || d?.sender) return [d]
+  if (body?.key || body?.message || body?.remoteJid || body?.from || body?.sender) return [body]
+  return []
 }
 
-function stripFence(text = '') {
-  return clean(text).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+function jidOf(raw = {}) {
+  return clean(raw?.key?.remoteJid || raw?.remoteJid || raw?.jid || raw?.from || raw?.sender || raw?.data?.key?.remoteJid || '')
 }
+function fromMeOf(raw = {}) { return raw?.key?.fromMe === true || raw?.fromMe === true || raw?.data?.key?.fromMe === true }
+function nameOf(raw = {}) { return clean(raw?.pushName || raw?.notifyName || raw?.name || raw?.senderName || raw?.data?.pushName || '') }
+function phoneFromJid(jid = '') { return clean(jid).replace(/@[^@]+$/, '').replace(/:\d+$/, '').replace(/[^0-9]/g, '') }
+function telOf(phone = '') { const d = phone.replace(/[^0-9]/g, ''); return d ? `+${d}` : '' }
 
-function extractJson(text = '') {
-  const src = stripFence(text)
-  const start = src.indexOf('{')
-  if (start < 0) return ''
-  let depth = 0, inStr = false, esc = false
-  for (let i = start; i < src.length; i++) {
-    const ch = src[i]
-    if (inStr) {
-      if (esc) { esc = false; continue }
-      if (ch === '\\') { esc = true; continue }
-      if (ch === '"') inStr = false
-      continue
-    }
-    if (ch === '"') { inStr = true; continue }
-    if (ch === '{') depth++
-    if (ch === '}') {
-      depth--
-      if (depth === 0) return src.slice(start, i + 1)
-    }
-  }
-  return ''
-}
-
-function parseModelOutput(raw = '') {
-  const cleaned = stripFence(raw)
-  const parsed = safeJson(cleaned) || safeJson(extractJson(cleaned))
-  if (parsed && typeof parsed === 'object') {
-    const reply = typeof parsed.reply === 'object'
-      ? clean(parsed.reply.reply || parsed.reply.text || parsed.reply.message || '')
-      : clean(parsed.reply || parsed.message || parsed.text || '')
-    return {
-      reply,
-      action: clean(parsed.action || 'conversando'),
-      statusUpdate: clean(parsed.statusUpdate || parsed.status || ''),
-      escalateToHuman: parsed.escalateToHuman === true || parsed.derivarHumano === true || parsed.human === true,
-      derivationReason: clean(parsed.derivationReason || ''),
-      leadUpdate: parsed.leadUpdate && typeof parsed.leadUpdate === 'object' ? parsed.leadUpdate : {},
-      memoryUpdate: parsed.memoryUpdate && typeof parsed.memoryUpdate === 'object' ? parsed.memoryUpdate : {},
-      learningSuggestion: clean(parsed.learningSuggestion || '')
-    }
-  }
-  if (cleaned && !cleaned.startsWith('{')) return { reply: cleaned, action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
-  return { reply: '', action: 'conversando', leadUpdate: {}, memoryUpdate: {} }
-}
-
-function blockedFromPanel(iaConfig = {}) {
-  const raw = flatten({
-    frasesProhibidas: iaConfig.frasesProhibidas,
-    blockedPhrases: iaConfig.blockedPhrases,
-    noDecir: iaConfig.noDecir,
-    reglasEntrenamiento: iaConfig.reglasEntrenamiento
-  })
-  const lines = raw.split('\n').map(clean).filter(Boolean)
-  const short = lines.filter(x => x.length >= 4 && x.length <= 180)
-  return [...BUILT_IN_BLOCKED, ...short]
-}
-
-function removeBlocked(reply = '', iaConfig = {}) {
-  let out = clean(reply).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').replace(/\*\*/g, '').trim()
-  if (!out) return ''
-  if (out.startsWith('{')) out = parseModelOutput(out).reply || ''
-  if (!out) return ''
-  const blocked = blockedFromPanel(iaConfig).filter(Boolean)
-  for (const phrase of blocked) {
-    const p = clean(phrase)
-    if (!p) continue
-    out = out.replace(new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '')
-  }
-  const badNorm = blocked.map(normalize).filter(Boolean)
-  const sentences = out.split(/(?<=[.!?])\s+|\n+/).map(clean).filter(Boolean)
-  const safe = sentences.filter(s => !badNorm.some(b => normalize(s).includes(b)))
-  out = (safe.length ? safe.join(' ') : out)
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^[-,.;:\s]+/, '')
-    .trim()
-  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 650) || 650
-  if (out.length > max) out = out.slice(0, Math.max(140, max - 20)).replace(/\s+\S*$/, '') + '...'
-  return out
-}
-
-async function setting(db, key, fallback = null) {
-  if (!db) return fallback
+async function readSetting(db, key, fallback = null) {
   try {
     const { data } = await db.from('crm_settings').select('value').eq('key', key).single()
     return data?.value ?? fallback
   } catch { return fallback }
 }
 
-async function loadSettings(db) {
-  const keys = ['ia_config', 'drive_content', 'rabito_knowledge', 'rabito_knowledge_chunks', 'agent_training', 'agent_rules', 'ia_knowledge']
-  if (!db) return { map: {}, text: '' }
-  try {
-    const { data } = await db.from('crm_settings').select('key,value').in('key', keys)
-    const map = {}
-    const text = (data || []).map(row => {
-      map[row.key] = row.value
-      const txt = flatten(row.value)
-      return txt ? `### ${row.key}\n${txt}` : ''
-    }).filter(Boolean).join('\n\n').slice(0, 28000)
-    return { map, text }
-  } catch { return { map: {}, text: '' } }
+async function upsertSetting(db, key, value) {
+  try { await db.from('crm_settings').upsert({ key, value }, { onConflict: 'key' }) } catch (e) { console.error('[WA] setting error', key, e.message) }
 }
 
-function buildPanelBrain(iaConfig = {}) {
-  const blocks = []
-  const priority = [
-    'nombreAgente','assistantName','agentName','nombre',
-    'personalidad','tono','rol','identidad',
-    'oferta','productos','servicios','catalogo','promesa',
-    'procesoVenta','pasos','flujo','guion',
-    'reglas','reglasDuras','reglasDerivacion','reglasRevision','instrucciones',
-    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas','agendaLink','linkAgenda',
-    'mensajeFallback','fallbackMessage','respuestaFallback'
+async function getIaConfig(db) {
+  const ia = await readSetting(db, 'ia_config', {})
+  return ia && typeof ia === 'object' ? ia : {}
+}
+
+async function getEvolutionConfig(db, instanceFromEvent = '', conv = null) {
+  const waNums = await readSetting(db, 'wa_numeros', [])
+  const nums = Array.isArray(waNums) ? waNums : []
+  const selected = nums.find(n => instanceFromEvent && n.instanceName === instanceFromEvent)
+    || nums.find(n => n.activo !== false && n.instanceName)
+    || nums[0]
+    || {}
+
+  const instance = clean(instanceFromEvent || conv?.instanceName || selected.instanceName || process.env.EVOLUTION_DEFAULT_INSTANCE || process.env.EVO_DEFAULT_INSTANCE)
+  const url = clean(process.env.EVOLUTION_API_URL || process.env.EVO_URL || selected.evoUrl || selected.url || 'https://wa.rabbittscapital.com').replace(/\/$/, '')
+  const key = clean(process.env.EVOLUTION_API_KEY || process.env.EVO_KEY || selected.evoKey || selected.apiKey || selected.apikey || 'rabbitts2024')
+  return { instance, url, key }
+}
+
+async function findOrCreateConversation(db, { tel, phone, name, text, instance }) {
+  const { data: existing, error } = await db.from('crm_conversations')
+    .select('*')
+    .eq('telefono', tel)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+
+  if (error) console.error('[WA] conv select error:', error.message)
+  if (existing?.[0]) {
+    const conv = existing[0]
+    const upd = { nombre: conv.nombre || name || tel, last_message: text || conv.last_message || '[mensaje]', updated_at: nowIso() }
+    if (instance && Object.prototype.hasOwnProperty.call(conv, 'instanceName')) upd.instanceName = instance
+    const { data } = await db.from('crm_conversations').update(upd).eq('id', conv.id).select().single()
+    return data || { ...conv, ...upd }
+  }
+
+  const base = {
+    id: phone ? `wa-${phone}` : `wa-${Date.now()}`,
+    telefono: tel,
+    nombre: name || tel || phone,
+    mode: 'ia',
+    status: 'activo',
+    last_message: text || '[mensaje]',
+    lead_id: null,
+    created_at: nowIso(),
+    updated_at: nowIso()
+  }
+
+  const attempts = [
+    { ...base, instanceName: instance || null, origen: 'whatsapp' },
+    { ...base, instanceName: instance || null },
+    base
   ]
-  const used = new Set()
-  for (const key of priority) {
-    if (!(key in iaConfig)) continue
-    used.add(key)
-    const txt = flatten(iaConfig[key])
-    if (txt) blocks.push(`### ${key}\n${txt}`)
-  }
-  for (const [key, value] of Object.entries(iaConfig || {})) {
-    if (used.has(key) || /token|key|secret|password|activo|created|updated/i.test(key)) continue
-    const txt = flatten(value)
-    if (txt) blocks.push(`### ${key}\n${txt}`)
-  }
-  return blocks.join('\n\n').slice(0, 40000)
-}
 
-function getAgendaLink(iaConfig = {}, settingsText = '') {
-  const direct = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.urlAgenda || iaConfig.calendlyLink || process.env.DEFAULT_AGENDA_LINK || '')
-  if (direct) return direct
-  const match = String(settingsText || '').match(/https?:\/\/[^\s)\]"']+/i)
-  return match ? match[0] : ''
-}
-
-function score(query = '', txt = '') {
-  const qs = words(query).filter(w => w.length > 2)
-  const nt = normalize(txt)
-  let s = 0
-  for (const w of qs) if (nt.includes(w)) s += w.length > 4 ? 2 : 1
-  return s
-}
-
-async function retrieveKnowledge(db, query = '', settings = {}) {
-  let chunks = []
-  try {
-    const { data } = await db.from('crm_knowledge_chunks')
-      .select('id,doc_id,title,titulo,content,contenido,tags,producto,canal,activo')
-      .or('activo.is.null,activo.eq.true')
-      .limit(300)
-    if (Array.isArray(data)) chunks.push(...data)
-  } catch {}
-  const sk = settings.map?.rabito_knowledge_chunks
-  const sc = Array.isArray(sk?.chunks) ? sk.chunks : Array.isArray(sk) ? sk : []
-  if (sc.length) chunks.push(...sc.map((c, i) => ({
-    id: c.id || `settings-${i}`,
-    doc_id: c.doc_id || c.docId || 'settings',
-    title: c.title || c.titulo || c.docName || c.nombre || 'Documento',
-    content: c.content || c.contenido || c.text || '',
-    tags: c.tags || c.carpeta || '',
-    activo: c.activo !== false
-  })))
-  chunks = chunks.filter(c => c && c.activo !== false && clean(c.content || c.contenido))
-  if (!chunks.length) return { text: (settings.text || '').slice(0, 18000), chunks: [] }
-  const ranked = chunks.map(c => ({ ...c, _score: score(query, [c.title,c.titulo,c.tags,c.producto,c.canal,c.content,c.contenido].filter(Boolean).join(' ')) }))
-    .sort((a,b) => b._score - a._score)
-  const picked = (ranked.filter(c => c._score > 0).slice(0, 5).length ? ranked.filter(c => c._score > 0).slice(0, 5) : ranked.slice(0, 3))
-  return {
-    text: picked.map((c, i) => `### Fragmento ${i+1}: ${clean(c.title || c.titulo || 'Documento')}\n${clean(c.content || c.contenido).slice(0, 1400)}`).join('\n\n'),
-    chunks: picked.map(c => ({ id: c.id, title: c.title || c.titulo, score: c._score || 0 }))
-  }
-}
-
-async function loadFeedback(db, query = '') {
-  const items = []
-  try {
-    const { data } = await db.from('crm_conv_feedback').select('msg_content,feedback,correction,improved,created_at').order('created_at', { ascending: false }).limit(80)
-    if (Array.isArray(data)) items.push(...data)
-  } catch {}
-  try {
-    const v = await setting(db, 'agent_training', [])
-    const arr = Array.isArray(v) ? v : Array.isArray(v?.items) ? v.items : []
-    items.push(...arr.filter(x => x && x.active !== false))
-  } catch {}
-  const ranked = items.map(x => {
-    const txt = flatten(x)
-    return { txt, score: score(query, txt) }
-  }).filter(x => x.txt).sort((a,b) => b.score - a.score)
-  const picked = (ranked.filter(x => x.score > 0).slice(0, 6).length ? ranked.filter(x => x.score > 0).slice(0, 6) : ranked.slice(0, 4))
-  return { text: picked.map((x,i) => `### Feedback ${i+1}\n${x.txt.slice(0,1000)}`).join('\n\n'), count: picked.length }
-}
-
-async function loadMemory(db, leadData = {}) {
-  const key = clean(leadData.telefono || leadData.phone || leadData.email || leadData.nombre || leadData.name)
-  if (!db || !key) return ''
-  try {
-    const { data } = await db.from('crm_ai_memory').select('value,updated_at').eq('key', key).order('updated_at', { ascending: false }).limit(1)
-    return flatten(data?.[0]?.value || '').slice(0, 8000)
-  } catch { return '' }
-}
-
-async function saveMemory(db, leadData = {}, memoryUpdate = {}) {
-  if (!db || !memoryUpdate || typeof memoryUpdate !== 'object') return
-  const key = clean(leadData.telefono || leadData.phone || leadData.email || leadData.nombre || leadData.name)
-  if (!key) return
-  try { await db.from('crm_ai_memory').upsert({ key, value: memoryUpdate, updated_at: nowIso() }, { onConflict: 'key' }) } catch {}
-}
-
-function sanitizeHistory(history = []) {
-  return (Array.isArray(history) ? history : [])
-    .filter(m => m && m.role && clean(m.content) && !clean(m.content).startsWith('[Sistema]'))
-    .slice(-24)
-    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content).slice(0, 1400) }))
-}
-
-function conversationFacts(history = [], message = '', leadData = {}) {
-  const user = [...history, { role:'user', content: message }].filter(m => m.role === 'user').slice(-10).map((m,i) => `Cliente ${i+1}: ${clean(m.content).slice(0,400)}`)
-  const lead = Object.entries(leadData || {}).filter(([,v]) => v).slice(0, 20).map(([k,v]) => `${k}: ${clean(v).slice(0,250)}`)
-  return [...user, ...lead].join('\n') || 'Sin datos previos.'
-}
-
-function derivationRulesText(iaConfig = {}) {
-  return flatten({
-    reglasDuras: iaConfig.reglasDuras,
-    reglasDerivacion: iaConfig.reglasDerivacion,
-    derivacionHumano: iaConfig.derivacionHumano,
-    reglasRevision: iaConfig.reglasRevision,
-    humanRules: iaConfig.humanRules,
-    reviewRules: iaConfig.reviewRules
-  })
-}
-
-function hasDerivationRules(iaConfig = {}) {
-  return /(derivar|humano|persona|asesor|ejecutivo|revision|escalar|transferir|tomar control)/.test(normalize(derivationRulesText(iaConfig)))
-}
-
-function normStatus(v = '') {
-  const s = normalize(v).replace(/\s+/g, '_')
-  const allowed = ['activo','calificado','frio','no_interesado','requiere_revision']
-  return allowed.includes(s) ? s : ''
-}
-
-function safeUpdate(obj = {}) {
-  const out = {}
-  for (const [k,v] of Object.entries(obj || {}).slice(0,40)) {
-    const key = clean(k).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0,60)
-    if (!key || /password|token|secret|apikey|api_key|created_at|updated_at/i.test(key)) continue
-    const val = typeof v === 'object' ? flatten(v).slice(0,800) : clean(v).slice(0,800)
-    if (val) out[key] = val
-  }
-  return out
-}
-
-function extractLocalFields(message = '', leadData = {}, agendaLink = '') {
-  const out = { ...(leadData || {}) }
-  const email = String(message).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
-  if (email) out.email = email
-  if (agendaLink) out.agenda_link = agendaLink
-  return safeUpdate(out)
-}
-
-function buildPrompt({ agentName, panelBrain, knowledge, feedback, memory, facts, agendaLink, iaConfig, history, message }) {
-  const recentAssistant = history.filter(m => m.role === 'assistant').slice(-6).map((m,i) => `${i+1}. ${m.content}`).join('\n') || 'Sin mensajes previos.'
-  const derivRules = derivationRulesText(iaConfig)
-  return `Eres ${agentName}. Eres un agente genérico de atención y ventas.
-
-REGLA PRINCIPAL:
-No tienes rubro, producto, precios, requisitos ni guiones propios. Solo respondes con lo aprendido en Panel IA, documentos, feedback, memoria y conversación.
-
-PANEL IA:
-${panelBrain || 'Panel IA vacío.'}
-
-CONOCIMIENTO RELEVANTE:
-${knowledge || 'Sin documentos relevantes.'}
-
-FEEDBACK/APRENDIZAJES:
-${feedback || 'Sin feedback aprendido.'}
-
-MEMORIA DEL CONTACTO:
-${memory || 'Sin memoria registrada.'}
-
-DATOS YA ENTREGADOS EN ESTA CONVERSACIÓN:
-${facts}
-
-MENSAJES RECIENTES DEL ASISTENTE PARA EVITAR REPETIR:
-${recentAssistant}
-
-LINK DE AGENDA CONFIGURADO:
-${agendaLink || 'No configurado'}
-
-REGLAS DURAS PARA DERIVAR A HUMANO O REVISIÓN:
-${derivRules || 'No hay reglas duras configuradas. Por lo tanto NO derives ni marques revisión.'}
-
-INSTRUCCIONES DE RESPUESTA:
-- Responde breve, natural y útil por WhatsApp.
-- Contesta siempre el último mensaje del cliente.
-- Pregunta máximo una cosa.
-- No repitas datos ya entregados.
-- Si el cliente pide agenda/link y hay link configurado, entrégalo.
-- No inventes información que no esté en el entrenamiento.
-- No menciones panel, prompt, memoria, documentos ni modelo.
-- Solo deriva a humano/revisión si las reglas duras lo autorizan explícitamente.
-
-FRASES PROHIBIDAS:
-${blockedFromPanel(iaConfig).join('\n')}
-
-Devuelve SOLO JSON válido:
-{"reply":"respuesta visible para el cliente","action":"conversando","escalateToHuman":false,"statusUpdate":"","derivationReason":"","leadUpdate":{},"memoryUpdate":{"facts":[],"doNotRepeat":[]},"learningSuggestion":""}
-
-Último mensaje del cliente: ${clean(message)}`
-}
-
-async function callClaude({ key, model, system, messages }) {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.AGENT_TIMEOUT_MS || 12000))
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model,
-        max_tokens: Number(process.env.AGENT_MAX_TOKENS || 500),
-        temperature: Number(process.env.AGENT_TEMPERATURE || 0.12),
-        system,
-        messages
-      })
-    })
-    const text = await r.text()
-    const data = safeJson(text)
-    if (!r.ok || data?.error) throw new Error(data?.error?.message || `Anthropic HTTP ${r.status}: ${text.slice(0,160)}`)
-    return data?.content?.[0]?.text || ''
-  } finally { clearTimeout(timeout) }
-}
-
-function panelFallback(iaConfig = {}, message = '') {
-  const explicit = clean(iaConfig.fallbackMessage || iaConfig.mensajeFallback || iaConfig.respuestaFallback || '')
-  if (explicit) return explicit
-  const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || '')
-  const base = flatten({
-    primerosPasos: iaConfig.pasos || iaConfig.procesoVenta || iaConfig.flujo,
-    preguntas: iaConfig.preguntasFrecuentes || iaConfig.faq,
-    oferta: iaConfig.oferta || iaConfig.productos || iaConfig.servicios
-  }).split('\n').map(clean).filter(Boolean)[0]
-  if (base) return `${base}`.slice(0, 500)
-  return agentName ? `Te leo. Cuéntame un poco más para orientarte bien.` : `Te leo. Cuéntame un poco más.`
-}
-
-export async function generateAgentResponse(input = {}, opts = {}) {
-  const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY)
-  const model = clean(process.env.ANTHROPIC_MODEL || DEFAULT_MODEL)
-  const message = clean(input.message)
-  if (!message) return { ok: false, reply: '', error: 'missing_message' }
-
-  const db = opts.db || sb()
-  const settings = await loadSettings(db)
-  const iaConfig = { ...(settings.map.ia_config || {}), ...(input.iaConfig || {}) }
-  const history = sanitizeHistory(input.conversationHistory || [])
-  const leadData = input.leadData || {}
-  const panelBrain = buildPanelBrain(iaConfig)
-  const agendaLink = getAgendaLink(iaConfig, settings.text)
-  const facts = conversationFacts(history, message, leadData)
-  const query = [message, facts, panelBrain].join('\n')
-  const [feedback, memory, knowledge] = await Promise.all([
-    loadFeedback(db, query),
-    loadMemory(db, leadData),
-    retrieveKnowledge(db, query, settings)
-  ])
-  const agentName = clean(iaConfig.nombreAgente || iaConfig.assistantName || iaConfig.agentName || iaConfig.nombre || 'Asistente')
-  const localUpdate = extractLocalFields(message, leadData, agendaLink)
-
-  if (!key) {
-    const reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
-    return { ok: false, reply, action: 'conversando', escalateToHuman: false, statusUpdate: '', leadUpdate: localUpdate, error: 'ANTHROPIC_KEY_missing', trace: { fallback: true, genericEngine: true, hardcodedBusiness: false } }
-  }
-
-  const system = buildPrompt({ agentName, panelBrain, knowledge: knowledge.text, feedback: feedback.text, memory, facts, agendaLink, iaConfig, history, message })
-  const messages = [...history, { role: 'user', content: message }]
-
-  try {
-    const raw = await callClaude({ key, model, system, messages })
-    const parsed = parseModelOutput(raw)
-    let reply = removeBlocked(parsed.reply, iaConfig)
-    if (!reply) reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
-    const rules = hasDerivationRules(iaConfig)
-    const requestedStatus = rules ? normStatus(parsed.statusUpdate) : ''
-    const requestedHuman = rules && parsed.escalateToHuman === true
-    await saveMemory(db, leadData, parsed.memoryUpdate)
-    return {
-      ok: true,
-      reply,
-      action: parsed.action || 'conversando',
-      escalateToHuman: requestedHuman,
-      statusUpdate: requestedStatus,
-      derivationReason: rules ? clean(parsed.derivationReason || '') : '',
-      leadUpdate: safeUpdate({ ...localUpdate, ...(parsed.leadUpdate || {}) }),
-      memory: parsed.memoryUpdate || {},
-      learningSuggestion: parsed.learningSuggestion || '',
-      trace: {
-        panelUsed: !!panelBrain,
-        feedbackUsed: feedback.count,
-        knowledgeChunksUsed: knowledge.chunks.length,
-        agendaConfigured: !!agendaLink,
-        derivationAllowedByHardRules: !!(requestedHuman || requestedStatus === 'requiere_revision'),
-        genericEngine: true,
-        hardcodedBusiness: false
-      }
+  for (const row of attempts) {
+    const { data, error: insertError } = await db.from('crm_conversations').insert(row).select().single()
+    if (!insertError && data) {
+      console.log('[WA] conv created:', data.id)
+      return data
     }
-  } catch (error) {
-    const reply = removeBlocked(panelFallback(iaConfig, message), iaConfig)
-    return {
-      ok: false,
-      reply,
-      action: 'conversando',
-      escalateToHuman: false,
-      statusUpdate: '',
-      leadUpdate: localUpdate,
-      error: error?.message || 'agent_error',
-      trace: { genericEngine: true, fallback: true, hardcodedBusiness: false, derivationAllowedByHardRules: false }
+    console.error('[WA] conv insert attempt error:', insertError?.message)
+  }
+
+  return base
+}
+
+async function saveMessage(db, convId, role, content, extra = {}) {
+  const text = clean(content)
+  if (!convId || !text || text.startsWith('[Sistema]')) return false
+  const row = {
+    conv_id: convId,
+    role: role === 'assistant' ? 'assistant' : 'user',
+    content: text,
+    created_at: extra.created_at || nowIso()
+  }
+  if (extra.manual != null) row.manual = extra.manual
+  const { error } = await db.from('crm_conv_messages').insert(row)
+  if (error) {
+    const { error: retryError } = await db.from('crm_conv_messages').insert({ conv_id: convId, role: row.role, content: text, created_at: row.created_at })
+    if (retryError) {
+      console.error('[WA] msg insert error:', retryError.message)
+      return false
     }
   }
+  return true
 }
 
-async function extractDocument({ file, mediaType }) {
-  const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY)
-  if (!key) throw new Error('ANTHROPIC_KEY missing')
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
+async function ensureLead(db, conv, { tel, phone, name, text }) {
+  try {
+    const { data } = await db.from('crm_leads').select('id').eq('telefono', tel).limit(1)
+    if (data?.[0]?.id) {
+      if (!conv.lead_id) await db.from('crm_conversations').update({ lead_id: data[0].id }).eq('id', conv.id)
+      return data[0].id
+    }
+  } catch {}
+
+  const base = {
+    id: phone ? `l-wa-${phone}` : `l-wa-${Date.now()}`,
+    nombre: name || tel || phone,
+    telefono: tel,
+    email: '',
+    tag: 'lead',
+    stage: 'nuevo',
+    fecha: nowIso(),
+    notas: text ? `Primer contacto por WhatsApp: ${text.slice(0, 250)}` : 'Primer contacto por WhatsApp'
+  }
+  const attempts = [{ ...base, fuente: 'whatsapp', origen: 'whatsapp' }, { ...base, fuente: 'whatsapp' }, base]
+  for (const row of attempts) {
+    const { data, error } = await db.from('crm_leads').insert(row).select('id').single()
+    if (!error && data?.id) {
+      await db.from('crm_conversations').update({ lead_id: data.id }).eq('id', conv.id)
+      return data.id
+    }
+  }
+  return null
+}
+
+async function loadHistory(db, convId) {
+  const { data, error } = await db.from('crm_conv_messages')
+    .select('role,content,created_at')
+    .eq('conv_id', convId)
+    .order('created_at', { ascending: true })
+    .limit(50)
+  if (error) {
+    console.error('[WA] history error:', error.message)
+    return []
+  }
+  return (data || [])
+    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content), created_at: m.created_at }))
+    .filter(m => m.content && !m.content.startsWith('[Sistema]'))
+}
+
+function statusAllowed(status = '', iaConfig = {}) {
+  const s = clean(status).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '_')
+  if (['activo', 'calificado', 'frio', 'no_interesado'].includes(s)) return s
+  if (s === 'requiere_revision') {
+    const rules = normalizeText([iaConfig.reglasDuras, iaConfig.reglasRevision, iaConfig.reglasDerivacion].map(x => typeof x === 'string' ? x : JSON.stringify(x || '')).join('\n'))
+    return /requiere_revision|requiere revision|derivar a revision/.test(rules) ? s : ''
+  }
+  return ''
+}
+function normalizeText(t = '') { return clean(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') }
+
+function extractVisibleReply(value) {
+  if (!value) return ''
+  if (typeof value === 'string') {
+    const t = clean(value)
+    if (!t.startsWith('{')) return t
+    try { return clean(JSON.parse(t).reply || JSON.parse(t).message || JSON.parse(t).text || '') } catch { return t }
+  }
+  if (typeof value === 'object') return clean(value.reply || value.message || value.text || '')
+  return ''
+}
+
+async function sendWhatsApp(db, { instance, number, text, conv }) {
+  const cfg = await getEvolutionConfig(db, instance, conv)
+  const cleanNumber = clean(number).replace(/[^0-9]/g, '')
+  const msg = extractVisibleReply(text)
+
+  if (!cfg.url || !cfg.key || !cfg.instance || !cleanNumber || !msg) {
+    console.error('[WA] send missing:', { url: !!cfg.url, key: !!cfg.key, instance: cfg.instance || null, number: !!cleanNumber, text: !!msg })
+    return { ok: false, status: 0, error: 'missing_send_config' }
+  }
+
+  const endpoint = `${cfg.url}/message/sendText/${encodeURIComponent(cfg.instance)}`
+  const payload = { number: cleanNumber, text: msg, delay: 400 }
+  console.log('[WA] send attempt:', endpoint, cleanNumber)
+  const r = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'pdfs-2024-09-25' },
-    body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL || DEFAULT_MODEL,
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: [
-        { type: 'document', source: { type: 'base64', media_type: mediaType, data: file } },
-        { type: 'text', text: 'Extrae y devuelve todo el texto útil de este documento, sin inventar.' }
-      ] }]
-    })
+    headers: { 'Content-Type': 'application/json', apikey: cfg.key },
+    body: JSON.stringify(payload)
   })
-  const txt = await r.text()
-  const data = safeJson(txt)
-  if (!r.ok || data?.error) throw new Error(data?.error?.message || `extract_error ${r.status}`)
-  return data?.content?.[0]?.text || ''
+  const raw = await r.text().catch(() => '')
+  console.log('[WA] send status:', r.status, raw.slice(0, 180))
+  return { ok: r.ok, status: r.status, raw }
+}
+
+async function processOneMessage(db, body, raw) {
+  const event = eventName(body)
+  const instance = clean(body.instance || body.instanceName || body.data?.instance || '')
+  const jid = jidOf(raw)
+  const phone = phoneFromJid(jid)
+  const tel = telOf(phone)
+  const text = extractText(raw)
+  const name = nameOf(raw)
+  const fromMe = fromMeOf(raw)
+
+  console.log('[WA] message parsed:', { event, instance, tel, fromMe, hasText: !!text, text: text.slice(0, 80) })
+
+  if (!tel || jid.includes('@g.us')) return { ok: true, skipped: 'no_tel_or_group' }
+
+  const conv = await findOrCreateConversation(db, { tel, phone, name, text: text || '[mensaje]', instance })
+  if (!conv?.id) return { ok: false, error: 'conv_not_created' }
+
+  if (text) await saveMessage(db, conv.id, fromMe ? 'assistant' : 'user', text, { manual: fromMe })
+  await db.from('crm_conversations').update({ last_message: text || conv.last_message || '[mensaje]', updated_at: nowIso() }).eq('id', conv.id)
+  await ensureLead(db, conv, { tel, phone, name, text })
+
+  if (fromMe) return { ok: true, saved: 'from_me', convId: conv.id }
+  if (!text) return { ok: true, saved: 'no_text', convId: conv.id }
+  if (conv.mode === 'humano') return { ok: true, saved: 'human_mode', convId: conv.id }
+
+  const iaConfig = await getIaConfig(db)
+  if (iaConfig.activo === false) return { ok: true, saved: 'ia_off', convId: conv.id }
+
+  const history = await loadHistory(db, conv.id)
+  const leadData = { telefono: tel, nombre: conv.nombre || name || '', email: conv.email || '', status: conv.status || '', lead_id: conv.lead_id || '' }
+
+  console.log('[WA] calling agent:', { convId: conv.id, history: history.length })
+  const agentResult = await generateAgentResponse({
+    message: text,
+    conversationHistory: history.slice(0, -1),
+    iaConfig,
+    leadData
+  })
+
+  const reply = extractVisibleReply(agentResult)
+  console.log('[WA] agent reply:', { chars: reply.length, action: agentResult?.action, statusUpdate: agentResult?.statusUpdate })
+  if (!reply) return { ok: true, saved: 'agent_empty', convId: conv.id }
+
+  const send = await sendWhatsApp(db, { instance, number: phone, text: reply, conv })
+  if (!send.ok) {
+    console.error('[WA] send failed:', send.status, send.raw || send.error)
+    return { ok: true, saved: 'reply_not_sent', convId: conv.id, sendStatus: send.status }
+  }
+
+  await saveMessage(db, conv.id, 'assistant', reply)
+
+  const upd = { last_message: reply, updated_at: nowIso() }
+  const status = statusAllowed(agentResult?.statusUpdate || agentResult?.action, iaConfig)
+  if (status) upd.status = status
+  if (agentResult?.leadUpdate && typeof agentResult.leadUpdate === 'object') Object.assign(upd, agentResult.leadUpdate)
+  await db.from('crm_conversations').update(upd).eq('id', conv.id)
+
+  console.log('[WA] done:', { tel, convId: conv.id })
+  return { ok: true, replied: true, convId: conv.id }
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-  if (req.method === 'OPTIONS') return res.status(200).end()
-  if (req.method !== 'POST') return res.status(405).json({ ok:false, error:'Use POST' })
-  const body = req.body || {}
-  if (body.action === 'extract' && body.file) {
-    try { return res.status(200).json({ ok:true, text: await extractDocument({ file: body.file, mediaType: body.mediaType }) }) }
-    catch (e) { return res.status(200).json({ ok:false, error:e.message, text:'' }) }
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      ok: true,
+      env: {
+        supabase: !!(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL),
+        supabaseKey: !!(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY),
+        anthropic: !!(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.CLAUDE_API_KEY),
+        evolutionUrl: !!(process.env.EVOLUTION_API_URL || process.env.EVO_URL),
+        evolutionKey: !!(process.env.EVOLUTION_API_KEY || process.env.EVO_KEY)
+      }
+    })
   }
-  const result = await generateAgentResponse(body)
-  return res.status(200).json(result)
+
+  if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' })
+  const db = getSupabase()
+  if (!db) {
+    console.error('[WA] missing Supabase env')
+    return res.status(200).json({ ok: false, error: 'missing_supabase_env' })
+  }
+
+  const body = req.body || {}
+  const event = eventName(body)
+  const instance = clean(body.instance || body.instanceName || body.data?.instance || '')
+  console.log('[WA] webhook:', { event, instance })
+
+  try {
+    if (event.includes('qrcode') || event.includes('qr')) {
+      const qr = body?.data?.qrcode?.base64 || body?.data?.base64 || body?.data?.qr || body?.qrcode
+      if (qr) await upsertSetting(db, `wa_qr_${instance}`, { qr, ts: Date.now() })
+      return res.status(200).json({ ok: true, event })
+    }
+
+    if (event.includes('connection')) {
+      if (body?.data?.state === 'open' || body?.state === 'open') {
+        try { await db.from('crm_settings').delete().eq('key', `wa_qr_${instance}`) } catch {}
+      }
+      return res.status(200).json({ ok: true, event })
+    }
+
+    const msgs = extractMessages(body)
+    if (!msgs.length || (event && !event.includes('message'))) {
+      return res.status(200).json({ ok: true, skipped: event || 'no_message_event' })
+    }
+
+    const results = []
+    for (const raw of msgs.slice(0, 5)) results.push(await processOneMessage(db, body, raw))
+    return res.status(200).json({ ok: true, results })
+  } catch (e) {
+    console.error('[WA] fatal:', e.message, e.stack)
+    return res.status(200).json({ ok: false, error: e.message })
+  }
 }
