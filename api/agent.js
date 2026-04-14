@@ -153,6 +153,34 @@ function normalizeTrainingItem(x = {}) {
   }
 }
 
+function recentConversationText(history = [], max = 8) {
+  if (!Array.isArray(history)) return ''
+  return history.slice(-max).map(m => `${m.role === 'assistant' ? 'Rabito' : 'Cliente'}: ${clean(m.content)}`).filter(x => x.trim()).join('\n')
+}
+
+function isComplaintOrCorrection(text = '') {
+  const q = normalize(text)
+  return /no pregunte|no preguntes|otra vez|lo mismo|te lo di|ya te lo di|no entendiste|mal|incorrecto|no es eso|no sirve|no uses|prohibid|no quiero|por que me dices|por qué me dices|de nuevo/.test(q)
+}
+
+function isWeakGenericReply(text = '') {
+  const q = normalize(text)
+  return !q || /^(entiendo|te leo|perfecto|claro|ok|dale|recibido)[\s\.,!]*(para avanzar|cuentame|cuéntame|dime|revisemos|estoy aca|estoy acá)/.test(q) ||
+    /dime cual es el dato principal que quieres resolver ahora|cuentame un poco mas para orientarte bien|cuéntame un poco más para orientarte bien/.test(q)
+}
+
+function applyClientFacts(template = '', historyText = '', leadData = {}) {
+  // No inventa campos. Solo reemplaza marcadores comunes si existen.
+  let out = clean(template)
+  const facts = flatten(leadData)
+  const all = `${historyText}\n${facts}`
+  const email = (all.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [])[0] || ''
+  const phone = (all.match(/\+?\d[\d\s().-]{7,}\d/) || [])[0] || ''
+  if (email) out = out.replace(/\{\{?email\}?\}/gi, email)
+  if (phone) out = out.replace(/\{\{?(telefono|phone)\}?\}/gi, phone)
+  return out
+}
+
 async function readTraining(db, query = '', settings = {}) {
   const items = []
 
@@ -196,16 +224,37 @@ Respuesta preferida: ${x.improved || 'sin respuesta exacta'}`).join('\n\n'),
   }
 }
 
-function directTrainingReply(training, message, iaConfig) {
+function directTrainingReply(training, message, iaConfig, history = [], leadData = {}) {
   const q = normalize(message)
-  const exact = (training.items || []).find(x => x.improved && (
+  const historyText = recentConversationText(history, 10)
+  const lastAssistant = [...(Array.isArray(history) ? history : [])].reverse().find(m => m.role === 'assistant' && clean(m.content))?.content || ''
+  const combined = `${message}\n${historyText}\n${flatten(leadData)}`
+
+  const candidates = [...(training.items || []), ...(training.allItems || [])]
+    .filter(x => x?.improved && x.active !== false)
+    .map(x => ({
+      ...x,
+      matchScore: Math.max(
+        score(combined, `${x.context}\n${x.original}\n${x.reason}\n${x.improved}`),
+        score(lastAssistant, `${x.original}\n${x.context}\n${x.reason}`)
+      )
+    }))
+    .sort((a,b) => b.matchScore - a.matchScore)
+
+  // Caso crítico: cliente reclama porque Rabito preguntó mal. Usar la corrección asociada a la última respuesta.
+  if (isComplaintOrCorrection(message) && lastAssistant) {
+    const fix = candidates.find(x => x.matchScore >= 2 || score(lastAssistant, x.original) >= 2 || normalize(x.original).includes(normalize(lastAssistant).slice(0, 40)))
+    if (fix?.improved) return cleanOutput(applyClientFacts(fix.improved, historyText, leadData), iaConfig)
+  }
+
+  const exact = candidates.find(x => x.improved && (
     normalize(x.context) === q ||
     normalize(x.original) === q ||
-    normalize(x.reason).includes(q) ||
-    x.s >= 5
+    (normalize(x.reason) && normalize(x.reason).includes(q) && q.length > 8) ||
+    x.matchScore >= 10
   ))
   if (!exact) return ''
-  return cleanOutput(exact.improved, iaConfig)
+  return cleanOutput(applyClientFacts(exact.improved, historyText, leadData), iaConfig)
 }
 
 function panelText(iaConfig = {}) {
@@ -270,31 +319,24 @@ function parseOutput(raw = '') {
   return { reply: src, action: 'conversando', statusUpdate: '', leadUpdate: {}, memoryUpdate: {}, escalateToHuman: false, reason: '' }
 }
 
-function getFallback(iaConfig = {}, training = null, input = '') {
+function getFallback(iaConfig = {}, training = null, input = '', history = [], leadData = {}) {
+  const historyText = recentConversationText(history, 10)
   const fromPanel = clean(iaConfig.mensajeFallback || iaConfig.fallbackMessage || iaConfig.respuestaFallback || '')
-  if (fromPanel) return fromPanel
+  if (fromPanel && !isWeakGenericReply(fromPanel)) return applyClientFacts(fromPanel, historyText, leadData)
 
   const candidates = [
     ...(training?.items || []),
     ...(training?.allItems || [])
   ].filter(x => x?.improved)
 
-  const byRule = candidates.find(x => /fallback|cuando no sepas|respuesta base|saludo|inicio|primera respuesta|mensaje inicial/i.test(`${x.context} ${x.original} ${x.reason}`))
-  if (byRule?.improved) return byRule.improved
-
   const best = candidates
-    .map(x => ({ ...x, s2: score(input, `${x.context}
-${x.original}
-${x.reason}
-${x.improved}`) }))
+    .map(x => ({ ...x, s2: score(`${input}\n${historyText}\n${flatten(leadData)}`, `${x.context}\n${x.original}\n${x.reason}\n${x.improved}`) }))
     .sort((a, b) => b.s2 - a.s2)[0]
-  if (best?.improved && best.s2 > 0) return best.improved
+  if (best?.improved && best.s2 > 0) return applyClientFacts(best.improved, historyText, leadData)
 
-  const scripted = clean(iaConfig.guion || iaConfig.pasosRabito || iaConfig.procesoVenta || '')
-  const offer = clean(iaConfig.oferta || iaConfig.productosRabito || iaConfig.productos || iaConfig.servicios || '')
-  if (scripted || offer) return 'Cuéntame un poco más para ayudarte con la mejor opción según lo que estás buscando.'
-
-  return ''
+  // Último recurso: si el panel trae un mensaje inicial explícito, usarlo. Si no existe, responder vacío para no inventar.
+  const initial = clean(iaConfig.mensajeInicial || iaConfig.initialMessage || '')
+  return initial && !isWeakGenericReply(initial) ? applyClientFacts(initial, historyText, leadData) : ''
 }
 
 function validStatus(status = '', iaConfig = {}) {
@@ -322,9 +364,11 @@ export async function generateAgentResponse({
   const settings = await readSettings(db)
   const iaConfig = mergeIaConfig(reqIaConfig, settings)
   const panel = panelText(iaConfig)
-  const knowledge = await readKnowledge(db, input, settings)
-  const training = await readTraining(db, input, settings)
-  const direct = directTrainingReply(training, input, iaConfig)
+  const historyQuery = recentConversationText(conversationHistory, 10)
+  const retrievalQuery = `${input}\n${historyQuery}\n${flatten(leadData)}`
+  const knowledge = await readKnowledge(db, retrievalQuery, settings)
+  const training = await readTraining(db, retrievalQuery, settings)
+  const direct = directTrainingReply(training, input, iaConfig, conversationHistory, leadData)
 
   if (direct) {
     return { reply: direct, action: 'conversando', leadUpdate: {}, statusUpdate: '', trace: { directTraining: true, trainingUsed: training.used } }
@@ -332,7 +376,7 @@ export async function generateAgentResponse({
 
   const ANTHROPIC_KEY = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.CLAUDE_API_KEY)
   if (!ANTHROPIC_KEY) {
-    const fallback = cleanOutput(getFallback(iaConfig, training, input), iaConfig)
+    const fallback = cleanOutput(getFallback(iaConfig, training, input, conversationHistory, leadData), iaConfig)
     console.error('[AGENT] missing Anthropic key')
     return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '', trace: { missingKey: true, trainingCount: training.items.length } }
   }
@@ -364,7 +408,10 @@ INSTRUCCIONES:
 - Responde en español natural de WhatsApp.
 - Sé breve, claro y vendedor.
 - No repitas preguntas ya respondidas en el historial.
+- El feedback permanente manda sobre cualquier otra cosa. Si un aprendizaje corrige una situación similar, debes aplicar esa corrección.
 - Usa el feedback y reglas del panel por sobre tu criterio general.
+- No uses frases genéricas tipo: ‘Entiendo. Para avanzar bien, dime cuál es el dato principal...’, ‘Te leo. Cuéntame un poco más...’, ni vuelvas a preguntar algo que el cliente ya respondió.
+- Si el cliente reclama que preguntaste mal o repetiste, reconoce breve y avanza usando los datos que ya existen.
 - Si el cliente ya entregó lo necesario según el panel, avanza al siguiente paso definido en el panel.
 - Si corresponde agendar y hay link de agenda, entrega el link.
 - No inventes precios, condiciones, promesas ni datos que no estén en el conocimiento.
@@ -408,6 +455,14 @@ INSTRUCCIONES:
       const parsed = parseOutput(raw)
       const reply = cleanOutput(parsed.reply, iaConfig)
       if (!reply) throw new Error('empty_model_reply')
+      if (isWeakGenericReply(reply)) {
+        const repaired = cleanOutput(getFallback(iaConfig, training, input, conversationHistory, leadData), iaConfig)
+        if (repaired) {
+          console.log('[AGENT] weak reply replaced by training/panel fallback')
+          const statusUpdate = validStatus(parsed.statusUpdate, iaConfig)
+          return { reply: repaired, action: parsed.action || 'conversando', statusUpdate, leadUpdate: parsed.leadUpdate || {}, memoryUpdate: parsed.memoryUpdate || {}, escalateToHuman: false, trace: debug ? { model, weakRepaired: true, knowledgeUsed: knowledge.used, trainingUsed: training.used } : undefined }
+        }
+      }
 
       const statusUpdate = validStatus(parsed.statusUpdate, iaConfig)
       console.log('[AGENT] Claude ok', { model, chars: reply.length, statusUpdate })
@@ -426,7 +481,7 @@ INSTRUCCIONES:
     }
   }
 
-  const fallback = cleanOutput(getFallback(iaConfig, training, input), iaConfig)
+  const fallback = cleanOutput(getFallback(iaConfig, training, input, conversationHistory, leadData), iaConfig)
   return {
     reply: fallback,
     action: 'fallback_model_error',
@@ -437,6 +492,29 @@ INSTRUCCIONES:
   }
 }
 
+
+async function extractDocumentText({ file, mediaType = 'application/pdf', fileName = 'documento' } = {}) {
+  const ANTHROPIC_KEY = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.CLAUDE_API_KEY)
+  if (!ANTHROPIC_KEY) throw new Error('ANTHROPIC_KEY no configurada para extraer documentos')
+  if (!file) throw new Error('Archivo vacío')
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({
+      model: clean(process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL) || 'claude-3-5-haiku-latest',
+      max_tokens: 4000,
+      temperature: 0,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: mediaType, data: file } },
+        { type: 'text', text: `Extrae el texto útil completo del documento ${fileName}. No resumir. Devuelve solo texto plano.` }
+      ] }]
+    })
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok || data.error) throw new Error(data?.error?.message || `Error Anthropic ${r.status}`)
+  return clean((data.content || []).map(c => c.text || '').join('\n'))
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -444,10 +522,15 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' })
 
-  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false } = req.body || {}
+  const body = req.body || {}
+  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false } = body
   try {
+    if (body.action === 'extract') {
+      const text = await extractDocumentText({ file: body.file, mediaType: body.mediaType, fileName: body.fileName })
+      return res.status(200).json({ ok: true, text })
+    }
     const result = await generateAgentResponse({ message, conversationHistory, iaConfig, leadData, debug })
-    return res.status(200).json(result)
+    return res.status(200).json({ ok: true, ...result })
   } catch (e) {
     console.error('[AGENT] fatal', e.message)
     return res.status(200).json({ reply: '', error: e.message, action: 'error', leadUpdate: {}, statusUpdate: '' })
