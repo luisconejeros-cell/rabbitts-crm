@@ -1,5 +1,5 @@
-// api/whatsapp.js — Webhook WhatsApp estable
-// Flujo: recibir -> guardar mensaje -> generar respuesta -> enviar por Evolution -> guardar respuesta solo si se envió.
+// api/whatsapp.js — Webhook WhatsApp estable v9
+// Flujo confiable: recibir -> guardar conversación -> generar respuesta -> enviar por Evolution -> guardar respuesta SOLO si se envió.
 
 import { createClient } from '@supabase/supabase-js'
 import { generateAgentResponse } from './agent.js'
@@ -49,7 +49,7 @@ function textOf(o = {}) {
 }
 
 function collectJids(value, out = []) {
-  if (!value || out.length > 120) return out
+  if (!value || out.length > 80) return out
   if (typeof value === 'string') {
     if (/@(s\.whatsapp\.net|c\.us|lid|g\.us|broadcast)\b/i.test(value)) out.push(clean(value))
     return out
@@ -60,92 +60,78 @@ function collectJids(value, out = []) {
   }
   if (typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) {
-      if (/remoteJid|participant|sender|from|jid|author|recipient|chatId|user|owner|id/i.test(k)) collectJids(v, out)
+      if (/remoteJid|participant|sender|from|jid|author|recipient|chatId|user/i.test(k)) collectJids(v, out)
     }
   }
   return out
 }
 
-function allJids(o = {}) {
-  return [...new Set([
+function hasLidMarker(value, depth = 0) {
+  if (!value || depth > 7) return false
+  if (typeof value === 'string') return /@lid\b|\blid\b/i.test(value)
+  if (Array.isArray(value)) return value.some(v => hasLidMarker(v, depth + 1))
+  if (typeof value === 'object') return Object.entries(value).some(([k, v]) => /lid/i.test(k) || hasLidMarker(v, depth + 1))
+  return false
+}
+
+function collectPhoneCandidates(value, out = [], path = '') {
+  if (!value || out.length > 80) return out
+  if (typeof value === 'string') {
+    const raw = value
+    const jidMatch = raw.match(/(\d{8,15})@(s\.whatsapp\.net|c\.us)/i)
+    if (jidMatch) out.push(jidMatch[1])
+    if (/phone|number|senderpn|participantpn|remotejidalt|participantalt|from|sender|wa_id|wid/i.test(path)) {
+      for (const m of raw.matchAll(/\+?\d[\d\s().-]{7,}\d/g)) {
+        const d = m[0].replace(/\D/g, '')
+        if (d.length >= 8 && d.length <= 15) out.push(d)
+      }
+    }
+    return out
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectPhoneCandidates(item, out, path)
+    return out
+  }
+  if (typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) collectPhoneCandidates(v, out, path ? `${path}.${k}` : k)
+  }
+  return out
+}
+
+function pickRealPhone(obj, fallback = '') {
+  const candidates = [...new Set([fallback, ...collectPhoneCandidates(obj)].map(x => clean(x).replace(/\D/g, '')).filter(x => x.length >= 8 && x.length <= 15))]
+  // Chile primero porque este CRM opera principalmente con números +56; si Evolution entrega LID +386 y también PN +56, usamos PN.
+  return candidates.find(x => x.startsWith('56')) || candidates.find(x => !x.startsWith('386')) || candidates[0] || ''
+}
+
+function jidOf(o = {}) {
+  const direct = [
     o?.key?.remoteJid,
-    o?.key?.remoteJidAlt,
-    o?.key?.participant,
-    o?.key?.participantAlt,
     o?.remoteJid,
-    o?.remoteJidAlt,
-    o?.senderPn,
-    o?.participantAlt,
-    o?.phoneNumber,
     o?.jid,
     o?.from,
     o?.sender,
     o?.participant,
     o?.data?.key?.remoteJid,
-    o?.data?.key?.remoteJidAlt,
-    o?.data?.key?.participant,
-    o?.data?.key?.participantAlt,
     o?.data?.remoteJid,
-    o?.data?.remoteJidAlt,
-    o?.data?.senderPn,
-    o?.data?.phoneNumber,
     o?.data?.sender,
     o?.data?.from,
-    o?.data?.participant,
-    ...collectJids(o)
-  ].map(clean).filter(Boolean))]
-}
-
-function collectValuesByKey(value, keyRegex, out = []) {
-  if (!value || out.length > 120) return out
-  if (Array.isArray(value)) { for (const item of value) collectValuesByKey(item, keyRegex, out); return out }
-  if (typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) {
-      if (keyRegex.test(k) && (typeof v === 'string' || typeof v === 'number')) out.push(clean(v))
-      collectValuesByKey(v, keyRegex, out)
-    }
-  }
-  return out
-}
-
-function jidOf(o = {}) {
-  const unique = allJids(o)
+    o?.data?.participant
+  ].map(clean).filter(Boolean)
+  const all = [...direct, ...collectJids(o)]
+  const unique = [...new Set(all)]
   return unique.find(j => /@(s\.whatsapp\.net|c\.us)$/i.test(j)) || unique.find(j => /@lid$/i.test(j)) || unique[0] || ''
 }
 
-function digitsFromJid(jid = '') {
-  return clean(jid).replace(/@[^@]+$/, '').replace(/:\d+$/, '').replace(/[^0-9]/g, '')
+function phoneOf(jid = '') {
+  const j = clean(jid)
+  if (!j || /@lid$/i.test(j)) return ''
+  return j.replace(/@[^@]+$/, '').replace(/:\d+$/, '').replace(/[^0-9]/g, '')
 }
 
-function lidOfAny(o = {}) {
-  const lidJid = allJids(o).find(j => /@lid$/i.test(j)) || collectValuesByKey(o, /(^|_)lid$|lidJid|remoteJidLid|senderLid/i).find(Boolean) || ''
-  return lidJid ? digitsFromJid(lidJid) : ''
-}
-
-function phoneOfAny(o = {}) {
-  const lid = lidOfAny(o)
-
-  // Primero intentamos campos PN explícitos. Baileys/Evolution nuevos pueden enviar remoteJidAlt, participantAlt, senderPn o phoneNumber.
-  const explicitPn = collectValuesByKey(o, /remoteJidAlt|participantAlt|senderPn|ownerPn|descOwnerPn|phoneNumber|pnJid|senderPhone/i)
-    .map(digitsFromJid)
-    .filter(Boolean)
-    .find(d => d.length >= 8) || ''
-  if (explicitPn) return explicitPn
-
-  const jids = allJids(o)
-  const candidates = jids
-    .filter(j => /@(s\.whatsapp\.net|c\.us)$/i.test(j))
-    .map(digitsFromJid)
-    .filter(Boolean)
-
-  // WhatsApp LID puede aparecer como número falso, típico +386... en algunos eventos.
-  // Si hay señales de LID, no convertimos ese valor en teléfono real.
-  const real = candidates.find(d => !(lid && /^386\d{6,}$/.test(d))) || ''
-  if (real) return real
-
-  const suspect386 = candidates.find(d => /^386\d{6,}$/.test(d)) || ''
-  if (suspect386) return ''
-  return ''
+function lidOf(jid = '') {
+  const j = clean(jid)
+  return /@lid$/i.test(j) ? j.replace(/@lid$/i, '').replace(/[^0-9]/g, '') : ''
 }
 
 function telOf(phone = '', lid = '') {
@@ -192,15 +178,16 @@ async function getInstanceConfig(db, fallbackInstance = '') {
 
   const instance = clean(fallbackInstance || chosen.instanceName || process.env.EVOLUTION_DEFAULT_INSTANCE || process.env.EVO_DEFAULT_INSTANCE || '')
   const url = clean(process.env.EVOLUTION_API_URL || process.env.EVO_URL || chosen.evoUrl || chosen.url || 'https://wa.rabbittscapital.com').replace(/\/$/, '')
-  const key = clean(process.env.EVOLUTION_API_KEY || process.env.EVO_KEY || chosen.evoKey || chosen.apiKey || chosen.apikey || 'rabbitts2024')
+  const key = clean(
+    process.env.EVOLUTION_API_KEY ||
+    process.env.EVO_KEY ||
+    chosen.evoKey ||
+    chosen.apiKey ||
+    chosen.apikey ||
+    // Compatibilidad con la configuración antigua del CRM. Idealmente mover a variables de entorno en Vercel.
+    'rabbitts2024'
+  )
   return { instance, url, key }
-}
-
-function publicName({ name, tel, phone, lid }) {
-  if (name) return name
-  if (phone) return tel
-  if (lid) return 'WhatsApp sin número visible'
-  return tel || 'WhatsApp'
 }
 
 async function findOrCreateConv(db, { tel, phone, lid, name, text, instance }) {
@@ -215,10 +202,9 @@ async function findOrCreateConv(db, { tel, phone, lid, name, text, instance }) {
     conv = data?.[0] || null
   } catch (e) { console.error('[WA] select conv exception:', e.message) }
 
-  const shownName = publicName({ name, tel, phone, lid })
   if (conv) {
     const upd = {
-      nombre: conv.nombre || shownName,
+      nombre: conv.nombre || name || tel,
       last_message: text || conv.last_message || '[mensaje]',
       updated_at: nowIso()
     }
@@ -235,7 +221,7 @@ async function findOrCreateConv(db, { tel, phone, lid, name, text, instance }) {
   const base = {
     id: phone ? `wa-${phone}` : (lid ? `wa-lid-${lid}` : makeId('wa')),
     telefono: tel,
-    nombre: shownName,
+    nombre: name || (tel && tel.startsWith('wa-lid-') ? 'WhatsApp sin número visible' : tel) || phone,
     mode: 'ia',
     status: 'activo',
     last_message: text || '[mensaje]',
@@ -245,19 +231,18 @@ async function findOrCreateConv(db, { tel, phone, lid, name, text, instance }) {
   }
 
   const attempts = [
-    { ...base, instanceName: instance || null, origen: 'whatsapp' },
-    { ...base, instanceName: instance || null },
+    { ...base, origen: 'whatsapp' },
     base
   ]
   for (const row of attempts) {
     try {
-      const { data, error } = await db.from('crm_conversations').upsert(row, { onConflict: 'id' }).select().single()
+      const { data, error } = await db.from('crm_conversations').insert(row).select().single()
       if (!error && data) {
-        console.log('[WA] conv upserted:', data.id)
+        console.log('[WA] conv created:', data.id)
         return data
       }
-      if (error) console.error('[WA] upsert conv attempt error:', error.message)
-    } catch (e) { console.error('[WA] upsert conv exception:', e.message) }
+      if (error) console.error('[WA] insert conv attempt error:', error.message)
+    } catch {}
   }
   return base
 }
@@ -306,7 +291,7 @@ async function ensureLead(db, conv, { tel, phone, lid, name, text }) {
 
   const base = {
     id: phone ? `l-wa-${phone}` : (lid ? `l-wa-lid-${lid}` : makeId('l-wa')),
-    nombre: publicName({ name, tel, phone, lid }),
+    nombre: name || (tel && tel.startsWith('wa-lid-') ? 'WhatsApp sin número visible' : tel) || phone,
     telefono: tel,
     email: '',
     tag: 'lead',
@@ -317,7 +302,7 @@ async function ensureLead(db, conv, { tel, phone, lid, name, text }) {
   const attempts = [{ ...base, fuente: 'whatsapp', origen: 'whatsapp' }, { ...base, fuente: 'whatsapp' }, base]
   for (const row of attempts) {
     try {
-      const { data, error } = await db.from('crm_leads').upsert(row, { onConflict: 'id' }).select().single()
+      const { data, error } = await db.from('crm_leads').insert(row).select().single()
       if (!error && data) {
         if (conv?.id) await db.from('crm_conversations').update({ lead_id: data.id }).eq('id', conv.id)
         return data
@@ -333,7 +318,7 @@ async function loadHistory(db, convId) {
       .select('role,content,created_at')
       .eq('conv_id', convId)
       .order('created_at', { ascending: true })
-      .limit(80)
+      .limit(60)
     return (data || [])
       .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: clean(m.content), created_at: m.created_at }))
       .filter(m => m.content && !m.content.startsWith('[Sistema]'))
@@ -368,15 +353,14 @@ async function sendWa(db, { instance: instanceFallback, number, text }) {
   let last = null
   for (const body of payloads) {
     try {
-      console.log('[WA] send attempt:', JSON.stringify({ instance, number: cleanNumber.slice(-6), chars: msg.length }))
       const r = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) })
       const txt = await r.text().catch(() => '')
       last = { ok: r.ok, status: r.status, body: txt.slice(0, 500) }
       if (r.ok) {
-        console.log('[WA] send ok:', JSON.stringify({ instance, number: cleanNumber.slice(-6), status: r.status }))
+        console.log('[WA] send ok:', { instance, number: cleanNumber.slice(-6), status: r.status })
         return last
       }
-      console.error('[WA] send attempt failed:', JSON.stringify({ status: r.status, body: txt.slice(0, 300) }))
+      console.error('[WA] send attempt failed:', { status: r.status, body: txt.slice(0, 300) })
     } catch (e) {
       last = { ok: false, error: e.message }
       console.error('[WA] send exception:', e.message)
@@ -406,17 +390,12 @@ async function handleQrOrConnection(db, b, event, instance) {
   return null
 }
 
-async function answer(db, { conv, tel, phone, instance, text }) {
+async function answer(db, { conv, tel, phone, lid, instance, text }) {
   const ia = await readSetting(db, 'ia_config', {}) || {}
   if (ia.activo === false || conv.mode === 'humano') return { ok: true, skipped: ia.activo === false ? 'ia_off' : 'human_mode' }
 
-  if (!phone) {
-    console.warn('[WA] no real phone available; message saved but cannot send response:', conv.id)
-    return { ok: false, skipped: 'no_real_phone_for_reply' }
-  }
-
   const history = await loadHistory(db, conv.id)
-  console.log('[WA] calling agent:', JSON.stringify({ convId: conv.id, history: history.length }))
+  console.log('[WA] calling agent:', { convId: conv.id, history: history.length })
   const result = await generateAgentResponse({
     message: text,
     conversationHistory: history,
@@ -429,28 +408,38 @@ async function answer(db, { conv, tel, phone, instance, text }) {
       status: conv.status || '',
       mode: conv.mode || ''
     }
-  })
+  }, { db })
 
   const reply = clean(result.reply)
-  console.log('[WA] agent result:', JSON.stringify({ hasReply: !!reply, action: result.action || '', statusUpdate: result.statusUpdate || '', trace: result.trace ? { trainingTotal: result.trace.trainingTotal, knowledgeTotal: result.trace.knowledgeTotal, feedbackUsed: result.trace.feedbackUsed?.length, chunksUsed: result.trace.chunksUsed?.length } : {} }))
+  console.log('[WA] agent result:', { ok: result.ok, hasReply: !!reply, error: result.error || '', trace: result.trace || {} })
+  if (!reply) return { ok: true, skipped: 'empty_reply', error: result.error || '' }
 
-  if (!reply) return { ok: false, skipped: 'agent_empty_reply', trace: result.trace || null }
+  if (await duplicate(db, conv.id, reply, 'assistant')) return { ok: true, skipped: 'duplicate_assistant_reply' }
 
-  const sent = await sendWa(db, { instance, number: phone, text: reply })
-  if (!sent?.ok) return { ok: false, error: 'send_failed', send: sent }
+  const sent = await sendWa(db, { instance, number: phone || lid, text: reply })
+
+  // Para no mentir en el panel: si Evolution no confirma envío, NO guardamos el mensaje como enviado.
+  if (!sent.ok) {
+    console.error('[WA] reply generated but send failed:', sent)
+    try { await db.from('crm_conversations').update({ updated_at: nowIso() }).eq('id', conv.id) } catch {}
+    return { ok: true, replied: false, sendFailed: true, sendStatus: sent.status || 0, error: sent.error || sent.body || '' }
+  }
 
   await saveMsg(db, conv.id, 'assistant', reply)
 
   const upd = { last_message: reply, updated_at: nowIso() }
-  const st = normStatus(result.statusUpdate)
-  if (st && st !== 'requiere_revision') upd.status = st
-  try { await db.from('crm_conversations').update(upd).eq('id', conv.id) } catch (e) { console.error('[WA] conv update after answer:', e.message) }
+  const allowedByHardRules = result?.trace?.derivationAllowedByHardRules === true
+  const requestedStatus = normStatus(result.statusUpdate || '')
+  if (allowedByHardRules && requestedStatus) upd.status = requestedStatus
+  if (result.action === 'calificado') upd.status = 'calificado'
+  if (allowedByHardRules && result.escalateToHuman === true) upd.mode = 'humano'
 
-  return { ok: true, replied: true, sent: true, action: result.action || 'conversando', statusUpdate: st || '' }
+  try { await db.from('crm_conversations').update(upd).eq('id', conv.id) } catch (e) { console.error('[WA] update after reply:', e.message) }
+  return { ok: true, replied: true, sendStatus: sent.status || 0 }
 }
 
 export default async function handler(req, res) {
-  if (req.method === 'GET') return res.status(200).json({ ok: true, endpoint: 'api/whatsapp', mode: 'stable-direct-training-lid' })
+  if (req.method === 'GET') return res.status(200).json({ ok: true, endpoint: 'api/whatsapp', mode: 'stable-v9-direct' })
   if (req.method !== 'POST') return res.status(405).json({ ok: false })
 
   const db = sb()
@@ -469,12 +458,17 @@ export default async function handler(req, res) {
 
   const results = []
   for (const m of rawMessages) {
-    const jids = allJids(m)
-    let lid = lidOfAny(m)
-    const phone = phoneOfAny(m)
-    if (!phone && !lid) {
-      const suspect = allJids(m).map(digitsFromJid).find(d => /^386\d{6,}$/.test(d))
-      if (suspect) lid = suspect
+    const jid = jidOf(m)
+    let lid = lidOf(jid)
+    let phone = phoneOf(jid)
+    const lidMarker = hasLidMarker(m)
+    const pickedPhone = pickRealPhone(m, phone)
+    if (pickedPhone && (!phone || phone.startsWith('386') || pickedPhone.startsWith('56'))) phone = pickedPhone
+    // WhatsApp LID: Evolution/Baileys puede enviar identificadores internos que parecen +386...
+    // No los mostramos como teléfono real; los guardamos como wa-lid-* para evitar clientes falsos de Eslovenia.
+    if (phone && phone.startsWith('386') && (lidMarker || !pickedPhone || pickedPhone === phone)) {
+      lid = lid || phone
+      phone = ''
     }
     const tel = telOf(phone, lid)
     const text = textOf(m)
@@ -482,9 +476,9 @@ export default async function handler(req, res) {
     const fromMe = fromMeOf(m)
     const id = msgId(m)
 
-    console.log('[WA] inbound:', JSON.stringify({ tel, phone: phone ? phone.slice(-6) : '', hasLid: !!lid, fromMe, hasText: !!text, id: id || '(no-id)', jidCount: jids.length }))
+    console.log('[WA] inbound:', { tel, phone: phone ? phone.slice(-6) : '', hasLid: !!lid, lidMarker, jidType: jid.includes('@lid') ? 'lid' : 'phone', fromMe, hasText: !!text, id: id || '(no-id)' })
 
-    if (!tel || jids.some(j => /@(g\.us|broadcast)$/i.test(j))) { results.push({ ok:true, skipped:'invalid_or_group' }); continue }
+    if (!tel || jid.includes('@g.us') || jid.includes('@broadcast')) { results.push({ ok:true, skipped:'invalid_or_group' }); continue }
     if (!text) { results.push({ ok:true, skipped:'empty_message' }); continue }
 
     const conv = await findOrCreateConv(db, { tel, phone, lid, name, text, instance })
@@ -500,7 +494,7 @@ export default async function handler(req, res) {
     await saveMsg(db, conv.id, 'user', text)
     await ensureLead(db, conv, { tel, phone, lid, name, text })
 
-    const result = await answer(db, { conv, tel, phone, instance, text })
+    const result = await answer(db, { conv, tel, phone, lid, instance, text })
     results.push({ ok:true, result, convId: conv.id })
   }
 
