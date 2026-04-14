@@ -522,7 +522,8 @@ function sanitizeReply(reply = '', { iaConfig = {}, history = [] } = {}) {
 
   if (!out) return ''
   if (containsBlockedPhrase(out, extraBlocked)) return ''
-  if (isTooSimilarToRecentAssistant(out, history)) return ''
+  // No bloqueamos respuestas solo por similitud: bloquearlas aquí hacía que el bot dejara de responder.
+  // La instrucción de no repetir queda en el prompt y en el entrenamiento del Panel IA.
 
   out = out
     .replace(/\bcomo modelo de lenguaje\b/gi, '')
