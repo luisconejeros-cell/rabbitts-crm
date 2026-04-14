@@ -146,11 +146,24 @@ const isInternalSystemContent = (text='') => {
 
 const cleanVisibleLastMessage = (text='') => extractVisibleMessageContent(text)
 
+const isLikelyLidPhoneUi = (value='') => {
+  const raw = String(value || '').trim()
+  const d = raw.replace(/[^0-9]/g, '')
+  return raw.startsWith('wa-lid-') || /^386\d{6,}$/.test(d)
+}
+const displayConversationNameUi = (conv={}) => {
+  const tel = String(conv?.telefono || '').trim()
+  const name = String(conv?.nombre || '').trim()
+  if (isLikelyLidPhoneUi(tel)) return name && !isLikelyLidPhoneUi(name) ? name : 'WhatsApp sin número visible'
+  return name || tel || 'WhatsApp'
+}
+
+
 // ─── Mini components ─────────────────────────────────────────────────────────
 // ─── WhatsApp Link Component ─────────────────────────────────────────────────
 const WaLink = ({phone, label=null}) => {
   const raw = String(phone || '').trim()
-  const isLid = raw.startsWith('wa-lid-') || /^\+?386\d{6,}$/.test(raw.replace(/\s+/g,''))
+  const isLid = isLikelyLidPhoneUi(raw)
   if (!raw || raw === '—' || raw === '') return <span style={{color:'#9ca3af',fontSize:12}}>{label||'—'}</span>
   if (isLid) return <span style={{color:'#9ca3af',fontSize:12}}>{label || 'WhatsApp sin número visible'}</span>
   const clean = raw.replace(/[^0-9+]/g,'')
@@ -1068,7 +1081,7 @@ export default function App() {
   async function saveIaConfig(config) {
     if (!dbReady) return
     try {
-      await supabase.from('crm_settings').upsert({key:'ia_config', value:config})
+      await supabase.from('crm_settings').upsert({key:'ia_config', value:config}, { onConflict:'key' })
     } catch(e) { console.warn('iaConfig save failed:', e) }
   }
 
@@ -4664,7 +4677,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
   const saveNumeros = async (list) => {
     if (!dbReady || !supabase) return
-    await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: list })
+    await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: list }, { onConflict:'key' })
     setNumeros(list)
   }
 
@@ -5787,16 +5800,26 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     if (!dbReady || !supabase) return normalizedItem
 
     try {
-      const { data } = await supabase.from('crm_settings').select('value').eq('key','agent_training').single()
-      const prevItems = Array.isArray(data?.value?.items) ? data.value.items : []
-      const nextItems = [normalizedItem, ...prevItems.filter(x => x.id !== normalizedItem.id)].slice(0, 300)
+      const { data } = await supabase.from('crm_settings').select('value').eq('key','agent_training')
+      const allRows = Array.isArray(data) ? data : []
+      const prevItems = allRows.flatMap(r => Array.isArray(r?.value?.items) ? r.value.items : Array.isArray(r?.value) ? r.value : [])
+      const seen = new Set()
+      const mergedPrev = []
+      for (const x of prevItems) {
+        const id = x?.id || x?.created_at || JSON.stringify(x).slice(0,80)
+        if (seen.has(id)) continue
+        seen.add(id)
+        mergedPrev.push(x)
+      }
+      const nextItems = [normalizedItem, ...mergedPrev.filter(x => x.id !== normalizedItem.id)].slice(0, 300)
       const value = {
-        version: 2,
+        version: 3,
         source: 'crm_feedback_training',
         updated_at: now,
         items: nextItems
       }
-      await supabase.from('crm_settings').upsert({ key:'agent_training', value })
+      await supabase.from('crm_settings').delete().eq('key','agent_training')
+      await supabase.from('crm_settings').insert({ key:'agent_training', value })
       window.dispatchEvent(new CustomEvent('rabito-training-updated', { detail: value }))
       return normalizedItem
     } catch (e) {
@@ -6010,7 +6033,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                   <div key={conv.id} onClick={()=>setActiveConv(conv)}
                     style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:isActive?B.light:'#fff',transition:'background .15s'}}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:3}}>
-                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{conv.nombre||conv.telefono}{conv._duplicateCount>1 ? ` · ${conv._duplicateCount} registros unidos` : ''}</div>
+                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{displayConversationNameUi(conv)}{conv._duplicateCount>1 ? ` · ${conv._duplicateCount} registros unidos` : ''}</div>
                       <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
                         <span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:conv.mode==='ia'?'#E8EFFE':'#FEF9C3',color:conv.mode==='ia'?B.primary:'#713f12',fontWeight:700}}>
                           {conv.mode==='ia'?'🤖':'👤'}
@@ -6033,9 +6056,9 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
               {/* Header */}
               <div style={{flexShrink:0,padding:'10px 16px',borderBottom:'1px solid #dce8ff',background:'#fff',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
                 {isMobile && <button onClick={()=>setActiveConv(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:'#6366f1',padding:'0 4px'}}>←</button>}
-                <AV name={activeConv.nombre||activeConv.telefono} size={36}/>
+                <AV name={displayConversationNameUi(activeConv)} size={36}/>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{activeConv.nombre||activeConv.telefono}</div>
+                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{displayConversationNameUi(activeConv)}</div>
                   <div style={{fontSize:11,color:'#6b7280'}}><WaLink phone={activeConv.telefono}/>{activeConv.renta?' · Renta: '+activeConv.renta:''}{activeConv.modelo?' · '+activeConv.modelo:''}</div>
                 </div>
                 <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap'}}>
@@ -6217,7 +6240,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                         {selectedConvs.includes(c.id)&&<span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}
                       </div>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,fontWeight:600}}>{c.nombre||c.telefono}</div>
+                        <div style={{fontSize:12,fontWeight:600}}>{displayConversationNameUi(c)}</div>
                         <div style={{fontSize:10,color:'#9ca3af'}}>{c.telefono} · {c.status||'activo'}</div>
                       </div>
                     </div>
@@ -6477,9 +6500,12 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     const knowledgeChunks = { chunks: nextChunks || [], updated_at: new Date().toISOString(), source: 'rabito_cerebro_chunks', version: 2 }
 
     if (dbReady && supabase) {
-      await supabase.from('crm_settings').upsert({ key:'drive_content', value:driveContent })
-      await supabase.from('crm_settings').upsert({ key:'rabito_knowledge', value:rabitoKnowledge })
-      await supabase.from('crm_settings').upsert({ key:'rabito_knowledge_chunks', value:knowledgeChunks })
+      await supabase.from('crm_settings').delete().eq('key','drive_content')
+      await supabase.from('crm_settings').insert({ key:'drive_content', value:driveContent })
+      await supabase.from('crm_settings').delete().eq('key','rabito_knowledge')
+      await supabase.from('crm_settings').insert({ key:'rabito_knowledge', value:rabitoKnowledge })
+      await supabase.from('crm_settings').delete().eq('key','rabito_knowledge_chunks')
+      await supabase.from('crm_settings').insert({ key:'rabito_knowledge_chunks', value:knowledgeChunks })
     }
     upd && upd(['cerebroDocs'], nextDocs)
     upd && upd(['reglasEntrenamiento'], nextRules)
