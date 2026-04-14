@@ -96,6 +96,17 @@ function lidOf(jid = '') {
   return /@lid$/i.test(j) ? j.replace(/@lid$/i, '').replace(/[^0-9]/g, '') : ''
 }
 
+function hasLidAnywhere(value) {
+  const list = collectJids(value, [])
+  return list.some(j => /@lid$/i.test(j))
+}
+
+function isKnownFakeLidPhone(phone = '') {
+  const d = clean(phone).replace(/[^0-9]/g, '')
+  // WhatsApp/Evolution a veces envía LID como si fuera número. Este patrón ha aparecido en todos los contactos nuevos.
+  return d === '3861276274900' || d.startsWith('3861276')
+}
+
 function telOf(phone = '', lid = '') {
   const d = clean(phone).replace(/[^0-9]/g, '')
   if (d) return '+' + d
@@ -379,7 +390,12 @@ async function answer(db, { conv, tel, phone, lid, instance, text }) {
 
   if (await duplicate(db, conv.id, reply, 'assistant')) return { ok: true, skipped: 'duplicate_assistant_reply' }
 
-  const sent = await sendWa(db, { instance, number: phone || lid, text: reply })
+  if (!phone) {
+    console.error('[WA] cannot send: only LID available, missing real phone number', { convId: conv.id, tel, lid })
+    return { ok: true, replied: false, sendFailed: true, error: 'only_lid_no_real_phone' }
+  }
+
+  const sent = await sendWa(db, { instance, number: phone, text: reply })
 
   // Para no mentir en el panel: si Evolution no confirma envío, NO guardamos el mensaje como enviado.
   if (!sent.ok) {
@@ -422,15 +438,20 @@ export default async function handler(req, res) {
   const results = []
   for (const m of rawMessages) {
     const jid = jidOf(m)
-    const lid = lidOf(jid)
-    const phone = phoneOf(jid)
+    const payloadHasLid = hasLidAnywhere(m) || hasLidAnywhere(b)
+    let lid = lidOf(jid)
+    let phone = phoneOf(jid)
+    if ((payloadHasLid && isKnownFakeLidPhone(phone)) || isKnownFakeLidPhone(phone)) {
+      lid = lid || phone
+      phone = ''
+    }
     const tel = telOf(phone, lid)
     const text = textOf(m)
     const name = nameOf(m)
     const fromMe = fromMeOf(m)
     const id = msgId(m)
 
-    console.log('[WA] inbound:', { tel, jidType: jid.includes('@lid') ? 'lid' : 'phone', fromMe, hasText: !!text, id: id || '(no-id)' })
+    console.log('[WA] inbound:', { tel, phone: phone || '', lid: lid || '', jidType: phone ? 'phone' : (lid ? 'lid' : 'unknown'), fromMe, hasText: !!text, id: id || '(no-id)' })
 
     if (!tel || jid.includes('@g.us') || jid.includes('@broadcast')) { results.push({ ok:true, skipped:'invalid_or_group' }); continue }
     if (!text) { results.push({ ok:true, skipped:'empty_message' }); continue }
