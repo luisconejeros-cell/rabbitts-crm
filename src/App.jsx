@@ -99,6 +99,19 @@ const daysIn = l => {
   return Math.floor((Date.now() - m) / 86400000)
 }
 
+const isInternalSystemContent = (text='') => {
+  const value = String(text || '').trim().toLowerCase()
+  return value.startsWith('[sistema]') ||
+    value.includes('rabito no generó respuesta visible') ||
+    value.includes('rabito no genero respuesta visible') ||
+    value.includes('revisar entrenamiento/conocimiento') ||
+    value.includes('no generó respuesta visible') ||
+    value.includes('no genero respuesta visible') ||
+    value.includes('agent_no_reply')
+}
+
+const cleanVisibleLastMessage = (text='') => isInternalSystemContent(text) ? '' : String(text || '')
+
 // ─── Mini components ─────────────────────────────────────────────────────────
 // ─── WhatsApp Link Component ─────────────────────────────────────────────────
 const WaLink = ({phone, label=null}) => {
@@ -1023,16 +1036,24 @@ export default function App() {
   }
 
   async function upsertConversation(conv) {
-    if (!dbReady) return
+    if (!dbReady || !conv?.id) return null
+    const cleanConv = Object.fromEntries(Object.entries(conv).filter(([k]) => !String(k).startsWith('_')))
     try {
-      const { data } = await supabase.from('crm_conversations').upsert(conv).select().single()
-      if (data) setConversations(prev => {
-        const idx = prev.findIndex(c=>c.id===data.id)
-        if (idx>=0) { const n=[...prev]; n[idx]=data; return n }
-        return [data, ...prev]
-      })
+      const { data, error } = await supabase.from('crm_conversations').upsert(cleanConv, { onConflict:'id' }).select().single()
+      if (error) throw error
+      if (data) {
+        setConversations(prev => {
+          const idx = prev.findIndex(c=>c.id===data.id)
+          if (idx>=0) { const n=[...prev]; n[idx]={...n[idx],...data}; return n }
+          return [data, ...prev]
+        })
+        setActiveConv(prev => prev?.id===data.id ? {...prev,...data} : prev)
+      }
       return data
-    } catch(e) { console.warn('Conv save failed:', e) }
+    } catch(e) {
+      console.warn('Conv save failed:', e.message || e)
+      return null
+    }
   }
 
   async function saveConvMessage(convId, message) {
@@ -1069,7 +1090,7 @@ export default function App() {
       const query = supabase.from('crm_conv_messages').select('*').order('created_at',{ascending:true})
       const { data } = ids.length > 1 ? await query.in('conv_id', ids) : await query.eq('conv_id', convId)
       if (data) {
-        const visible = data.filter(m => !m.internal && !String(m.content || '').startsWith('[Sistema]'))
+        const visible = data.filter(m => !m.internal && !isInternalSystemContent(m.content))
         setConvMessages(prev => ({...prev, [convId]: visible}))
       }
     } catch(e) { console.warn('loadConvMessages error:', e) }
@@ -5565,7 +5586,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     }
     return Array.from(groups.values()).map(group => {
       const sorted = [...group].sort((a,b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
-      const withRealLast = sorted.find(c => c.last_message && c.last_message !== '[mensaje]' && c.last_message !== '[mensaje multimedia]')
+      const withRealLast = sorted.find(c => cleanVisibleLastMessage(c.last_message) && c.last_message !== '[mensaje]' && c.last_message !== '[mensaje multimedia]')
       const base = withRealLast || sorted[0]
       const mergedIds = sorted.map(c => c.id).filter(Boolean)
       return {
@@ -5573,7 +5594,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
         _mergedIds: mergedIds,
         _duplicateCount: mergedIds.length,
         nombre: base.nombre || sorted.find(c => c.nombre)?.nombre || base.telefono,
-        last_message: base.last_message || sorted.find(c => c.last_message)?.last_message || ''
+        last_message: cleanVisibleLastMessage(base.last_message) || cleanVisibleLastMessage(sorted.find(c => cleanVisibleLastMessage(c.last_message))?.last_message) || ''
       }
     }).sort((a,b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
   }
@@ -5614,7 +5635,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     messagesEndRef.current?.scrollIntoView({behavior:'smooth'})
   }, [convMessages, activeConv])
 
-  const msgs = activeConv ? (convMessages[activeConv.id]||[]).filter(m => !m.internal && !String(m.content || '').startsWith('[Sistema]')) : []
+  const msgs = activeConv ? (convMessages[activeConv.id]||[]).filter(m => !m.internal && !isInternalSystemContent(m.content)) : []
 
   const filtered = conversations.filter(c => {
     if (filterStatus!=='all' && c.status!==filterStatus) return false
@@ -5623,6 +5644,28 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
     if (search && !c.nombre?.toLowerCase().includes(search.toLowerCase()) && !c.telefono?.includes(search)) return false
     return true
   })
+
+  const updateConversationStatus = async (conv, status) => {
+    if (!conv) return
+    const now = new Date().toISOString()
+    const ids = Array.from(new Set([conv.id, ...((conv && conv._mergedIds) || [])].filter(Boolean)))
+    const update = { status, updated_at: now }
+
+    // Actualización optimista: el estado cambia al tiro en pantalla.
+    setConversations(prev => prev.map(c => ids.includes(c.id) || c.id === conv.id ? { ...c, ...update } : c))
+    setActiveConv(prev => prev && (ids.includes(prev.id) || prev.id === conv.id) ? { ...prev, ...update } : prev)
+
+    if (!dbReady) return
+    try {
+      const { error } = ids.length > 1
+        ? await supabase.from('crm_conversations').update(update).in('id', ids)
+        : await supabase.from('crm_conversations').update(update).eq('id', conv.id)
+      if (error) throw error
+    } catch(e) {
+      console.warn('Status save failed:', e.message || e)
+      alert('No se pudo guardar el estado. Revisa Supabase.')
+    }
+  }
 
   const toggleMode = async conv => {
     const newMode = conv.mode==='ia' ? 'humano' : 'ia'
@@ -5933,7 +5976,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                         {conv.status&&conv.status!=='activo'&&<span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:sBg,color:sCol,fontWeight:700}}>{conv.status}</span>}
                       </div>
                     </div>
-                    <div style={{fontSize:11,color:'#6b7280',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{conv.last_message||'Sin mensajes'}</div>
+                    <div style={{fontSize:11,color:'#6b7280',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cleanVisibleLastMessage(conv.last_message)||'Sin mensajes'}</div>
                     <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}><WaLink phone={conv.telefono}/>{conv.updated_at?' · '+new Date(conv.updated_at).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}):''}</div>
                   </div>
                 )
@@ -5967,7 +6010,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                     </button>
                   )}
                   {activeConv.lead_id && <span style={{fontSize:11,padding:'5px 10px',borderRadius:8,background:'#DCFCE7',color:'#14532d',fontWeight:600}}>✅ Lead en CRM</span>}
-                  <select value={activeConv.status||'activo'} onChange={e=>upsertConversation({...activeConv,status:e.target.value,updated_at:new Date().toISOString()})}
+                  <select value={activeConv.status||'activo'} onChange={e=>updateConversationStatus(activeConv, e.target.value)}
                     style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer'}}>
                     <option value="activo">Activo</option>
                     <option value="calificado">Calificado</option>
