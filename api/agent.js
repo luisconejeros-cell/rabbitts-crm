@@ -1,4 +1,4 @@
-// api/agent.js — Motor genérico de ventas guiado por Panel IA + Cerebro + Feedback
+// api/agent.js — Motor genérico de ventas guiado 100% por Panel IA + Cerebro + Feedback
 // No contiene guiones, productos, rubros ni conversaciones pregrabadas.
 // El agente aprende desde: iaConfig, crm_settings, documentos/chunks, feedback y memoria por contacto.
 
@@ -485,27 +485,44 @@ async function callClaude({ anthropicKey, model, systemPrompt, messages, attempt
   return data?.content?.[0]?.text || ''
 }
 
-function emergencyReply({ iaConfig, message, agendaLink }) {
-  if (detectHumanOrAgenda(message) && agendaLink) return `Dale, puedes agendar aquí:\n${agendaLink}`
-  if (detectComplaint(message)) return 'Tienes razón, no voy a repetir lo mismo. Tomo lo anterior y avanzo desde ahí.'
-  const hasPanel = !!buildPanelBrain(iaConfig)
-  if (!hasPanel) return 'Estoy acá. Para responder bien, primero necesito que me enseñen qué debo vender y cómo debo venderlo en el Panel IA.'
-  return 'Estoy acá. Revisemos esto paso a paso para ayudarte bien.'
+function getPanelFallback(iaConfig = {}) {
+  return cleanText(
+    iaConfig.fallbackMessage ||
+    iaConfig.mensajeFallback ||
+    iaConfig.respuestaFallback ||
+    iaConfig.fallback ||
+    ''
+  )
 }
 
-function sanitizeReply(reply = '', { iaConfig = {}, message = '', agendaLink = '', history = [] } = {}) {
-  const extraBlocked = Array.isArray(iaConfig.frasesProhibidas)
-    ? iaConfig.frasesProhibidas
-    : String(iaConfig.frasesProhibidas || '').split('\n')
+function getExtraBlockedPhrases(iaConfig = {}) {
+  const values = [
+    iaConfig.frasesProhibidas,
+    iaConfig.blockedPhrases,
+    iaConfig.frasesBloqueadas,
+    iaConfig.noDecir,
+    iaConfig.reglasEntrenamiento
+  ]
+
+  return values.flatMap(value => {
+    if (!value) return []
+    if (Array.isArray(value)) return value.map(flattenConfigValue).filter(Boolean)
+    if (typeof value === 'object') return flattenConfigValue(value).split('\n').filter(Boolean)
+    return String(value).split('\n').filter(Boolean)
+  })
+}
+
+function sanitizeReply(reply = '', { iaConfig = {}, history = [] } = {}) {
+  const extraBlocked = getExtraBlockedPhrases(iaConfig)
   let out = cleanText(reply)
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```$/i, '')
     .replace(/\*\*/g, '')
     .trim()
 
-  if (!out || containsBlockedPhrase(out, extraBlocked) || isTooSimilarToRecentAssistant(out, history)) {
-    out = emergencyReply({ iaConfig, message, agendaLink })
-  }
+  if (!out) return ''
+  if (containsBlockedPhrase(out, extraBlocked)) return ''
+  if (isTooSimilarToRecentAssistant(out, history)) return ''
 
   out = out
     .replace(/\bcomo modelo de lenguaje\b/gi, '')
@@ -515,9 +532,24 @@ function sanitizeReply(reply = '', { iaConfig = {}, message = '', agendaLink = '
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
+  if (!out || containsBlockedPhrase(out, extraBlocked)) return ''
+
   const maxLength = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 700) || 700
   if (out.length > maxLength) out = out.slice(0, Math.max(120, maxLength - 30)).replace(/\s+\S*$/, '') + '...'
   return out
+}
+
+async function repairReplyWithModel({ anthropicKey, model, systemPrompt, messages, badReply, iaConfig, history }) {
+  const repairPrompt = `${systemPrompt}\n\nLa respuesta anterior fue inválida porque repetía, usaba una frase prohibida o no obedecía el entrenamiento. Genera una nueva respuesta usando SOLO el Panel IA, documentos, feedback y datos de conversación. No uses la respuesta inválida.\n\nRespuesta inválida:\n${cleanText(badReply).slice(0, 1000)}`
+
+  try {
+    const raw = await callClaude({ anthropicKey, model, systemPrompt: repairPrompt, messages })
+    const parsed = parseAssistantJson(raw)
+    const fixed = sanitizeReply(parsed.reply, { iaConfig, history })
+    return { parsed, reply: fixed }
+  } catch (_) {
+    return { parsed: null, reply: '' }
+  }
 }
 
 async function extractDocument({ anthropicKey, file, mediaType }) {
@@ -577,8 +609,9 @@ export default async function handler(req, res) {
   const safeHistory = sanitizeHistory(conversationHistory)
   const sb = await getSupabaseClient()
   const settings = await loadSettings(sb)
-  const agendaLink = getAgendaLink(iaConfig, settings.text)
-  const panelBrain = buildPanelBrain({ ...(settings.map.ia_config || {}), ...iaConfig })
+  const effectiveIaConfig = { ...(settings.map.ia_config || {}), ...iaConfig }
+  const agendaLink = getAgendaLink(effectiveIaConfig, settings.text)
+  const panelBrain = buildPanelBrain(effectiveIaConfig)
   const facts = conversationFacts(safeHistory, message, leadData)
   const [feedback, memory, knowledge] = await Promise.all([
     loadFeedback(sb, [message, facts].join('\n')),
@@ -588,7 +621,7 @@ export default async function handler(req, res) {
 
   const localUpdate = inferGenericFields(message, leadData, agendaLink)
   const systemPrompt = buildSystemPrompt({
-    iaConfig,
+    iaConfig: effectiveIaConfig,
     panelBrain,
     knowledgeText: knowledge.text,
     feedbackText: feedback.text,
@@ -603,8 +636,28 @@ export default async function handler(req, res) {
 
   try {
     const rawText = await callClaude({ anthropicKey: ANTHROPIC_KEY, model: ANTHROPIC_MODEL, systemPrompt, messages })
-    const parsed = parseAssistantJson(rawText)
-    const reply = sanitizeReply(parsed.reply, { iaConfig, message, agendaLink, history: safeHistory })
+    let parsed = parseAssistantJson(rawText)
+    let reply = sanitizeReply(parsed.reply, { iaConfig: effectiveIaConfig, history: safeHistory })
+
+    if (!reply) {
+      const repaired = await repairReplyWithModel({
+        anthropicKey: ANTHROPIC_KEY,
+        model: ANTHROPIC_MODEL,
+        systemPrompt,
+        messages,
+        badReply: parsed.reply || rawText,
+        iaConfig: effectiveIaConfig,
+        history: safeHistory
+      })
+      if (repaired.reply) {
+        parsed = repaired.parsed || parsed
+        reply = repaired.reply
+      }
+    }
+
+    const panelFallback = getPanelFallback(effectiveIaConfig)
+    if (!reply && panelFallback) reply = sanitizeReply(panelFallback, { iaConfig: effectiveIaConfig, history: safeHistory })
+
     const actionOut = SAFE_ACTIONS.has(parsed.action) ? parsed.action : 'conversando'
     const leadUpdate = sanitizeObject({ ...localUpdate, ...(parsed.leadUpdate || {}) })
 
@@ -613,7 +666,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       reply,
-      action: actionOut,
+      action: reply ? actionOut : 'escalar',
       leadUpdate,
       memory: parsed.memoryUpdate || {},
       learningSuggestion: cleanText(parsed.learningSuggestion || ''),
@@ -628,15 +681,17 @@ export default async function handler(req, res) {
       }
     })
   } catch (error) {
-    const reply = sanitizeReply('', { iaConfig, message, agendaLink, history: safeHistory })
+    const panelFallback = getPanelFallback(effectiveIaConfig || iaConfig)
+    const reply = panelFallback ? sanitizeReply(panelFallback, { iaConfig: effectiveIaConfig || iaConfig, history: safeHistory }) : ''
     return res.status(200).json({
       ok: true,
       reply,
-      action: detectHumanOrAgenda(message) && agendaLink ? 'escalar' : 'conversando',
+      action: reply ? 'conversando' : 'escalar',
       leadUpdate: localUpdate,
       fallback: true,
+      noHardcodedClientReply: !reply,
       error: error?.message || 'agent_error',
-      trace: { genericEngine: true, fallback: true }
+      trace: { genericEngine: true, fallback: true, hardcodedBusiness: false }
     })
   }
 }
