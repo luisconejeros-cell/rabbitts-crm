@@ -608,6 +608,12 @@ export default function App() {
     },
     personalidad: "Eres Rabito, asistente de ventas de Rabbitts Capital. Sigues estas reglas AL PIE DE LA LETRA. TONO MOTIVADOR: Inspira confianza y entusiasmo. Usa frases de animo. Celebra logros. Transmite energia positiva. MENSAJES MEDIOS: 3-4 oraciones (50-120 palabras). Balancea claridad con brevedad. TRATO CASUAL: Tutea al cliente siempre. Usa expresiones coloquiales apropiadas. Tono relajado pero respetuoso. SIN EMOJIS: Cero emojis en cualquier contexto. Usa palabras para expresar emociones. NUNCA: cambies de tono, excedas longitud, mezcles tu/usted, inventes informacion, seas condescendiente, prometas pagos, descuentos, reembolsos, compartas datos bancarios, opines de politica o religion, hables mal de competidores ni garantices resultados. ESCALA A HUMANO SI: pide hablar con persona, menciona demanda/abogado/legal, esta enojado sin solucion, ya intentaste 3 veces sin exito.",
     guion: "FLUJO DE VENTAS - PASO 0 SALUDO: Hola como estas? Mi nombre es Rabito y soy parte del equipo de Rabbitts Capital. Ayudamos a invertir en departamentos, usar multicrédito y pagar menos impuestos. En que te puedo ayudar? PASO 1 DETECTAR NECESIDAD: Ofrecer menu si no es claro: 1.Primer depto inversion 2.Multicredito/varios/IVA 3.Renta corta Airbnb 4.Asesoria tributaria. PASO 2 DIAGNOSTICO: Obtener renta liquida, propiedades a nombre, preferencia renta. PASO 3 ESTRATEGIA: Multicredito=entrega inmediata preferible, futura max 2 deptos mismo proyecto, DFL2+IVA desde tercero. Primera prop=revisar credito+proyecto+modelo renta. Renta corta=experiencia real Airbnb/Booking. PASO 4 FILTRO: Califica si renta>=1500000 o pareja>=2000000 -> agendar calendly.com/agenda-rabbittscapital/60min. No califica->orientacion basica sin reunion. PASO 5 CIERRE: Confirmar reunion, aclarar asesoria SIN COSTO para cliente (pagan inmobiliarias). SEGUIMIENTO: 24h sin respuesta=recordar, 48-72h=ultimo intento, No me interesa/No quiero=marcar No interesado y detener.",
+    productosRabito: "Rabbitts Capital estructura inversiones inmobiliarias en Chile, Paraguay y Florida. Servicios: venta de departamentos de inversión, estrategia de renta corta/tradicional, apoyo hipotecario, análisis tributario con Contabiliario y administración de propiedades con RentaDays/Rentastik. La asesoría de compra normalmente no tiene costo directo para el cliente porque Rabbitts recibe comisión de la inmobiliaria.",
+    pasosRabito: "Entender objetivo → Calificar capacidad → Recomendar camino → Invitar a reunión → Derivar a asesor humano si corresponde.",
+    reglasRabito: "Siempre disponible 24/7. Nunca decir alta demanda. Nunca decir que responderá después. Nunca inventar precios, stock, rentabilidades ni beneficios tributarios. Máximo una pregunta por mensaje. Mensajes cortos estilo WhatsApp.",
+    objecionesRabito: "Si no tiene pie: revisar proyectos con pie en cuotas, sin prometer aprobación. Si pregunta si se paga solo: aclarar que se proyecta anual y no se garantiza. Si pregunta IVA/DFL2: revisar caso a caso. Si pregunta precio: pedir objetivo/comuna antes de cotizar.",
+    reglasEntrenamiento: [],
+    cerebroDocs: [],
     entrenamiento: [
       {pregunta: 'Que es Rabbitts Capital?', respuesta: 'Rabbitts Capital es un marketplace PropTech que conecta compradores, brokers e inmobiliarias. Ayudamos a personas a invertir en departamentos, usar multicrédito y pagar menos impuestos con estrategias inmobiliarias. La asesoria no tiene costo para el cliente.'},
       {pregunta: 'Cuanto cuesta la asesoria?', respuesta: 'La asesoria por la compra de departamentos no tiene costo para ti. Nuestros honorarios los pagan las inmobiliarias con las que trabajamos.'},
@@ -4500,34 +4506,16 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   const [loading, setLoading]       = React.useState(true)
   const [showForm, setShowForm]     = React.useState(false)
   const [testing, setTesting]       = React.useState(null)
-  const [qrData, setQrData]         = React.useState(null)   // { instanceName, qr, nombre }
+  const [qrData, setQrData]         = React.useState(null)   // { instanceName, qr }
   const [connecting, setConnecting] = React.useState(false)
   const [newName, setNewName]       = React.useState('')
   const [statusMsg, setStatusMsg]   = React.useState(null)   // { type, text }
-  const autoWebhookRunning = React.useRef(false)
 
   const EVO_URL = 'https://wa.rabbittscapital.com'
   const EVO_KEY = 'rabbitts2024'
   const WEBHOOK_URL = 'https://crm.rabbittscapital.com/api/whatsapp'
-  const WEBHOOK_EVENTS = [
-    'CONNECTION_UPDATE',
-    'QRCODE_UPDATED',
-    'MESSAGES_UPSERT',
-    'MESSAGES_UPDATE'
-  ]
 
   const evoHeaders = { 'Content-Type': 'application/json', 'apikey': EVO_KEY }
-
-  const normalizeQrSrc = (qr) => {
-    if (!qr) return ''
-    const value = String(qr)
-    if (value.startsWith('data:image')) return value
-    return `data:image/png;base64,${value}`
-  }
-
-  const getQrFromResponse = (data) => {
-    return data?.base64 || data?.qrcode?.base64 || data?.qrcode || data?.qr || data?.code || data?.data?.base64 || data?.data?.qrcode?.base64 || ''
-  }
 
   React.useEffect(() => { loadNumeros() }, [dbReady])
 
@@ -4536,76 +4524,22 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
     setLoading(true)
     try {
       const { data } = await supabase.from('crm_settings').select('value').eq('key','wa_numeros').single()
-      const list = data?.value || []
-      setNumeros(list)
-      ensureWebhooksForNumbers(list)
+      setNumeros(data?.value || [])
     } catch(_) { setNumeros([]) }
     setLoading(false)
   }
 
   const saveNumeros = async (list) => {
     if (!dbReady || !supabase) return
-    await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: list }, { onConflict: 'key' })
+    await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: list })
     setNumeros(list)
-  }
-
-  const configurarWebhook = async (instanceName) => {
-    if (!instanceName) throw new Error('Falta instanceName')
-    const res = await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
-      method: 'POST',
-      headers: evoHeaders,
-      body: JSON.stringify({
-        url: WEBHOOK_URL,
-        enabled: true,
-        webhookByEvents: false,
-        webhookBase64: false,
-        events: WEBHOOK_EVENTS
-      })
-    })
-    const txt = await res.text()
-    let data = null
-    try { data = txt ? JSON.parse(txt) : null } catch(_) {}
-    if (!res.ok) throw new Error(data?.message || data?.error || txt || 'No se pudo configurar el webhook')
-    return data
-  }
-
-  const ensureWebhooksForNumbers = async (list = numeros) => {
-    if (autoWebhookRunning.current) return
-    const activeNumbers = (list || []).filter(n => n?.activo && n?.instanceName)
-    if (!activeNumbers.length) return
-
-    autoWebhookRunning.current = true
-    try {
-      const fixedIds = []
-      for (const num of activeNumbers) {
-        try {
-          await configurarWebhook(num.instanceName)
-          fixedIds.push(num.id)
-        } catch (e) {
-          console.warn('[WA] auto webhook error:', num.instanceName, e.message)
-        }
-      }
-
-      if (fixedIds.length) {
-        const updated = (list || []).map(n => fixedIds.includes(n.id)
-          ? {...n, webhookUrl: WEBHOOK_URL, webhookEvents: WEBHOOK_EVENTS, webhookAutoCheckedAt: new Date().toISOString()}
-          : n
-        )
-        setNumeros(updated)
-        if (dbReady && supabase) {
-          await supabase.from('crm_settings').upsert({ key: 'wa_numeros', value: updated }, { onConflict: 'key' })
-        }
-      }
-    } finally {
-      autoWebhookRunning.current = false
-    }
   }
 
   // ── Conectar nuevo número via QR ──────────────────────────────────────────
   const conectarNumero = async () => {
     if (!newName.trim()) { setStatusMsg({type:'error', text:'Ingresa un nombre para este número'}); return }
     setConnecting(true)
-    setStatusMsg({type:'loading', text:'Creando instancia en Evolution API...'})
+    setStatusMsg({type:'loading', text:'Creando instancia...'})
     setQrData(null)
 
     const instanceName = 'rabbitts_' + Date.now()
@@ -4613,62 +4547,46 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       // 1. Crear instancia
       const createRes = await fetch(`${EVO_URL}/instance/create`, {
         method: 'POST', headers: evoHeaders,
-        body: JSON.stringify({ instanceName, integration: 'WHATSAPP-BAILEYS', qrcode: true })
+        body: JSON.stringify({ instanceName, integration: "WHATSAPP-BAILEYS", qrcode: true })
       })
-      const createTxt = await createRes.text()
-      let createData = null
-      try { createData = createTxt ? JSON.parse(createTxt) : null } catch(_) {}
-      if (!createRes.ok || !createData?.instance) throw new Error(createData?.message || createData?.error || createTxt || 'No se pudo crear la instancia')
+      const createData = await createRes.json()
+      if (!createData.instance) throw new Error('No se pudo crear la instancia')
 
-      // 2. Configurar webhook inmediatamente. Rabito depende de esto.
-      setStatusMsg({type:'loading', text:'Instancia creada. Activando webhook para Rabito...'})
-      await configurarWebhook(instanceName)
+      // 2. Abrir manager para escanear QR
+      setStatusMsg({type:'info', text:'Abriendo panel de conexión...'})
+      await new Promise(r => setTimeout(r, 1000))
+      
+      // Abrir manager en nueva pestaña
+      const managerUrl = `${EVO_URL}/manager`
+      window.open(managerUrl, '_blank')
+      
+      setQrData({ instanceName, qr: null, nombre: newName.trim(), managerUrl })
+      setStatusMsg({type:'info', text:`Instancia creada. Escanea el QR en el panel que se abrió → busca "${instanceName}" → "Get QR Code"`})
 
-      // 3. Pedir QR directamente a Evolution API y mostrarlo dentro del CRM
-      setStatusMsg({type:'loading', text:'Webhook activo. Generando código QR...'})
-      let qrBase64 = getQrFromResponse(createData)
-      if (!qrBase64) {
-        const qrRes = await fetch(`${EVO_URL}/instance/connect/${instanceName}`, { headers: evoHeaders })
-        const qrJson = await qrRes.json()
-        qrBase64 = getQrFromResponse(qrJson)
-      }
-
-      setQrData({ instanceName, qr: qrBase64 ? normalizeQrSrc(qrBase64) : null, nombre: newName.trim() })
-      setStatusMsg(qrBase64
-        ? {type:'info', text:'Webhook activo. Escanea el código QR con WhatsApp Business para conectar este número.'}
-        : {type:'info', text:'Webhook activo. Si el QR no aparece, presiona “Actualizar QR”.'}
-      )
-
-      // 4. Polling para detectar conexión y guardar número
+      // 3. Polling para detectar conexión
       let attempts = 0
       const poll = setInterval(async () => {
         attempts++
-        if (attempts > 40) { clearInterval(poll); setConnecting(false); return }
+        if (attempts > 30) { clearInterval(poll); setConnecting(false); return }
         try {
           const stateRes = await fetch(`${EVO_URL}/instance/connectionState/${instanceName}`, { headers: evoHeaders })
           const stateData = await stateRes.json()
           const state = stateData?.instance?.state || stateData?.state || stateData?.connectionStatus
           if (state === 'open') {
             clearInterval(poll)
-
-            // Reforzar webhook al quedar open. Es idempotente.
-            await configurarWebhook(instanceName)
-
+            // Obtener número conectado
             const infoRes = await fetch(`${EVO_URL}/instance/fetchInstances?instanceName=${instanceName}`, { headers: evoHeaders })
             const infoData = await infoRes.json()
             const instanceInfo = Array.isArray(infoData) ? infoData[0] : infoData
-            const rawPhone = instanceInfo?.ownerJid?.split('@')[0] || instanceInfo?.owner?.split('@')[0] || ''
-            const cleanPhone = rawPhone ? '+' + rawPhone.replace(/\D/g,'') : ''
+            const phone = instanceInfo?.ownerJid?.split('@')[0] || instanceInfo?.owner?.split('@')[0] || instanceName
 
             const newNum = {
               id: 'wa-' + Date.now(),
               nombre: newName.trim(),
-              numero: cleanPhone,
+              numero: phone ? '+' + phone : '',
               instanceName,
               evoUrl: EVO_URL,
               evoKey: EVO_KEY,
-              webhookUrl: WEBHOOK_URL,
-              webhookEvents: WEBHOOK_EVENTS,
               activo: true,
               createdAt: new Date().toISOString()
             }
@@ -4677,11 +4595,14 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
             setNewName('')
             setShowForm(false)
             setConnecting(false)
-            setStatusMsg({type:'success', text:`✅ ${newNum.nombre} conectado. Webhook activo y Rabito listo para responder.`})
+            // Configurar webhook AUTOMÁTICAMENTE al conectar
+            await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
+              method: 'POST', headers: evoHeaders,
+              body: JSON.stringify({ url: WEBHOOK_URL, enabled: true, webhookByEvents: false, events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_SET', 'SEND_MESSAGE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'CONTACTS_SET', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CHATS_SET', 'CHATS_UPSERT', 'CHATS_UPDATE'] })
+            })
+            setStatusMsg({type:'success', text:`✅ ${newNum.nombre} conectado y webhook configurado automáticamente`})
           }
-        } catch(e) {
-          console.warn('[WA] polling error:', e.message)
-        }
+        } catch(_) {}
       }, 3000)
 
     } catch(err) {
@@ -4693,21 +4614,12 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   // ── Refrescar QR ─────────────────────────────────────────────────────────
   const refreshQr = async () => {
     if (!qrData?.instanceName) return
-    setStatusMsg({type:'loading', text:'Actualizando código QR...'})
     try {
-      await configurarWebhook(qrData.instanceName)
       const qrRes = await fetch(`${EVO_URL}/instance/connect/${qrData.instanceName}`, { headers: evoHeaders })
       const qrJson = await qrRes.json()
-      const qrBase64 = getQrFromResponse(qrJson)
-      if (qrBase64) {
-        setQrData(prev => ({...prev, qr: normalizeQrSrc(qrBase64)}))
-        setStatusMsg({type:'info', text:'QR actualizado y webhook activo. Escanéalo desde WhatsApp Business.'})
-      } else {
-        setStatusMsg({type:'error', text:'Evolution no devolvió QR. Revisa que la instancia no esté ya conectada o intenta nuevamente.'})
-      }
-    } catch(e) {
-      setStatusMsg({type:'error', text:'Error al actualizar QR: ' + e.message})
-    }
+      const qrBase64 = qrJson?.base64 || qrJson?.qrcode?.base64
+      if (qrBase64) setQrData(prev => ({...prev, qr: qrBase64}))
+    } catch(_) {}
   }
 
   const eliminarNumero = async (num) => {
@@ -4719,10 +4631,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   }
 
   const toggleActivo = async (id) => {
-    const updated = numeros.map(n => n.id === id ? {...n, activo: !n.activo} : n)
-    await saveNumeros(updated)
-    const changed = updated.find(n => n.id === id)
-    if (changed?.activo) ensureWebhooksForNumbers(updated)
+    await saveNumeros(numeros.map(n => n.id === id ? {...n, activo: !n.activo} : n))
   }
 
   const testConnection = async (num) => {
@@ -4730,8 +4639,8 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
     try {
       const r = await fetch(`${EVO_URL}/instance/connectionState/${num.instanceName}`, { headers: evoHeaders })
       const d = await r.json()
-      const state = d?.instance?.state || d?.state || d?.connectionStatus
-      if (state === 'open') alert(`✅ Conectado\nNúmero: ${num.numero || 'No detectado'}\nEstado: Activo`)
+      const state = d?.instance?.state
+      if (state === 'open') alert(`✅ Conectado\nNúmero: ${num.numero}\nEstado: Activo`)
       else alert(`⚠️ Estado: ${state || 'desconectado'}`)
     } catch(e) { alert('Error: ' + e.message) }
     setTesting(null)
@@ -4743,7 +4652,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',marginBottom:12}}>
         <div>
           <div style={{fontSize:13,fontWeight:800,color:B.primary}}>📱 Números WhatsApp conectados</div>
-          <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>Conecta uno o más números de WhatsApp Business. El webhook de Rabito se activa automáticamente.</div>
+          <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>Conecta uno o más números de WhatsApp Business para Rabito IA y el CRM.</div>
         </div>
         <button
           onClick={()=>{setShowForm(true);setStatusMsg(null)}}
@@ -4785,7 +4694,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
               <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{num.nombre}</div>
               <div style={{fontSize:11,color:'#6b7280',marginTop:1}}>
                 {num.numero && <span style={{marginRight:8}}>📞 {num.numero}</span>}
-                <span style={{fontFamily:'monospace',fontSize:10}}>{num.instanceName?.slice(0,24)}...</span>
+                <span style={{fontFamily:'monospace',fontSize:10}}>{num.instanceName?.slice(0,20)}...</span>
               </div>
             </div>
             <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center',flexWrap:'wrap'}}>
@@ -4798,6 +4707,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
                 style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',color:B.primary,fontWeight:600}}>
                 {testing===num.id?'...':'Probar'}
               </button>
+
               <button onClick={()=>eliminarNumero(num)}
                 style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>✕</button>
             </div>
@@ -6181,8 +6091,16 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
   const [docs, setDocs] = React.useState([])
   const [uploading, setUploading] = React.useState(false)
   const [msg, setMsg] = React.useState(null)
+  const [section, setSection] = React.useState('personalidad')
+  const [docCategory, setDocCategory] = React.useState('General')
+  const [folderName, setFolderName] = React.useState('General')
+  const [newRule, setNewRule] = React.useState({ title:'', content:'' })
+  const [rules, setRules] = React.useState([])
   const fileRef = React.useRef(null)
   const B = { primary:'#4F46E5', light:'#EEF2FF', mid:'#6b7280', border:'#E8EFFE' }
+
+  const setCfg = (key, value) => upd && upd([key], value)
+  const val = (key, fallback='') => iaConfig?.[key] ?? fallback
 
   React.useEffect(() => {
     try {
@@ -6190,6 +6108,53 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
       setDocs(saved)
     } catch(e) { setDocs([]) }
   }, [iaConfig?.cerebroDocs])
+
+  React.useEffect(() => {
+    try {
+      const saved = Array.isArray(iaConfig?.reglasEntrenamiento) ? iaConfig.reglasEntrenamiento : []
+      setRules(saved)
+    } catch(e) { setRules([]) }
+  }, [iaConfig?.reglasEntrenamiento])
+
+  const syncKnowledge = async (nextDocs = docs, nextRules = rules) => {
+    const driveContent = {
+      files: (nextDocs || []).map(d => ({
+        name: d.nombre,
+        content: d.content,
+        categoria: d.categoria || 'General',
+        carpeta: d.carpeta || 'General'
+      })),
+      synced_at: new Date().toISOString(),
+      source: 'rabito_cerebro'
+    }
+    const rabitoKnowledge = {
+      items: (nextRules || []).map(r => ({ title: r.title, content: r.content, type: 'regla_operativa' })),
+      synced_at: new Date().toISOString(),
+      source: 'rabito_training'
+    }
+
+    if (dbReady && supabase) {
+      await supabase.from('crm_settings').upsert({ key: 'drive_content', value: driveContent })
+      await supabase.from('crm_settings').upsert({ key: 'rabito_knowledge', value: rabitoKnowledge })
+    }
+    if (upd) {
+      upd(['cerebroDocs'], nextDocs)
+      upd(['reglasEntrenamiento'], nextRules)
+      upd(['driveConectado'], (nextDocs || []).length > 0 || (nextRules || []).length > 0)
+    }
+  }
+
+  const applyVambeTemplate = () => {
+    setCfg('siempreActivo', true)
+    setCfg('tiempoEspera', 4)
+    setCfg('personalidad', `Eres Rabito, asistente comercial de Rabbitts Capital. Respondes siempre como un asesor humano de WhatsApp: natural, directo, amable y orientado a agendar una reunión cuando el cliente muestra interés real. No dices que eres IA salvo que te lo pregunten. Nunca dices que estás con alta demanda, ocupado o que responderás después. Mantienes la conversación viva con una sola pregunta útil por mensaje. No prometes rentabilidades garantizadas, no inventas precios ni condiciones y no hablas mal de competidores.`)
+    setCfg('guion', `1. Saluda de forma breve y pregunta el objetivo: invertir para renta corta, renta tradicional o comprar para vivir.\n2. Diagnostica con pocas preguntas: renta líquida, pie/ahorros, país o comuna de interés, si compra solo o con renta complementaria.\n3. Educa sin vender de golpe: explica que Rabbitts revisa estrategia, crédito, tributación y rentabilidad real.\n4. Si el cliente muestra interés, entrega renta, pregunta por precio/proyecto o dice que quiere avanzar, invita a agendar reunión.\n5. Si pide humano, reclamo o caso complejo, escala.`)
+    setCfg('productosRabito', `Rabbitts Capital vende y estructura inversiones inmobiliarias en Chile, Paraguay y Florida. Servicios: búsqueda de proyectos, análisis de inversión, apoyo hipotecario, estrategia tributaria con Contabiliario, administración de renta corta/tradicional con RentaDays/Rentastik y planificación de retiro inmobiliario. La asesoría de compra normalmente no tiene costo directo para el cliente porque Rabbitts recibe comisión de la inmobiliaria.`)
+    setCfg('pasosRabito', `Entender objetivo → Calificar capacidad → Recomendar camino → Invitar a reunión → Derivar a asesor humano cuando corresponda.`)
+    setCfg('reglasRabito', `Siempre disponible 24/7.\nNunca responder alta demanda.\nNunca decir que no puede ayudar.\nNunca inventar precios, stock, rentabilidades ni beneficios tributarios.\nSi no sabe, pregunta dato clave o agenda.\nMáximo una pregunta por mensaje.\nMensajes cortos estilo WhatsApp.`)
+    setCfg('objecionesRabito', `Si dicen "no tengo pie": explicar que depende del proyecto y que algunos permiten pie en cuotas, pero se debe revisar caso.\nSi preguntan "se paga solo": aclarar que ninguna renta se debe prometer como garantizada; se proyecta anual, no mensual.\nSi preguntan por IVA/DFL2: explicar que se revisa caso a caso con estructura tributaria.\nSi piden precio: pedir objetivo/comuna antes de cotizar para no recomendar cualquier cosa.`)
+    setMsg({ type:'success', text:'✅ Plantilla estilo Vambe aplicada a Rabito.' })
+  }
 
   const toBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -6202,11 +6167,9 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     const name = file.name.toLowerCase()
     if (name.endsWith('.pdf') || name.endsWith('.docx') || name.endsWith('.doc')) {
       const base64 = await toBase64(file)
-      const isPdf = name.endsWith('.pdf')
-      const mediaType = isPdf
+      const mediaType = name.endsWith('.pdf')
         ? 'application/pdf'
         : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      // Extraer via servidor (evita CORS con Anthropic API)
       const r = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -6238,9 +6201,11 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
         newDocs.push({
           id: 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
           nombre: file.name,
-          content: clean.slice(0, 15000),
+          categoria: docCategory || 'General',
+          carpeta: folderName || 'General',
+          content: clean.slice(0, 18000),
           chars: clean.length,
-          truncado: clean.length > 15000,
+          truncado: clean.length > 18000,
           fecha: new Date().toISOString()
         })
       } catch (e) {
@@ -6250,16 +6215,8 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
     if (newDocs.length) {
       const allDocs = [...docs, ...newDocs]
       setDocs(allDocs)
-      const driveContent = {
-        files: allDocs.map(d => ({ name: d.nombre, content: d.content })),
-        synced_at: new Date().toISOString(),
-        source: 'manual_upload'
-      }
       try {
-        if (dbReady && supabase) {
-          await supabase.from('crm_settings').upsert({ key: 'drive_content', value: driveContent })
-          if (upd) { upd(['cerebroDocs'], allDocs); upd(['driveConectado'], true) }
-        }
+        await syncKnowledge(allDocs, rules)
         setMsg({ type: 'success', text: `✅ ${newDocs.length} documento(s) cargado(s). Rabito ya puede leerlos.` })
       } catch (e) {
         setMsg({ type: 'error', text: 'Error guardando: ' + e.message })
@@ -6272,103 +6229,168 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
   const deleteDoc = async (docId) => {
     const updated = docs.filter(d => d.id !== docId)
     setDocs(updated)
-    const driveContent = {
-      files: updated.map(d => ({ name: d.nombre, content: d.content })),
-      synced_at: new Date().toISOString()
-    }
-    try {
-      if (dbReady && supabase) {
-        await supabase.from('crm_settings').upsert({ key: 'drive_content', value: driveContent })
-        if (upd) { upd(['cerebroDocs'], updated); upd(['driveConectado'], updated.length > 0) }
-      }
-    } catch(e) {}
+    try { await syncKnowledge(updated, rules) } catch(e) {}
     setMsg({ type: 'success', text: 'Documento eliminado' })
   }
 
+  const addRule = async () => {
+    if (!newRule.title.trim() || !newRule.content.trim()) {
+      setMsg({ type:'error', text:'Escribe título y regla antes de guardar.' })
+      return
+    }
+    const item = {
+      id: 'rule-' + Date.now(),
+      title: newRule.title.trim(),
+      content: newRule.content.trim(),
+      fecha: new Date().toISOString()
+    }
+    const next = [...rules, item]
+    setRules(next)
+    setNewRule({ title:'', content:'' })
+    try { await syncKnowledge(docs, next) } catch(e) {}
+    setMsg({ type:'success', text:'✅ Regla guardada. Rabito la usará en futuras conversaciones.' })
+  }
+
+  const deleteRule = async (id) => {
+    const next = rules.filter(r => r.id !== id)
+    setRules(next)
+    try { await syncKnowledge(docs, next) } catch(e) {}
+  }
+
   const totalChars = docs.reduce((s, d) => s + (Number(d.chars) || d.content?.length || 0), 0)
+  const folders = [...new Set(docs.map(d => d.carpeta || 'General'))]
+  const sections = [
+    { id:'personalidad', icon:'🎭', title:'Personalidad', sub:'Tono, estilo y reglas base' },
+    { id:'productos', icon:'🏢', title:'Productos', sub:'Qué vende Rabbitts' },
+    { id:'pasos', icon:'🧭', title:'Pasos a seguir', sub:'Flujo comercial' },
+    { id:'reglas', icon:'🛡️', title:'Reglas duras', sub:'Prohibiciones y objeciones' },
+    { id:'docs', icon:'📚', title:'Documentos', sub:'Base de conocimiento' },
+    { id:'sugerencias', icon:'🧠', title:'Aprendizaje', sub:'Correcciones permanentes' },
+  ]
+
+  const SectionCard = ({item}) => (
+    <div onClick={() => setSection(item.id)} style={{border:'1px solid '+(section===item.id?B.primary:'#E2E8F0'),background:section===item.id?B.light:'#fff',borderRadius:12,padding:'12px',cursor:'pointer',display:'flex',gap:10,alignItems:'center'}}>
+      <div style={{width:34,height:34,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',background:section===item.id?B.primary:'#F3F4F6',color:section===item.id?'#fff':'#374151',fontSize:17}}>{item.icon}</div>
+      <div style={{minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:800,color:section===item.id?B.primary:'#0F172A'}}>{item.title}</div>
+        <div style={{fontSize:11,color:B.mid,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{item.sub}</div>
+      </div>
+    </div>
+  )
+
+  const TextAreaBlock = ({label, hint, configKey, minHeight=170}) => (
+    <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+      <div style={{fontSize:14,fontWeight:800,color:B.primary,marginBottom:4}}>{label}</div>
+      <div style={{fontSize:12,color:B.mid,marginBottom:10}}>{hint}</div>
+      <textarea value={val(configKey, '')} onChange={e=>setCfg(configKey, e.target.value)}
+        style={{...sty.inp,minHeight,resize:'vertical',fontSize:12,lineHeight:1.5,fontFamily:'monospace'}} />
+    </div>
+  )
 
   return (
-    <div style={{display:'flex', flexDirection:'column', gap:16}}>
-      <div style={{background:B.light, border:'1px solid '+B.border, borderRadius:12, padding:'16px'}}>
-        <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
-          <span style={{fontSize:24}}>🧠</span>
-          <div>
-            <div style={{fontWeight:800, fontSize:15, color:B.primary}}>Cerebro de Rabito</div>
-            <div style={{fontSize:12, color:B.mid}}>Sube documentos y Rabito los leerá en cada conversación</div>
-          </div>
-          {docs.length > 0 && (
-            <span style={{marginLeft:'auto', fontSize:11, padding:'4px 12px', borderRadius:20, background:'#DCFCE7', color:'#14532d', fontWeight:700}}>
-              ✅ {docs.length} doc(s) · {(totalChars/1000).toFixed(1)}k caracteres
-            </span>
-          )}
-        </div>
-        <div style={{fontSize:12, color:'#6b7280', padding:'8px 12px', background:'#fff', borderRadius:8, border:'1px solid #e5e7eb'}}>
-          💡 Sube: personalidad, guión de ventas, proyectos, precios, preguntas frecuentes.<br/>
-          Formatos: <strong>PDF, Word (.docx), TXT, MD, CSV</strong>
-        </div>
-      </div>
-
-      <div
-        onClick={() => fileRef.current && fileRef.current.click()}
-        onDragOver={e => { e.preventDefault(); e.currentTarget.style.background='#EEF2FF' }}
-        onDragLeave={e => { e.currentTarget.style.background='#f9fafb' }}
-        onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files); e.currentTarget.style.background='#f9fafb' }}
-        style={{border:'2px dashed '+B.border, borderRadius:12, padding:'32px', textAlign:'center', cursor:'pointer', background:'#f9fafb', transition:'background .2s'}}
-      >
-        <div style={{fontSize:32, marginBottom:8}}>📂</div>
-        <div style={{fontWeight:700, fontSize:14, color:B.primary, marginBottom:4}}>
-          {uploading ? '⏳ Procesando...' : 'Haz clic o arrastra archivos aquí'}
-        </div>
-        <div style={{fontSize:12, color:B.mid}}>PDF, DOCX, TXT, MD, CSV</div>
-        <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.html"
-          style={{display:'none'}}
-          onChange={e => uploadFiles(e.target.files)}
-        />
-      </div>
-
-      {msg && (
-        <div style={{padding:'10px 14px', borderRadius:8, fontSize:13, fontWeight:600,
-          background: msg.type==='error'?'#FEF2F2': msg.type==='info'?'#EEF2FF':'#DCFCE7',
-          color: msg.type==='error'?'#991b1b': msg.type==='info'?'#1B4FC8':'#14532d'}}>
-          {msg.text}
-        </div>
-      )}
-
-      {docs.length > 0 && (
-        <div style={{background:'#fff', border:'1px solid #E2E8F0', borderRadius:12, padding:'16px'}}>
-          <div style={{fontWeight:700, fontSize:13, color:B.primary, marginBottom:12}}>
-            📚 Documentos en el cerebro ({docs.length})
-          </div>
-          {docs.map(doc => (
-            <div key={doc.id} style={{display:'flex', alignItems:'center', gap:10, padding:'10px 12px', borderRadius:8, border:'1px solid #f0f4ff', marginBottom:6, background:'#f9fbff'}}>
-              <span style={{fontSize:20}}>
-                {doc.nombre?.endsWith('.pdf') ? '📕' : doc.nombre?.endsWith('.docx')||doc.nombre?.endsWith('.doc') ? '📘' : '📄'}
-              </span>
-              <div style={{flex:1, minWidth:0}}>
-                <div style={{fontWeight:600, fontSize:13, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{doc.nombre}</div>
-                <div style={{fontSize:11, color:B.mid}}>
-                  {((Number(doc.chars)||doc.content?.length||0)/1000).toFixed(1)}k caracteres
-                  {doc.truncado && <span style={{color:'#f59e0b', fontWeight:600}}> · truncado a 15k</span>}
-                  {' · '}{doc.fecha ? new Date(doc.fecha).toLocaleDateString('es-CL') : ''}
-                </div>
-              </div>
-              <button onClick={() => deleteDoc(doc.id)}
-                style={{padding:'4px 10px', borderRadius:6, border:'1px solid #fca5a5', background:'#FEF2F2', color:'#991b1b', cursor:'pointer', fontSize:11, fontWeight:600, flexShrink:0}}>
-                🗑️
-              </button>
+    <div style={{display:'grid',gridTemplateColumns:'minmax(190px,240px) 1fr',gap:16}}>
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        <div style={{background:B.light,border:'1px solid '+B.border,borderRadius:12,padding:14}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+            <span style={{fontSize:24}}>🧠</span>
+            <div>
+              <div style={{fontWeight:900,fontSize:15,color:B.primary}}>Capacita a Rabito</div>
+              <div style={{fontSize:11,color:B.mid}}>Como Vambe: personalidad, productos, pasos y conocimiento</div>
             </div>
-          ))}
+          </div>
+          <button onClick={applyVambeTemplate} style={{width:'100%',padding:'9px 12px',borderRadius:10,border:'none',background:B.primary,color:'#fff',fontSize:12,fontWeight:800,cursor:'pointer'}}>
+            ⚡ Aplicar plantilla recomendada
+          </button>
         </div>
-      )}
+        {sections.map(s => <SectionCard key={s.id} item={s}/>)}
+      </div>
 
-      {docs.length === 0 && !uploading && (
-        <div style={{textAlign:'center', color:B.mid, fontSize:13, padding:'24px'}}>
-          Sin documentos aún. Sube tus primeros archivos para que Rabito aprenda.
+      <div style={{display:'flex',flexDirection:'column',gap:14,minWidth:0}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontSize:20,fontWeight:900,color:B.primary}}>{docs.length}</div><div style={{fontSize:11,color:B.mid}}>Documentos</div></div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontSize:20,fontWeight:900,color:B.primary}}>{folders.length}</div><div style={{fontSize:11,color:B.mid}}>Carpetas</div></div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontSize:20,fontWeight:900,color:B.primary}}>{rules.length}</div><div style={{fontSize:11,color:B.mid}}>Reglas</div></div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontSize:20,fontWeight:900,color:B.primary}}>{(totalChars/1000).toFixed(1)}k</div><div style={{fontSize:11,color:B.mid}}>Caracteres</div></div>
         </div>
-      )}
+
+        {msg && (
+          <div style={{padding:'10px 14px',borderRadius:8,fontSize:13,fontWeight:700,background:msg.type==='error'?'#FEF2F2':msg.type==='info'?'#EEF2FF':'#DCFCE7',color:msg.type==='error'?'#991b1b':msg.type==='info'?'#1B4FC8':'#14532d'}}>{msg.text}</div>
+        )}
+
+        {section==='personalidad' && <TextAreaBlock label="🎭 Personalidad de Rabito" hint="Esto queda grabado en el prompt principal. No dependas de feedback suelto." configKey="personalidad" minHeight={230}/>} 
+        {section==='productos' && <TextAreaBlock label="🏢 Productos y servicios que Rabito puede ofrecer" hint="Describe Rabbitts, países, proyectos, renta corta, tributación, crédito y qué NO debe prometer." configKey="productosRabito" minHeight={260}/>} 
+        {section==='pasos' && <TextAreaBlock label="🧭 Pasos a seguir en cada conversación" hint="Define el flujo tipo Vambe: entender, calificar, recomendar y agendar." configKey="pasosRabito" minHeight={220}/>} 
+        {section==='reglas' && (
+          <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
+            <TextAreaBlock label="🛡️ Reglas duras" hint="Prohibiciones, límites, cuándo escalar y frases que nunca debe decir." configKey="reglasRabito" minHeight={180}/>
+            <TextAreaBlock label="💬 Manejo de objeciones" hint="Qué responder ante precio, falta de pie, se paga solo, IVA, DFL2, miedo al crédito, etc." configKey="objecionesRabito" minHeight={180}/>
+          </div>
+        )}
+
+        {section==='docs' && (
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+              <div style={{fontWeight:800,fontSize:14,color:B.primary,marginBottom:4}}>📚 Base de conocimiento</div>
+              <div style={{fontSize:12,color:B.mid,marginBottom:12}}>Sube documentos por carpeta y categoría. Rabito los usará como contexto antes de responder.</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                <Fld label="Carpeta"><input value={folderName} onChange={e=>setFolderName(e.target.value)} style={sty.inp} placeholder="Ej: Chile, Paraguay, Florida, Tributario"/></Fld>
+                <Fld label="Categoría"><select value={docCategory} onChange={e=>setDocCategory(e.target.value)} style={sty.inp}><option>General</option><option>Proyectos</option><option>Precios</option><option>Tributario</option><option>Crédito</option><option>Renta corta</option><option>Objeciones</option><option>Guiones</option></select></Fld>
+              </div>
+              <div onClick={() => fileRef.current && fileRef.current.click()} onDragOver={e => { e.preventDefault(); e.currentTarget.style.background='#EEF2FF' }} onDragLeave={e => { e.currentTarget.style.background='#f9fafb' }} onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files); e.currentTarget.style.background='#f9fafb' }} style={{border:'2px dashed '+B.border,borderRadius:12,padding:'28px',textAlign:'center',cursor:'pointer',background:'#f9fafb'}}>
+                <div style={{fontSize:30,marginBottom:8}}>📂</div>
+                <div style={{fontWeight:800,fontSize:14,color:B.primary}}>{uploading?'⏳ Procesando...':'Haz clic o arrastra archivos aquí'}</div>
+                <div style={{fontSize:12,color:B.mid,marginTop:4}}>PDF, DOCX, TXT, MD, CSV, HTML</div>
+                <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.html" style={{display:'none'}} onChange={e => uploadFiles(e.target.files)}/>
+              </div>
+            </div>
+
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+              <div style={{fontWeight:800,fontSize:13,color:B.primary,marginBottom:12}}>Documentos cargados ({docs.length})</div>
+              {docs.length === 0 && <div style={{textAlign:'center',color:B.mid,fontSize:13,padding:24}}>Sin documentos aún.</div>}
+              {docs.map(doc => (
+                <div key={doc.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,border:'1px solid #f0f4ff',marginBottom:6,background:'#f9fbff'}}>
+                  <span style={{fontSize:20}}>{doc.nombre?.endsWith('.pdf')?'📕':doc.nombre?.endsWith('.docx')||doc.nombre?.endsWith('.doc')?'📘':'📄'}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{doc.nombre}</div>
+                    <div style={{fontSize:11,color:B.mid}}>{doc.carpeta||'General'} · {doc.categoria||'General'} · {((Number(doc.chars)||doc.content?.length||0)/1000).toFixed(1)}k caracteres{doc.truncado && <span style={{color:'#f59e0b',fontWeight:700}}> · truncado</span>}</div>
+                  </div>
+                  <button onClick={() => deleteDoc(doc.id)} style={{padding:'4px 10px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontSize:11,fontWeight:700}}>🗑️</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {section==='sugerencias' && (
+          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+              <div style={{fontWeight:800,fontSize:14,color:B.primary,marginBottom:4}}>🧠 Aprendizaje permanente</div>
+              <div style={{fontSize:12,color:B.mid,marginBottom:12}}>Cuando corrijas a Rabito, guarda la corrección como regla. Esto sí queda grabado para futuras respuestas.</div>
+              <Fld label="Título de la regla"><input value={newRule.title} onChange={e=>setNewRule({...newRule,title:e.target.value})} style={sty.inp} placeholder="Ej: Nunca decir alta demanda"/></Fld>
+              <div style={{height:8}}/>
+              <Fld label="Contenido de la regla"><textarea value={newRule.content} onChange={e=>setNewRule({...newRule,content:e.target.value})} style={{...sty.inp,minHeight:120,resize:'vertical'}} placeholder="Describe exactamente cómo debe actuar Rabito..."/></Fld>
+              <button onClick={addRule} style={{marginTop:10,padding:'9px 14px',borderRadius:10,border:'none',background:B.primary,color:'#fff',fontSize:12,fontWeight:800,cursor:'pointer'}}>Guardar regla permanente</button>
+            </div>
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+              <div style={{fontWeight:800,fontSize:13,color:B.primary,marginBottom:12}}>Reglas guardadas ({rules.length})</div>
+              {rules.length === 0 && <div style={{textAlign:'center',color:B.mid,fontSize:13,padding:18}}>Aún no hay reglas permanentes.</div>}
+              {rules.map(r => (
+                <div key={r.id} style={{border:'1px solid #f0f4ff',background:'#f9fbff',borderRadius:10,padding:12,marginBottom:8}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <div style={{flex:1,fontSize:13,fontWeight:800,color:'#0F172A'}}>{r.title}</div>
+                    <button onClick={()=>deleteRule(r.id)} style={{padding:'4px 9px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontSize:11,fontWeight:700}}>Eliminar</button>
+                  </div>
+                  <div style={{fontSize:12,color:'#4b5563',marginTop:6,whiteSpace:'pre-wrap'}}>{r.content}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
+
 
 // ─── Agenda Equipo View (admin only) ─────────────────────────────────────────
 function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agendaSettings={}, setAgendaSettings}) {
