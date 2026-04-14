@@ -92,7 +92,7 @@ function historyText(history = []) {
 }
 
 async function readSettings(db) {
-  if (!db) return { map: {}, text: '' }
+  if (!db) return { map: {}, text: '', rawRows: 0 }
   const keys = [
     'ia_config',
     'agent_training',
@@ -103,18 +103,74 @@ async function readSettings(db) {
     'agent_rules'
   ]
   try {
-    const { data, error } = await db.from('crm_settings').select('key,value').in('key', keys)
+    // Algunas versiones anteriores pudieron dejar filas duplicadas en crm_settings.
+    // Leemos * y elegimos/mergeamos la versión más nueva por key para no perder entrenamiento.
+    const { data, error } = await db.from('crm_settings').select('*').in('key', keys)
     if (error) throw error
+
+    const grouped = {}
+    for (const row of data || []) {
+      if (!row?.key) continue
+      if (!grouped[row.key]) grouped[row.key] = []
+      grouped[row.key].push(row)
+    }
+
+    const ts = (r) => {
+      const parsed = Date.parse(r.updated_at || r.created_at || '')
+      if (!Number.isNaN(parsed)) return parsed
+      const n = Number(String(r.id || '').replace(/[^0-9]/g, ''))
+      return Number.isFinite(n) ? n : 0
+    }
+
     const map = {}
-    for (const row of data || []) map[row.key] = parseMaybeJson(row.value)
+    for (const [key, rows] of Object.entries(grouped)) {
+      const sorted = [...rows].sort((a, b) => ts(b) - ts(a))
+
+      if (key === 'agent_training') {
+        const items = []
+        const seen = new Set()
+        for (const r of sorted) {
+          const v = parseMaybeJson(r.value)
+          const arr = Array.isArray(v) ? v : Array.isArray(v?.items) ? v.items : []
+          for (const item of arr) {
+            const id = clean(item?.id || item?.created_at || item?.context || item?.original || JSON.stringify(item).slice(0,80))
+            if (!id || seen.has(id)) continue
+            seen.add(id)
+            items.push(item)
+          }
+        }
+        map[key] = { version: 3, items: items.slice(0, 500), mergedRows: sorted.length }
+        continue
+      }
+
+      if (key === 'rabito_knowledge_chunks') {
+        const chunks = []
+        const seen = new Set()
+        for (const r of sorted) {
+          const v = parseMaybeJson(r.value)
+          const arr = Array.isArray(v) ? v : Array.isArray(v?.chunks) ? v.chunks : []
+          for (const item of arr) {
+            const id = clean(item?.id || `${item?.docId || item?.docName || item?.title || ''}-${item?.order ?? ''}-${String(item?.content || item?.contenido || '').slice(0,40)}`)
+            if (!id || seen.has(id)) continue
+            seen.add(id)
+            chunks.push(item)
+          }
+        }
+        map[key] = { version: 3, chunks: chunks.slice(0, 1200), mergedRows: sorted.length }
+        continue
+      }
+
+      map[key] = parseMaybeJson(sorted[0]?.value)
+    }
+
     const text = Object.entries(map).map(([k, v]) => {
       const txt = flatten(v)
       return txt ? `### ${k}\n${txt}` : ''
     }).filter(Boolean).join('\n\n').slice(0, 26000)
-    return { map, text }
+    return { map, text, rawRows: (data || []).length }
   } catch (e) {
     console.error('[AGENT] readSettings error:', e.message)
-    return { map: {}, text: '' }
+    return { map: {}, text: '', rawRows: 0 }
   }
 }
 
@@ -263,7 +319,28 @@ async function readTraining(db, query = '', settings = {}) {
 
 function blockedPhrases(iaConfig = {}) {
   const raw = flatten([iaConfig.frasesProhibidas, iaConfig.noDecir, iaConfig.blockedPhrases])
-  return raw.split('\n').map(clean).filter(x => x.length >= 4 && x.length <= 180)
+  const fromPanel = raw.split('\n').map(clean).filter(x => x.length >= 4 && x.length <= 180)
+  // Seguridad conversacional genérica: evita loops y relleno, sin meter guion de negocio.
+  const internal = [
+    'Estoy acá. Revisemos esto paso a paso para ayudarte bien.',
+    'Para avanzar bien, dime cuál es el dato principal que quieres resolver ahora.',
+    'Te leo. Cuéntame un poco más para orientarte bien.',
+    'Cuéntame un poco más para orientarte bien.'
+  ]
+  return [...fromPanel, ...internal]
+}
+
+function isBadGenericReply(text = '') {
+  const n = normalize(text)
+  if (!n) return true
+  const bad = [
+    'estoy aca revisemos esto paso a paso',
+    'para avanzar bien dime cual es el dato principal',
+    'te leo cuentame un poco mas',
+    'cuentame un poco mas para orientarte bien',
+    'dime cual es el dato principal que quieres resolver ahora'
+  ]
+  return bad.some(x => n.includes(x)) || n.length < 8
 }
 
 function cleanOutput(reply = '', iaConfig = {}) {
@@ -294,12 +371,26 @@ function validStatus(status = '', iaConfig = {}) {
   return ''
 }
 
-function trainingFallback(iaConfig, training, query) {
+function complaintIntent(text = '') {
+  const n = normalize(text)
+  return /no (pregunte|preguntes|pedi|pedi|dije)|otra vez|de nuevo|repeti|repetiste|eso no|mal|no es eso|no quiero eso|no pregunt/.test(n)
+}
+
+function bestTrainingMatch(training, query) {
   const useful = (training.items || []).filter(x => x.improved)
-  if (!useful.length) return ''
-  const ranked = useful.map(x => ({ ...x, localScore: score(query, `${x.context}\n${x.original}\n${x.reason}`) })).sort((a, b) => b.localScore - a.localScore)
-  const best = ranked[0]
-  if (best && best.localScore >= 2) return cleanOutput(best.improved, iaConfig)
+  if (!useful.length) return null
+  const ranked = useful.map(x => ({
+    ...x,
+    localScore: score(query, `${x.context}\n${x.original}\n${x.reason}\n${x.improved}`)
+  })).sort((a, b) => b.localScore - a.localScore)
+  return ranked[0] || null
+}
+
+function trainingFallback(iaConfig, training, query) {
+  const best = bestTrainingMatch(training, query)
+  if (!best) return ''
+  const min = complaintIntent(query) ? 1 : 3
+  if (best.localScore >= min) return cleanOutput(best.improved, iaConfig)
   return ''
 }
 
@@ -326,7 +417,7 @@ export async function generateAgentResponse({
   if (!ANTHROPIC_KEY) {
     const fb = trainingFallback(iaConfig, training, searchQuery)
     console.error('[AGENT] missing Anthropic key')
-    return { reply: fb, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '', trace: { missingKey: true, trainingTotal: training.total, knowledgeTotal: knowledge.total, feedbackUsed: training.used } }
+    return { reply: fb, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '', trace: { missingKey: true, trainingTotal: training.total, knowledgeTotal: knowledge.total, settingsRows: settings.rawRows, feedbackUsed: training.used } }
   }
 
   const agentName = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Asistente')
@@ -358,11 +449,11 @@ ${agenda || 'No configurado'}
 
 REGLAS DE CONVERSACIÓN:
 - Responde SOLO el último mensaje del cliente, usando el historial para no repetir.
-- Si el cliente manifiesta intención, avanza al siguiente paso del panel. No expliques quién es la empresa salvo que el cliente pregunte explícitamente "qué es", "quiénes son" o similar.
-- Si el cliente se queja de la respuesta, reconoce el error en una frase corta y corrige el rumbo según el feedback.
+- Si el cliente manifiesta intención, avanza al siguiente paso del panel. No expliques quién es la empresa salvo que el cliente pregunte directamente "qué es [empresa]" o "quiénes son ustedes". Si el cliente dice "no pregunté quiénes eran", "no pedí eso" o una frase negativa similar, NO respondas quiénes son; reconoce el error y vuelve a la intención del cliente.
+- Si el cliente se queja de la respuesta, reconoce el error en una frase corta y corrige el rumbo según el feedback. No uses respuestas de relleno.
 - No preguntes un dato que ya aparece en el historial o en datos del contacto.
 - Haz máximo una pregunta clara por mensaje, salvo que el panel ordene otra cosa.
-- No uses frases prohibidas ni frases de relleno.
+- No uses frases prohibidas ni frases de relleno como "Estoy acá", "Te leo", "cuéntame un poco más" o "dime cuál es el dato principal".
 - No inventes precios, condiciones, beneficios, promesas o políticas.
 - Solo deriva a humano/revisión si una regla dura del Panel IA lo indica explícitamente.
 - Si corresponde agendar y hay link de agenda, entrega el link.
@@ -387,7 +478,7 @@ REGLAS DE CONVERSACIÓN:
   let lastError = ''
   for (const model of [...new Set(modelCandidates)]) {
     try {
-      console.log('[AGENT] Claude start', JSON.stringify({ model, trainingTotal: training.total, knowledgeTotal: knowledge.total, feedbackPicked: training.used.length, knowledgePicked: knowledge.used.length }))
+      console.log('[AGENT] Claude start', JSON.stringify({ model, trainingTotal: training.total, knowledgeTotal: knowledge.total, settingsRows: settings.rawRows, feedbackPicked: training.used.length, knowledgePicked: knowledge.used.length }))
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -402,11 +493,11 @@ REGLAS DE CONVERSACIÓN:
       const raw = data?.content?.map(c => c.text || '').join('\n').trim() || ''
       const parsed = parseOutput(raw)
       let reply = cleanOutput(parsed.reply, iaConfig)
-      if (!reply) {
-        const fb = trainingFallback(iaConfig, training, searchQuery)
+      const fb = trainingFallback(iaConfig, training, searchQuery)
+      if (!reply || isBadGenericReply(reply)) {
         if (fb) reply = fb
       }
-      if (!reply) throw new Error('empty_model_reply')
+      if (!reply || isBadGenericReply(reply)) throw new Error('empty_or_generic_model_reply')
 
       const statusUpdate = validStatus(parsed.statusUpdate, iaConfig)
       console.log('[AGENT] Claude ok', JSON.stringify({ model, chars: reply.length, statusUpdate }))
@@ -433,14 +524,15 @@ REGLAS DE CONVERSACIÓN:
     }
   }
 
-  const fallback = trainingFallback(iaConfig, training, searchQuery) || cleanOutput(iaConfig.mensajeFallback || iaConfig.fallbackMessage || '', iaConfig)
+  let fallback = trainingFallback(iaConfig, training, searchQuery) || cleanOutput(iaConfig.mensajeFallback || iaConfig.fallbackMessage || '', iaConfig)
+  if (isBadGenericReply(fallback)) fallback = ''
   return {
     reply: fallback,
     action: 'fallback_model_error',
     statusUpdate: '',
     leadUpdate: {},
     memoryUpdate: {},
-    trace: { fallback: true, error: lastError, panelLoaded: !!panel, trainingTotal: training.total, knowledgeTotal: knowledge.total, feedbackUsed: training.used, chunksUsed: knowledge.used }
+    trace: { fallback: true, error: lastError, panelLoaded: !!panel, trainingTotal: training.total, knowledgeTotal: knowledge.total, settingsRows: settings.rawRows, feedbackUsed: training.used, chunksUsed: knowledge.used }
   }
 }
 
