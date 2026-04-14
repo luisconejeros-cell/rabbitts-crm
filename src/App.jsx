@@ -4507,9 +4507,32 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
 
   const EVO_URL = 'https://wa.rabbittscapital.com'
   const EVO_KEY = 'rabbitts2024'
-  const WEBHOOK_URL = 'https://crm.rabbittscapital.com/api/whatsapp'
+  const WEBHOOK_URL = typeof window !== 'undefined' ? `${window.location.origin}/api/whatsapp` : 'https://crm.rabbittscapital.com/api/whatsapp'
+  const REQUIRED_WEBHOOK_EVENTS = ['MESSAGES_UPSERT','MESSAGES_UPDATE','CONNECTION_UPDATE','QRCODE_UPDATED']
 
   const evoHeaders = { 'Content-Type': 'application/json', 'apikey': EVO_KEY }
+
+  const ensureWebhook = async (instanceName) => {
+    if (!instanceName) return false
+    const payload = {
+      url: WEBHOOK_URL,
+      enabled: true,
+      webhookByEvents: true,
+      events: REQUIRED_WEBHOOK_EVENTS
+    }
+    try {
+      const r = await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
+        method: 'POST', headers: evoHeaders, body: JSON.stringify(payload)
+      })
+      if (r.ok) return true
+    } catch(_) {}
+    try {
+      const r2 = await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
+        method: 'POST', headers: evoHeaders, body: JSON.stringify({ webhook: payload })
+      })
+      return r2.ok
+    } catch(_) { return false }
+  }
 
   React.useEffect(() => { loadNumeros() }, [dbReady])
 
@@ -4518,7 +4541,13 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
     setLoading(true)
     try {
       const { data } = await supabase.from('crm_settings').select('value').eq('key','wa_numeros').single()
-      setNumeros(data?.value || [])
+      const list = data?.value || []
+      setNumeros(list)
+      // Repara automáticamente webhooks de números ya conectados.
+      // Esto evita que números antiguos queden conectados pero sin crear conversaciones nuevas.
+      list.filter(n => n?.instanceName && n.activo !== false).slice(0, 10).forEach(n => {
+        ensureWebhook(n.instanceName).catch(() => {})
+      })
     } catch(_) { setNumeros([]) }
     setLoading(false)
   }
@@ -4590,11 +4619,8 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
             setShowForm(false)
             setConnecting(false)
             // Configurar webhook AUTOMÁTICAMENTE al conectar
-            await fetch(`${EVO_URL}/webhook/set/${instanceName}`, {
-              method: 'POST', headers: evoHeaders,
-              body: JSON.stringify({ url: WEBHOOK_URL, enabled: true, webhookByEvents: false, events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_SET', 'SEND_MESSAGE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED', 'CONTACTS_SET', 'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CHATS_SET', 'CHATS_UPSERT', 'CHATS_UPDATE'] })
-            })
-            setStatusMsg({type:'success', text:`✅ ${newNum.nombre} conectado y webhook configurado automáticamente`})
+            const whOk = await ensureWebhook(instanceName)
+            setStatusMsg({type: whOk ? 'success' : 'error', text: whOk ? `✅ ${newNum.nombre} conectado y webhook configurado automáticamente` : `⚠️ ${newNum.nombre} conectado, pero no pude confirmar el webhook. Vuelve a probar conexión.`})
           }
         } catch(_) {}
       }, 3000)
@@ -4625,7 +4651,13 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   }
 
   const toggleActivo = async (id) => {
-    await saveNumeros(numeros.map(n => n.id === id ? {...n, activo: !n.activo} : n))
+    const next = numeros.map(n => n.id === id ? {...n, activo: !n.activo} : n)
+    await saveNumeros(next)
+    const num = next.find(n => n.id === id)
+    if (num?.activo && num?.instanceName) {
+      const ok = await ensureWebhook(num.instanceName)
+      setStatusMsg({type: ok ? 'success' : 'error', text: ok ? 'Webhook reactivado automáticamente.' : 'No pude confirmar el webhook. Revisa Evolution API.'})
+    }
   }
 
   const testConnection = async (num) => {
@@ -4634,7 +4666,10 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       const r = await fetch(`${EVO_URL}/instance/connectionState/${num.instanceName}`, { headers: evoHeaders })
       const d = await r.json()
       const state = d?.instance?.state
-      if (state === 'open') alert(`✅ Conectado\nNúmero: ${num.numero}\nEstado: Activo`)
+      if (state === 'open') {
+        const whOk = await ensureWebhook(num.instanceName)
+        alert(`✅ Conectado\nNúmero: ${num.numero}\nEstado: Activo\nWebhook: ${whOk ? 'OK' : 'No confirmado'}`)
+      }
       else alert(`⚠️ Estado: ${state || 'desconectado'}`)
     } catch(e) { alert('Error: ' + e.message) }
     setTesting(null)
