@@ -148,18 +148,8 @@ const cleanVisibleLastMessage = (text='') => extractVisibleMessageContent(text)
 
 // ─── Mini components ─────────────────────────────────────────────────────────
 // ─── WhatsApp Link Component ─────────────────────────────────────────────────
-const displayPhoneLabel = (phone='') => {
-  const p = String(phone || '').trim()
-  if (!p || p === '—') return '—'
-  if (p.startsWith('wa-lid-')) return 'WhatsApp sin número visible'
-  const digits = p.replace(/\D/g, '')
-  if (digits.startsWith('386') && digits.length >= 10) return 'WhatsApp sin número visible'
-  return p
-}
-
 const WaLink = ({phone, label=null}) => {
-  const shown = label || displayPhoneLabel(phone)
-  if (!phone || phone === '—' || phone === '' || shown === 'WhatsApp sin número visible') return <span style={{color:'#9ca3af',fontSize:12}}>{shown}</span>
+  if (!phone || phone === '—' || phone === '') return <span style={{color:'#9ca3af',fontSize:12}}>{label||'—'}</span>
   const clean = phone.toString().replace(/[^0-9+]/g,'')
   const url = `https://wa.me/${clean.startsWith('+') ? clean.slice(1) : clean}`
   return (
@@ -168,7 +158,7 @@ const WaLink = ({phone, label=null}) => {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="#25D366">
         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
       </svg>
-      {shown}
+      {label||phone}
     </a>
   )
 }
@@ -623,6 +613,18 @@ export default function App() {
     colorPrimario: '#2563EB',
     duracionLabel: '1 hora',
     empresa: 'Rabbitts Capital',
+    timezone: 'America/Santiago',
+    slotInterval: 30,
+    minNoticeHours: 12,
+    bufferBefore: 0,
+    bufferAfter: 0,
+    distributionMode: 'round_robin',
+    teams: [{ id:'principal', nombre:'Equipo comercial', memberIds:[] }],
+    eventTypes: [{
+      id:'asesoria', nombre:'Reunión de asesoría', duracion:60,
+      descripcion:'Reunión comercial inicial', modo:'round_robin', equipoId:'principal',
+      anticipacionHoras:12, intervalo:30, bufferAntes:0, bufferDespues:0, activo:true
+    }],
   })
 
   const [iaConfig, setIaConfig] = useState({
@@ -6017,7 +6019,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                   <div key={conv.id} onClick={()=>setActiveConv(conv)}
                     style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:isActive?B.light:'#fff',transition:'background .15s'}}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:3}}>
-                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{conv.nombre||displayPhoneLabel(conv.telefono)}{conv._duplicateCount>1 ? ` · ${conv._duplicateCount} registros unidos` : ''}</div>
+                      <div style={{fontWeight:600,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}}>{conv.nombre||conv.telefono}{conv._duplicateCount>1 ? ` · ${conv._duplicateCount} registros unidos` : ''}</div>
                       <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
                         <span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:conv.mode==='ia'?'#E8EFFE':'#FEF9C3',color:conv.mode==='ia'?B.primary:'#713f12',fontWeight:700}}>
                           {conv.mode==='ia'?'🤖':'👤'}
@@ -6042,7 +6044,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
                 {isMobile && <button onClick={()=>setActiveConv(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:'#6366f1',padding:'0 4px'}}>←</button>}
                 <AV name={activeConv.nombre||activeConv.telefono} size={36}/>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{activeConv.nombre||displayPhoneLabel(activeConv.telefono)}</div>
+                  <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>{activeConv.nombre||activeConv.telefono}</div>
                   <div style={{fontSize:11,color:'#6b7280'}}><WaLink phone={activeConv.telefono}/>{activeConv.renta?' · Renta: '+activeConv.renta:''}{activeConv.modelo?' · '+activeConv.modelo:''}</div>
                 </div>
                 <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap'}}>
@@ -6791,6 +6793,34 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
 
   const agendaLink = 'https://crm.rabbittscapital.com/agenda'
 
+  const agendaTeams = Array.isArray(agendaSettings?.teams) && agendaSettings.teams.length
+    ? agendaSettings.teams
+    : [{ id:'principal', nombre:'Equipo comercial', memberIds:[] }]
+  const agendaEventTypes = Array.isArray(agendaSettings?.eventTypes) && agendaSettings.eventTypes.length
+    ? agendaSettings.eventTypes
+    : [{ id:'asesoria', nombre:agendaSettings?.titulo || 'Reunión de asesoría', duracion:60, descripcion:agendaSettings?.descripcion || '', modo:'round_robin', equipoId:'principal', anticipacionHoras:12, intervalo:30, bufferAntes:0, bufferDespues:0, activo:true }]
+
+  const patchAgenda = (patch) => setAgendaSettings(prev => ({ ...prev, ...patch }))
+  const patchTeam = (teamId, patch) => setAgendaSettings(prev => ({
+    ...prev,
+    teams: agendaTeams.map(t => t.id === teamId ? { ...t, ...patch } : t)
+  }))
+  const patchEventType = (eventId, patch) => setAgendaSettings(prev => ({
+    ...prev,
+    eventTypes: agendaEventTypes.map(e => e.id === eventId ? { ...e, ...patch } : e)
+  }))
+  const addEventType = () => setAgendaSettings(prev => ({
+    ...prev,
+    eventTypes: [
+      ...agendaEventTypes,
+      { id:'evento_' + Date.now(), nombre:'Nueva reunión', duracion:30, descripcion:'', modo:'round_robin', equipoId:agendaTeams[0]?.id || 'principal', anticipacionHoras:12, intervalo:30, bufferAntes:0, bufferDespues:0, activo:true }
+    ]
+  }))
+  const removeEventType = (eventId) => setAgendaSettings(prev => ({
+    ...prev,
+    eventTypes: agendaEventTypes.length <= 1 ? agendaEventTypes : agendaEventTypes.filter(e => e.id !== eventId)
+  }))
+
   const ingresosOptions = [
     {k:'cualquiera', l:'Cualquier ingreso', col:'#6b7280'},
     {k:'bajo',       l:'$1.5M – $2.5M',    col:'#0891b2'},
@@ -6935,6 +6965,95 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
             style={{...sty.btn,fontSize:12}}>Copiar</button>
           <a href={agendaLink} target="_blank" rel="noopener noreferrer"
             style={{...sty.btnP,fontSize:12,textDecoration:'none',padding:'7px 12px'}}>Ver página</a>
+        </div>
+      </div>
+
+      {/* ── Motor de agendamiento ── */}
+      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginBottom:16}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,marginBottom:14,flexWrap:'wrap'}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:14,color:'#0F172A'}}>⚙️ Motor de agendamiento</div>
+            <div style={{fontSize:12,color:B.mid,marginTop:2}}>Define tipos de reunión, equipos, distribución y reglas anti doble reserva.</div>
+          </div>
+          <span style={{fontSize:11,fontWeight:800,color:'#14532d',background:'#DCFCE7',padding:'6px 10px',borderRadius:999}}>Auto guardado</span>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(4,1fr)',gap:10,marginBottom:14}}>
+          <Fld label="Zona horaria">
+            <input value={agendaSettings?.timezone || 'America/Santiago'} onChange={e=>patchAgenda({timezone:e.target.value})} style={sty.inp}/>
+          </Fld>
+          <Fld label="Intervalo de slots">
+            <select value={agendaSettings?.slotInterval || 30} onChange={e=>patchAgenda({slotInterval:parseInt(e.target.value)})} style={sty.sel}>
+              <option value={15}>Cada 15 min</option><option value={30}>Cada 30 min</option><option value={45}>Cada 45 min</option><option value={60}>Cada 60 min</option>
+            </select>
+          </Fld>
+          <Fld label="Anticipación mínima">
+            <select value={agendaSettings?.minNoticeHours || 12} onChange={e=>patchAgenda({minNoticeHours:parseInt(e.target.value)})} style={sty.sel}>
+              <option value={1}>1 hora</option><option value={6}>6 horas</option><option value={12}>12 horas</option><option value={24}>24 horas</option><option value={48}>48 horas</option>
+            </select>
+          </Fld>
+          <Fld label="Distribución por defecto">
+            <select value={agendaSettings?.distributionMode || 'round_robin'} onChange={e=>patchAgenda({distributionMode:e.target.value})} style={sty.sel}>
+              <option value="round_robin">Round Robin</option><option value="collective">Colectivo</option>
+            </select>
+          </Fld>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1.4fr',gap:14}}>
+          <div style={{background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:12,padding:14}}>
+            <div style={{fontSize:12,fontWeight:900,color:'#0F172A',marginBottom:8}}>👥 Equipo principal</div>
+            {agendaTeams.map(team => (
+              <div key={team.id}>
+                <input value={team.nombre || ''} onChange={e=>patchTeam(team.id,{nombre:e.target.value})} style={{...sty.inp,marginBottom:10}} placeholder="Nombre del equipo"/>
+                <div style={{fontSize:11,fontWeight:800,color:'#64748B',marginBottom:6}}>Miembros que pueden recibir reuniones</div>
+                <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:210,overflow:'auto'}}>
+                  {todosAgentes.map(u => {
+                    const members = Array.isArray(team.memberIds) ? team.memberIds : []
+                    const checked = members.includes(u.id) || (!members.length && localConfigs[u.id]?.enAgenda)
+                    return (
+                      <label key={u.id} style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:'#334155',background:'#fff',border:'1px solid #E2E8F0',borderRadius:9,padding:'7px 9px'}}>
+                        <input type="checkbox" checked={checked} onChange={e=>{
+                          const base = members.length ? members : brokersEnAgenda.map(b=>b.id)
+                          const next = e.target.checked ? [...new Set([...base,u.id])] : base.filter(id=>id!==u.id)
+                          patchTeam(team.id,{memberIds:next})
+                        }}/>
+                        <span style={{fontWeight:700}}>{u.name}</span>
+                        <span style={{marginLeft:'auto',fontSize:10,color:u.google_tokens?'#166534':'#9ca3af'}}>{u.google_tokens?'Calendar':'Sin Calendar'}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+                <div style={{fontSize:10,color:'#64748B',marginTop:8}}>Si no marcas miembros manualmente, se usan los asesores agregados y activos en la agenda.</div>
+              </div>
+            ))}
+          </div>
+          <div style={{background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:12,padding:14}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:8}}>
+              <div style={{fontSize:12,fontWeight:900,color:'#0F172A'}}>🧩 Tipos de evento</div>
+              <button onClick={addEventType} style={{...sty.btn,fontSize:11,padding:'5px 10px'}}>+ Tipo</button>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              {agendaEventTypes.map(ev => (
+                <div key={ev.id} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}>
+                  <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1.3fr .8fr .8fr .8fr',gap:8,alignItems:'end'}}>
+                    <Fld label="Nombre"><input value={ev.nombre || ''} onChange={e=>patchEventType(ev.id,{nombre:e.target.value})} style={sty.inp}/></Fld>
+                    <Fld label="Duración"><select value={ev.duracion || 60} onChange={e=>patchEventType(ev.id,{duracion:parseInt(e.target.value)})} style={sty.sel}><option value={15}>15 min</option><option value={30}>30 min</option><option value={45}>45 min</option><option value={60}>60 min</option><option value={90}>90 min</option></select></Fld>
+                    <Fld label="Asignación"><select value={ev.modo || agendaSettings?.distributionMode || 'round_robin'} onChange={e=>patchEventType(ev.id,{modo:e.target.value})} style={sty.sel}><option value="round_robin">Round Robin</option><option value="collective">Colectivo</option></select></Fld>
+                    <Fld label="Activo"><button onClick={()=>patchEventType(ev.id,{activo:ev.activo===false})} style={{...sty.btn,background:ev.activo===false?'#F1F5F9':'#DCFCE7',color:ev.activo===false?'#64748B':'#166534',borderColor:ev.activo===false?'#CBD5E1':'#BBF7D0'}}>{ev.activo===false?'No':'Sí'}</button></Fld>
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(4,1fr)',gap:8,marginTop:8}}>
+                    <Fld label="Anticipación"><select value={ev.anticipacionHoras || agendaSettings?.minNoticeHours || 12} onChange={e=>patchEventType(ev.id,{anticipacionHoras:parseInt(e.target.value)})} style={sty.sel}><option value={1}>1h</option><option value={6}>6h</option><option value={12}>12h</option><option value={24}>24h</option><option value={48}>48h</option></select></Fld>
+                    <Fld label="Intervalo"><select value={ev.intervalo || agendaSettings?.slotInterval || 30} onChange={e=>patchEventType(ev.id,{intervalo:parseInt(e.target.value)})} style={sty.sel}><option value={15}>15m</option><option value={30}>30m</option><option value={60}>60m</option></select></Fld>
+                    <Fld label="Buffer antes"><select value={ev.bufferAntes || 0} onChange={e=>patchEventType(ev.id,{bufferAntes:parseInt(e.target.value)})} style={sty.sel}><option value={0}>0m</option><option value={5}>5m</option><option value={10}>10m</option><option value={15}>15m</option></select></Fld>
+                    <Fld label="Buffer después"><select value={ev.bufferDespues || 0} onChange={e=>patchEventType(ev.id,{bufferDespues:parseInt(e.target.value)})} style={sty.sel}><option value={0}>0m</option><option value={5}>5m</option><option value={10}>10m</option><option value={15}>15m</option></select></Fld>
+                  </div>
+                  <textarea value={ev.descripcion || ''} onChange={e=>patchEventType(ev.id,{descripcion:e.target.value})} placeholder="Descripción interna del evento" style={{...sty.inp,minHeight:54,resize:'vertical',marginTop:8}}/>
+                  {agendaEventTypes.length > 1 && <button onClick={()=>removeEventType(ev.id)} style={{marginTop:8,fontSize:11,border:'1px solid #FCA5A5',background:'#FEF2F2',color:'#991B1B',borderRadius:8,padding:'5px 10px',cursor:'pointer'}}>Eliminar tipo</button>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{marginTop:12,padding:'10px 12px',background:'#EFF6FF',border:'1px solid #BFDBFE',borderRadius:10,fontSize:11,color:'#1E40AF',lineHeight:1.5}}>
+          <b>Cómo funciona:</b> Round Robin muestra horarios donde al menos un asesor está libre y asigna al que lleva menos reuniones ponderado por prioridad. Colectivo muestra solo horarios donde todos los miembros del equipo coinciden. Al confirmar, el servidor vuelve a revisar CRM + Google Calendar antes de reservar para evitar doble booking.
         </div>
       </div>
 
