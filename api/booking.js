@@ -4,6 +4,15 @@
 
 const DEFAULT_TZ = 'America/Santiago'
 const DAY_KEYS = ['dom','lun','mar','mie','jue','vie','sab']
+const bookingSlug = (txt='') => String(txt||'')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'broker'
+const publicUser = u => ({
+  id:u.id, name:u.name, email:u.email || '', phone:u.phone || '', avatar_url:u.avatar_url || null,
+  bookingSlug: bookingSlug(u.agenda_config?.bookingSlug || u.name),
+  googleConnected: Boolean(u.google_tokens),
+  agenda_config: { activa: Boolean(u.agenda_config?.activa), enAgenda: Boolean(u.agenda_config?.enAgenda) }
+})
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -117,8 +126,14 @@ export default async function handler(req, res) {
   }
 
   const loadUsers = async () => {
-    const r = await sbGet('crm_users?role=eq.agent&select=id,name,email,phone,agenda_config,google_tokens,microsoft_tokens')
+    const r = await sbGet('crm_users?role=eq.agent&select=id,name,email,phone,avatar_url,agenda_config,google_tokens,microsoft_tokens')
     return Array.isArray(r.data) ? r.data : []
+  }
+
+  const findBrokerBySlug = (users, slugOrId) => {
+    const key = bookingSlug(slugOrId || '')
+    if (!key) return null
+    return users.find(u => u.id === slugOrId || bookingSlug(u.agenda_config?.bookingSlug || u.name) === key) || null
   }
 
   const loadLocalBusy = async (fecha) => {
@@ -184,10 +199,11 @@ export default async function handler(req, res) {
     return busy
   }
 
-  const getMemberCandidates = (users, settings, eventType, ingresosNum) => {
+  const getMemberCandidates = (users, settings, eventType, ingresosNum, directBroker=null) => {
     const categoria = ingresosNum >= 5000000 ? 'alto' : ingresosNum >= 2500000 ? 'medio' : 'bajo'
     const team = settings.teams.find(t => t.id === eventType.equipoId) || settings.teams[0]
     const teamMemberIds = Array.isArray(team?.memberIds) ? team.memberIds : []
+    if (directBroker) return users.filter(u => u.id === directBroker.id && u.agenda_config?.activa !== false)
     return users.filter(u => {
       if (teamMemberIds.length && !teamMemberIds.includes(u.id)) return false
       const ag = u.agenda_config || {}
@@ -206,19 +222,20 @@ export default async function handler(req, res) {
     return { desde: day.desde, hasta: day.hasta }
   }
 
-  const getAvailability = async ({ fecha, ingresos=1500000, eventTypeId, modoOverride }) => {
+  const getAvailability = async ({ fecha, ingresos=1500000, eventTypeId, modoOverride, brokerSlug, brokerId }) => {
     const settings = await loadAgendaSettings()
     const users = await loadUsers()
     const eventType = settings.eventTypes.find(e => e.id === eventTypeId) || settings.eventTypes.find(e => e.activo !== false) || settings.eventTypes[0]
+    const directBroker = brokerSlug ? findBrokerBySlug(users, brokerSlug) : (brokerId ? users.find(u => u.id === brokerId) : null)
     const tz = settings.timezone || DEFAULT_TZ
     const durMin = parseInt(eventType.duracion || settings.defaultDuration || 60, 10)
     const intervalo = parseInt(eventType.intervalo || settings.slotInterval || 30, 10)
     const bufferAntes = parseInt(eventType.bufferAntes || settings.bufferBefore || 0, 10)
     const bufferDespues = parseInt(eventType.bufferDespues || settings.bufferAfter || 0, 10)
     const anticipMs = parseInt(eventType.anticipacionHoras || settings.minNoticeHours || 12, 10) * 3600000
-    const modo = modoOverride || eventType.modo || settings.distributionMode || 'round_robin'
+    const modo = directBroker ? 'direct' : (modoOverride || eventType.modo || settings.distributionMode || 'round_robin')
     const diaKey = dateKeyForTz(fecha, tz)
-    const candidatos = getMemberCandidates(users, settings, eventType, parseInt(ingresos,10) || 0)
+    const candidatos = getMemberCandidates(users, settings, eventType, parseInt(ingresos,10) || 0, directBroker)
 
     const localBusy = await loadLocalBusy(fecha)
     const externalBusyPairs = await Promise.all(candidatos.map(async u => [u.id, await loadExternalBusy(u, fecha, tz)]))
@@ -248,7 +265,10 @@ export default async function handler(req, res) {
     }
 
     let slots = []
-    if (modo === 'collective') {
+    if (modo === 'direct') {
+      const pack = directBroker ? availabilityByMember[directBroker.id] : null
+      slots = pack ? pack.slots.map(s => ({...s, mode:'direct', broker: publicUser(directBroker), memberIds:[directBroker.id], availableMembers:1})) : []
+    } else if (modo === 'collective') {
       const activeIds = Object.keys(availabilityByMember)
       if (activeIds.length) {
         const counter = new Map()
@@ -348,12 +368,31 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
-    const { fecha, ingresos, eventTypeId, modo } = req.query
+    const { fecha, ingresos, eventTypeId, modo, broker, meta } = req.query
+    if (meta) {
+      try {
+        const settings = await loadAgendaSettings()
+        const users = await loadUsers()
+        const directBroker = broker ? findBrokerBySlug(users, broker) : null
+        return res.status(200).json({
+          settings: {
+            logo: settings.logo || null, logoSize: settings.logoSize || 'mediano', titulo: settings.titulo || 'Reunión de asesoría',
+            subtitulo: settings.subtitulo || 'Agenda', descripcion: settings.descripcion || '', colorPrimario: settings.colorPrimario || '#2563EB',
+            duracionLabel: settings.duracionLabel || '1 hora', empresa: settings.empresa || 'Rabbitts Capital', timezone: settings.timezone || DEFAULT_TZ
+          },
+          eventTypes: (settings.eventTypes || []).filter(e => e.activo !== false),
+          broker: directBroker ? publicUser(directBroker) : null
+        })
+      } catch(err) {
+        console.error('[booking] meta error:', err)
+        return res.status(500).json({ error: err.message })
+      }
+    }
     if (!fecha) return res.status(400).json({ error:'fecha required', slots:[] })
     try {
-      const data = await getAvailability({ fecha, ingresos, eventTypeId, modoOverride: modo })
+      const data = await getAvailability({ fecha, ingresos, eventTypeId, modoOverride: modo, brokerSlug: broker })
       return res.status(200).json({
-        slots: data.slots.map(s => ({ time:s.time, timestamp:s.timestamp, availableMembers:s.availableMembers, mode:s.mode, memberIds:s.memberIds })),
+        slots: data.slots.map(s => ({ time:s.time, timestamp:s.timestamp, availableMembers:s.availableMembers, mode:s.mode, memberIds:s.memberIds, broker:s.broker || null })),
         eventType: { id:data.eventType.id, nombre:data.eventType.nombre, duracion:data.eventType.duracion, modo:data.modo },
         brokers: Object.keys(data.availabilityByMember).length
       })
@@ -364,17 +403,18 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const { nombre, telefono, email, ingresos, fecha, hora, brokerId, eventTypeId, modo } = req.body || {}
+    const { nombre, telefono, email, ingresos, fecha, hora, brokerId, brokerSlug, eventTypeId, modo, notas } = req.body || {}
     if (!nombre || !telefono || !fecha || !hora) return res.status(400).json({ error:'Faltan campos obligatorios' })
 
     try {
       // Recalcular justo antes de reservar para evitar double booking.
-      const data = await getAvailability({ fecha, ingresos, eventTypeId, modoOverride: modo })
+      const data = await getAvailability({ fecha, ingresos, eventTypeId, modoOverride: modo, brokerSlug, brokerId })
       const slot = data.slots.find(s => s.time === hora)
       if (!slot) return res.status(409).json({ error:'Horario ya no disponible. Elige otro horario.' })
 
       let assignedIds = []
-      if (brokerId && slot.memberIds.includes(brokerId)) assignedIds = [brokerId]
+      if (data.modo === 'direct') assignedIds = slot.memberIds
+      else if (brokerId && slot.memberIds.includes(brokerId)) assignedIds = [brokerId]
       else if (data.modo === 'collective') assignedIds = slot.memberIds
       else assignedIds = [await chooseRoundRobinMember(slot.memberIds, data.users)]
 
@@ -393,7 +433,7 @@ export default async function handler(req, res) {
       const leadData = {
         id: leadId, nombre, telefono: clientePhone, email: clienteEmail || '—', renta: rentaFmt,
         tag:'lead', stage:'agenda', assigned_to: organizer.id, fecha:new Date().toISOString(), calificacion:'—',
-        resumen:`Agendado online. Evento: ${data.eventType.nombre}. Reunión: ${fecha} ${hora}. Equipo: ${assignedIds.map(id=>byId[id]?.name).filter(Boolean).join(', ')}.`
+        resumen:`Agendado online. Evento: ${data.eventType.nombre}. Reunión: ${fecha} ${hora}. Equipo: ${assignedIds.map(id=>byId[id]?.name).filter(Boolean).join(', ')}.${notas ? ' Nota: '+notas : ''}`
       }
       const leadResult = await sbPost('crm_leads', {
         ...leadData,
