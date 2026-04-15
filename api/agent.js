@@ -7,6 +7,55 @@ const clean = (v = '') => String(v ?? '').trim()
 const normalize = (v = '') => clean(v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 const nowIso = () => new Date().toISOString()
 
+const DEFAULT_BLOCKED_PHRASES = [
+  'alta demanda',
+  'mucha demanda',
+  'demanda alta',
+  'estoy con alta demanda',
+  'estamos con alta demanda',
+  'no estoy disponible',
+  'no tengo disponibilidad',
+  'responderé después',
+  'te responderé después',
+  'te responderé más tarde',
+  'te contesto más tarde',
+  'en cuanto pueda',
+  'cuando esté disponible',
+  'soy una ia',
+  'soy un modelo de lenguaje',
+  'como modelo de lenguaje',
+  'no puedo responder ahora',
+  'no puedo atender ahora'
+]
+
+function baseActiveFallback(iaConfig = {}) {
+  const name = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Rabito') || 'Rabito'
+  return `${name} por acá. Cuéntame qué necesitas y te ayudo de inmediato.`
+}
+
+function looksUnavailable(text = '') {
+  const n = normalize(text)
+  return /(alta demanda|mucha demanda|demanda alta|no estoy disponible|no tengo disponibilidad|respondere despues|respondere mas tarde|contesto mas tarde|cuando este disponible|no puedo responder ahora|no puedo atender ahora|soy una ia|modelo de lenguaje)/i.test(n)
+}
+
+function buildTrace({ panel = '', agenda = '', knowledge = {}, training = {}, iaConfig = {}, debug = false } = {}) {
+  const hardRules = flatten([iaConfig.reglasDuras, iaConfig.reglasDerivacion, iaConfig.reglasRevision, iaConfig.reglasRabito, iaConfig.instrucciones])
+  const derivationAllowedByHardRules = /humano|ejecutivo|asesor|derivar|requiere_revision|requiere revision/i.test(hardRules)
+  const chunksUsed = (knowledge.used || []).map(x => ({ docName: x.title || x.docName || 'Conocimiento', title: x.title || x.docName || 'Conocimiento', score: x.score || x.s || 0 }))
+  const feedbackUsed = (training.used || []).map(x => ({ ...x, score: x.score || x.s || 0 }))
+  const trace = {
+    panelLoaded: Boolean(clean(panel)),
+    agendaConfigured: Boolean(clean(agenda)),
+    chunksAvailable: (knowledge.used || []).length,
+    chunksUsed,
+    feedbackUsed,
+    memoryLoaded: true,
+    derivationAllowedByHardRules
+  }
+  return debug ? trace : { derivationAllowedByHardRules }
+}
+
+
 function getSupabase() {
   const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
   const key = clean(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
@@ -253,7 +302,8 @@ function panelText(iaConfig = {}) {
 
 function blockedPhrases(iaConfig = {}) {
   const raw = flatten([iaConfig.frasesProhibidas, iaConfig.noDecir, iaConfig.blockedPhrases, iaConfig.reglasDuras])
-  return raw.split('\n').map(clean).filter(x => x.length >= 4 && x.length <= 180)
+  const fromPanel = raw.split('\n').map(clean).filter(x => x.length >= 4 && x.length <= 180)
+  return [...new Set([...DEFAULT_BLOCKED_PHRASES, ...fromPanel])]
 }
 
 function cleanOutput(reply = '', iaConfig = {}) {
@@ -266,6 +316,7 @@ function cleanOutput(reply = '', iaConfig = {}) {
     out = out.replace(re, '')
   }
   out = out.replace(/\s{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  if (!out || looksUnavailable(out)) out = baseActiveFallback(iaConfig)
   const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 700) || 700
   if (out.length > max) out = out.slice(0, Math.max(160, max - 20)).replace(/\s+\S*$/, '') + '...'
   return out
@@ -310,8 +361,9 @@ ${x.improved}`) }))
 
   const scripted = clean(iaConfig.guion || iaConfig.pasosRabito || iaConfig.procesoVenta || '')
   const offer = clean(iaConfig.oferta || iaConfig.productosRabito || iaConfig.productos || iaConfig.servicios || '')
-  // No usar frases genéricas de relleno desde el código. Si se necesita fallback, debe venir del Panel IA o del entrenamiento.
-  return ''
+  if (scripted || offer) return baseActiveFallback(iaConfig)
+  // Fallback operativo: evita que WhatsApp quede sin respuesta cuando falta API key o el modelo falla.
+  return baseActiveFallback(iaConfig)
 }
 
 function validStatus(status = '', iaConfig = {}) {
@@ -344,26 +396,33 @@ export async function generateAgentResponse({
   const searchQuery = `${input}\n${historyText}\n${leadText}`.slice(0, 12000)
   const knowledge = await readKnowledge(db, searchQuery, settings)
   const training = await readTraining(db, searchQuery, settings)
+  const agenda = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.urlAgenda || iaConfig.calendlyLink || '')
+  const traceBase = buildTrace({ panel, agenda, knowledge, training, iaConfig, debug })
   const direct = directTrainingReply(training, input, iaConfig)
 
   if (direct) {
-    return { reply: direct, action: 'conversando', leadUpdate: {}, statusUpdate: '', trace: { directTraining: true, trainingUsed: training.used } }
+    return { reply: direct, action: 'conversando', leadUpdate: {}, statusUpdate: '', trace: debug ? { ...traceBase, directTraining: true, trainingUsed: training.used } : traceBase }
   }
 
   const ANTHROPIC_KEY = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.CLAUDE_API_KEY)
   if (!ANTHROPIC_KEY) {
     const fallback = cleanOutput(getFallback(iaConfig, training, input), iaConfig)
     console.error('[AGENT] missing Anthropic key')
-    return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '', trace: { missingKey: true, trainingCount: training.items.length } }
+    return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '', trace: debug ? { ...traceBase, missingKey: true, trainingCount: training.items.length } : traceBase }
   }
 
   const agentName = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Asistente')
-  const agenda = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.urlAgenda || iaConfig.calendlyLink || '')
 
   const system = `Eres ${agentName}. Eres un agente comercial genérico.
 
 REGLA CENTRAL:
 No tienes negocio, producto, guion ni oferta propia en el código. Solo puedes vender, explicar y orientar usando lo que está en el PANEL IA, CONOCIMIENTO, DOCUMENTOS y APRENDIZAJES.
+
+DISPONIBILIDAD Y ESTILO HUMANO:
+- Estás disponible para responder ahora. Nunca digas que hay alta demanda, que responderás después, que no tienes disponibilidad o que estás saturado.
+- No te presentes como IA, bot, modelo ni asistente artificial, salvo que el panel lo pida expresamente.
+- Si no tienes un dato, no bloquees la conversación: reconoce el límite en una frase y haz una sola pregunta útil o deriva al siguiente paso definido.
+- Usa mensajes cortos de WhatsApp, naturales, sin sonar robótico.
 
 PANEL IA:
 ${panel || 'Panel IA sin información suficiente.'}
@@ -388,6 +447,7 @@ INSTRUCCIONES:
 - Si el cliente ya entregó lo necesario según el panel, avanza al siguiente paso definido en el panel.
 - Si corresponde agendar y hay link de agenda, entrega el link.
 - No inventes precios, condiciones, promesas ni datos que no estén en el conocimiento.
+- Prohibido decir “alta demanda”, “no estoy disponible”, “responderé después” o frases similares.
 - Solo deriva a humano o revisión si las reglas duras del panel lo indican explícitamente.
 - Devuelve SOLO JSON válido, sin markdown:
 {"reply":"mensaje visible al cliente","action":"conversando|calificado|agenda|sin_datos","statusUpdate":"activo|calificado|frio|no_interesado|","leadUpdate":{},"memoryUpdate":{},"escalateToHuman":false}`
@@ -444,8 +504,8 @@ INSTRUCCIONES:
         statusUpdate,
         leadUpdate: parsed.leadUpdate || {},
         memoryUpdate: parsed.memoryUpdate || {},
-        escalateToHuman: parsed.escalateToHuman === true && /humano|ejecutivo|asesor|derivar/i.test(flatten([iaConfig.reglasDuras, iaConfig.reglasDerivacion])),
-        trace: debug ? { model, knowledgeUsed: knowledge.used, trainingUsed: training.used } : undefined
+        escalateToHuman: parsed.escalateToHuman === true && traceBase.derivationAllowedByHardRules === true,
+        trace: debug ? { ...traceBase, model, knowledgeUsed: knowledge.used, trainingUsed: training.used } : traceBase
       }
     } catch (e) {
       lastError = e.message
@@ -460,7 +520,7 @@ INSTRUCCIONES:
     statusUpdate: '',
     leadUpdate: {},
     memoryUpdate: {},
-    trace: { fallback: true, error: lastError, trainingCount: training.items.length, knowledgeCount: knowledge.used.length }
+    trace: debug ? { ...traceBase, fallback: true, error: lastError, trainingCount: training.items.length, knowledgeCount: knowledge.used.length } : traceBase
   }
 }
 
