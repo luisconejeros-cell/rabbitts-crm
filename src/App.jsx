@@ -219,68 +219,95 @@ const Modal = ({title, onClose, children, wide=false}) => {
 }
 
 // ─── Agenda Pública (no requiere login) ──────────────────────────────────────
-function AgendaPublicaView({settings={}}) {
+const bookingSlug = (txt='') => String(txt||'')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'broker'
+
+function AgendaPublicaView({settings={}, brokerSlug=''}) {
   const LOGO_SIZES = {pequeno: 36, mediano: 56, grande: 88}
-  const S = {
-    logo: settings.logo || null,
-    logoSize: LOGO_SIZES[settings.logoSize] || 56,
-    titulo: settings.titulo || 'Reunión de Asesoría Inmobiliaria',
-    subtitulo: settings.subtitulo || 'Agenda Rabbitts',
-    descripcion: settings.descripcion || 'Revisaremos tu situación financiera y objetivos para diseñar un plan de inversión inmobiliaria a tu medida.',
-    colorPrimario: settings.colorPrimario || '#2563EB',
-    duracionLabel: settings.duracionLabel || '1 hora',
-    empresa: settings.empresa || 'Rabbitts Capital',
-  }
   const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
   const DIAS_H = ['DOM.','LUN.','MAR.','MIÉ.','JUE.','VIE.','SÁB.']
 
-  const [step, setStep] = React.useState(1) // 1=cal+slots, 2=form, 3=success
+  const [remote, setRemote] = React.useState({settings:null, broker:null, eventTypes:[]})
+  const [step, setStep] = React.useState(1)
   const [curDate, setCurDate] = React.useState(new Date())
   const [selDate, setSelDate] = React.useState(null)
   const [selSlot, setSelSlot] = React.useState(null)
   const [slots, setSlots] = React.useState([])
   const [loadingSlots, setLoadingSlots] = React.useState(false)
+  const [eventTypeId, setEventTypeId] = React.useState('')
   const [form, setForm] = React.useState({nombre:'',email:'',telefono:'',ingresos:'',notas:''})
   const [confirming, setConfirming] = React.useState(false)
   const [result, setResult] = React.useState(null)
 
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const today = new Date(); today.setHours(0,0,0,0)
-  const isMobile = window.innerWidth < 768
+
+  React.useEffect(()=>{
+    let alive = true
+    ;(async()=>{
+      try {
+        const qs = new URLSearchParams({meta:'1'})
+        if (brokerSlug) qs.set('broker', brokerSlug)
+        const res = await fetch(`/api/booking?${qs.toString()}`)
+        const data = await res.json()
+        if (!alive) return
+        setRemote(data || {})
+        const firstActive = (data?.eventTypes || []).find(e=>e.activo !== false) || (data?.eventTypes || [])[0]
+        if (firstActive?.id) setEventTypeId(firstActive.id)
+      } catch(_) {}
+    })()
+    return ()=>{ alive = false }
+  }, [brokerSlug])
+
+  const mergedSettings = {...settings, ...(remote.settings||{})}
+  const broker = remote.broker || null
+  const eventTypes = (remote.eventTypes || mergedSettings.eventTypes || []).filter(e=>e.activo !== false)
+  const currentEvent = eventTypes.find(e=>e.id===eventTypeId) || eventTypes[0] || null
+  const S = {
+    logo: mergedSettings.logo || null,
+    logoSize: LOGO_SIZES[mergedSettings.logoSize] || 56,
+    titulo: broker ? (currentEvent?.nombre || 'Agenda una reunión') : (mergedSettings.titulo || 'Reunión de asesoría'),
+    subtitulo: broker ? `Agenda directa con ${broker.name}` : (mergedSettings.subtitulo || 'Agenda'),
+    descripcion: broker
+      ? (currentEvent?.descripcion || `Elige un horario disponible en la agenda de ${broker.name}.`)
+      : (mergedSettings.descripcion || 'Elige un horario disponible para coordinar una reunión.'),
+    colorPrimario: mergedSettings.colorPrimario || '#2563EB',
+    duracionLabel: currentEvent?.duracion ? `${currentEvent.duracion} min` : (mergedSettings.duracionLabel || '1 hora'),
+    empresa: mergedSettings.empresa || 'Rabbitts Capital',
+  }
 
   const loadSlots = async (dateStr) => {
     setLoadingSlots(true); setSlots([])
     try {
-      const res = await fetch(`/api/booking?fecha=${dateStr}&ingresos=${form.ingresos||1500000}`)
+      const qs = new URLSearchParams({fecha:dateStr, ingresos:String(form.ingresos||1500000)})
+      if (eventTypeId) qs.set('eventTypeId', eventTypeId)
+      if (brokerSlug) qs.set('broker', brokerSlug)
+      const res = await fetch(`/api/booking?${qs.toString()}`)
       const data = await res.json()
       setSlots(data.slots || [])
     } catch(e) { setSlots([]) }
     setLoadingSlots(false)
   }
 
-  const selectDate = (dateStr) => {
-    setSelDate(dateStr); setSelSlot(null)
-    loadSlots(dateStr)
-  }
+  React.useEffect(()=>{ if (selDate) loadSlots(selDate) }, [eventTypeId])
+  const selectDate = (dateStr) => { setSelDate(dateStr); setSelSlot(null); loadSlots(dateStr) }
 
   const confirmar = async () => {
-    if (!selSlot || !form.nombre || !form.telefono || !form.ingresos) return
+    if (!selSlot || !form.nombre || !form.telefono) return
     setConfirming(true)
     try {
       const res = await fetch('/api/booking', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
-          nombre: form.nombre,
-          telefono: form.telefono,
-          email: form.email || '',
-          ingresos: form.ingresos,
-          fecha: selDate,
-          hora: selSlot.time,
-          brokerId: selSlot.broker.id
+          nombre: form.nombre, telefono: form.telefono, email: form.email || '', ingresos: form.ingresos || '', notas: form.notas || '',
+          fecha: selDate, hora: selSlot.time, brokerId: selSlot.broker?.id || '', brokerSlug: brokerSlug || '', eventTypeId: eventTypeId || currentEvent?.id || ''
         })
       })
       const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'No se pudo confirmar')
       setResult(data); setStep(3)
-    } catch(e) { alert('Error al confirmar. Intenta de nuevo.') }
+    } catch(e) { alert(e.message || 'Error al confirmar. Intenta de nuevo.') }
     setConfirming(false)
   }
 
@@ -297,254 +324,34 @@ function AgendaPublicaView({settings={}}) {
       const isPast = date < today
       const isSel = selDate===ds
       const isToday = date.getTime()===today.getTime()
-      cells.push(
-        <button key={d} disabled={isPast} onClick={()=>selectDate(ds)}
-          style={{display:'flex',alignItems:'center',justifyContent:'center',width:36,height:36,margin:'0 auto',
-            borderRadius:'50%',border:'none',cursor:isPast?'default':'pointer',
-            fontFamily:'inherit',fontSize:14,fontWeight:isSel?700:400,
-            background:isSel?S.colorPrimario:isToday?S.colorPrimario+'22':'transparent',
-            color:isPast?'#D1D5DB':isSel?'#fff':isToday?S.colorPrimario:'#1a1a1a',
-            transition:'all .1s'}}>
-          {d}
-          {isToday&&!isSel&&<span style={{position:'absolute',bottom:2,left:'50%',transform:'translateX(-50%)',width:4,height:4,borderRadius:'50%',background:S.colorPrimario}}/>}
-        </button>
-      )
+      cells.push(<button key={d} disabled={isPast} onClick={()=>selectDate(ds)} style={{display:'flex',alignItems:'center',justifyContent:'center',width:38,height:38,margin:'0 auto',position:'relative',borderRadius:'50%',border:'none',cursor:isPast?'default':'pointer',fontFamily:'inherit',fontSize:14,fontWeight:isSel?800:500,background:isSel?S.colorPrimario:isToday?S.colorPrimario+'18':'transparent',color:isPast?'#D1D5DB':isSel?'#fff':isToday?S.colorPrimario:'#0F172A',transition:'all .12s'}}>{d}{isToday&&!isSel&&<span style={{position:'absolute',bottom:3,left:'50%',transform:'translateX(-50%)',width:4,height:4,borderRadius:'50%',background:S.colorPrimario}}/>}</button>)
     }
     return cells
   }
 
   const selDateFmt = selDate ? new Date(selDate+'T12:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) : ''
-
-  // Styles — UI typography
-  const page = {
-    fontFamily:"'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
-    minHeight:'100vh',background:'#fff',
-    WebkitFontSmoothing:'antialiased',MozOsxFontSmoothing:'grayscale',
-    letterSpacing:'-0.01em'
-  }
-  const leftPanel = {
-    width:isMobile?'100%':300,
-    borderRight:isMobile?'none':'1px solid #eff0f3',
-    padding:isMobile?'24px 20px':'36px 28px',
-    flexShrink:0,
-    background:'#FAFAFA'
-  }
+  const page = {fontFamily:"'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",minHeight:'100vh',background:'#F8FAFC',WebkitFontSmoothing:'antialiased',letterSpacing:'-0.01em'}
+  const leftPanel = {width:isMobile?'100%':320,borderRight:isMobile?'none':'1px solid #E2E8F0',padding:isMobile?'24px 20px':'36px 30px',flexShrink:0,background:'#fff'}
   const rightPanel = {flex:1,padding:isMobile?'20px 16px':'36px 40px',background:'#fff'}
-  const inp = {
-    width:'100%',padding:'11px 14px',borderRadius:10,
-    border:'1.5px solid #e5e7eb',fontSize:15,fontFamily:'inherit',
-    color:'#0F172A',outline:'none',WebkitAppearance:'none',
-    boxSizing:'border-box',marginTop:6,
-    transition:'border-color .15s',letterSpacing:'-0.01em'
-  }
-  const btnBlue = {
-    padding:'13px 28px',borderRadius:99,border:'none',
-    fontSize:15,fontWeight:700,cursor:'pointer',
-    background:S.colorPrimario,color:'#fff',
-    fontFamily:'inherit',letterSpacing:'-0.01em'
-  }
+  const inp = {width:'100%',padding:'12px 14px',borderRadius:12,border:'1.5px solid #E5E7EB',fontSize:15,fontFamily:'inherit',color:'#0F172A',outline:'none',boxSizing:'border-box',marginTop:6,letterSpacing:'-0.01em'}
+  const btnBlue = {padding:'13px 28px',borderRadius:999,border:'none',fontSize:15,fontWeight:800,cursor:'pointer',background:S.colorPrimario,color:'#fff',fontFamily:'inherit',letterSpacing:'-0.01em'}
 
   return (
     <div style={page}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');`}</style>
-      <div style={{maxWidth:900,margin:'0 auto',display:'flex',flexDirection:isMobile?'column':'row',minHeight:isMobile?'100vh':'auto',border:'1px solid #E2E8F0',borderRadius:isMobile?0:16,marginTop:isMobile?0:40,marginBottom:isMobile?0:40,boxShadow:'0 4px 32px rgba(0,0,0,0.08)',overflow:'hidden'}}>
-
-        {/* LEFT PANEL — estilo agenda */}
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');`}</style>
+      <div style={{maxWidth:980,margin:'0 auto',display:'flex',flexDirection:isMobile?'column':'row',minHeight:isMobile?'100vh':'auto',border:'1px solid #E2E8F0',borderRadius:isMobile?0:22,marginTop:isMobile?0:42,marginBottom:isMobile?0:42,boxShadow:'0 24px 80px rgba(15,23,42,0.10)',overflow:'hidden',background:'#fff'}}>
         <div style={leftPanel}>
-
-          {/* Logo */}
-          <div style={{marginBottom:24}}>
-            {S.logo ? (
-              <img
-                src={S.logo}
-                alt={S.empresa}
-                style={{
-                  height:S.logoSize,
-                  maxWidth:'100%',
-                  objectFit:'contain',
-                  objectPosition:'left center',
-                  display:'block',
-                  marginBottom:14
-                }}
-              />
-            ) : (
-              <img src="/icon-192.png" alt={S.empresa}
-                style={{
-                  width:S.logoSize, height:S.logoSize,
-                  borderRadius:Math.round(S.logoSize*0.22),
-                  objectFit:'cover', display:'block', marginBottom:14,
-                  boxShadow:'0 2px 8px rgba(0,0,0,0.10)'
-                }}/>
-            )}
-            <div style={{fontSize:12,fontWeight:600,color:'#94a3b8',letterSpacing:'0.06em',textTransform:'uppercase'}}>
-              {S.empresa}
-            </div>
-          </div>
-
-          {/* Título del evento */}
-          <div style={{fontSize:24,fontWeight:800,color:'#0F172A',marginBottom:20,lineHeight:1.2,letterSpacing:'-0.5px'}}>
-            {S.titulo}
-          </div>
-
-          {/* Meta info */}
-          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:24}}>
-            <div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:'#374151'}}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              <span style={{fontWeight:500}}>{S.duracionLabel}</span>
-            </div>
-            <div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:'#374151'}}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 10l-4 4l6 6l4-16-18 7l4 2l2 6z"/></svg>
-              <span style={{fontWeight:500}}>Google Meet</span>
-            </div>
-            {step===2&&selDate&&selSlot&&(
-              <div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:S.colorPrimario,fontWeight:600}}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={S.colorPrimario} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                <span style={{textTransform:'capitalize'}}>{selSlot.time} · {selDateFmt}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Separador */}
-          <div style={{height:1,background:'#f1f5f9',marginBottom:20}}/>
-
-          {/* Descripción */}
-          <div style={{fontSize:13,color:'#64748B',lineHeight:1.7,fontWeight:400}}>
-            {S.descripcion}
-          </div>
-
-          <div style={{marginTop:28,display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#94a3b8'}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            Santiago, Chile
-          </div>
+          <div style={{marginBottom:24}}>{S.logo ? <img src={S.logo} alt={S.empresa} style={{height:S.logoSize,maxWidth:'100%',objectFit:'contain',objectPosition:'left center',display:'block',marginBottom:14}}/> : <img src="/icon-192.png" alt={S.empresa} style={{width:S.logoSize,height:S.logoSize,borderRadius:18,objectFit:'cover',display:'block',marginBottom:14,boxShadow:'0 10px 30px rgba(37,99,235,.15)'}}/>}<div style={{fontSize:12,fontWeight:900,color:'#94A3B8',letterSpacing:'0.08em',textTransform:'uppercase'}}>{S.empresa}</div></div>
+          {broker && <div style={{display:'flex',gap:10,alignItems:'center',padding:12,border:'1px solid #E2E8F0',background:'#F8FAFC',borderRadius:16,marginBottom:18}}><AV name={broker.name} size={42} src={broker.avatar_url||null}/><div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:900,color:'#0F172A'}}>{broker.name}</div><div style={{fontSize:12,color:'#64748B'}}>Agenda individual</div></div></div>}
+          <div style={{fontSize:25,fontWeight:900,color:'#0F172A',marginBottom:14,lineHeight:1.15,letterSpacing:'-0.7px'}}>{S.titulo}</div>
+          <div style={{fontSize:14,color:'#64748B',lineHeight:1.65,marginBottom:22}}>{S.descripcion}</div>
+          <div style={{display:'grid',gap:10,marginBottom:22}}><div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:'#334155',fontWeight:650}}>⏱️ {S.duracionLabel}</div><div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:'#334155',fontWeight:650}}>🎥 Google Meet</div><div style={{display:'flex',alignItems:'center',gap:10,fontSize:14,color:'#334155',fontWeight:650}}>🌎 Santiago, Chile</div></div>
+          {eventTypes.length > 1 && <div style={{padding:12,border:'1px solid #E2E8F0',borderRadius:14,background:'#F8FAFC'}}><div style={{fontSize:12,fontWeight:900,color:'#334155',marginBottom:8}}>Tipo de reunión</div><select value={eventTypeId} onChange={e=>{setEventTypeId(e.target.value); setSelSlot(null)}} style={{...inp,marginTop:0,fontSize:13,padding:'10px 12px'}}>{eventTypes.map(e=><option key={e.id} value={e.id}>{e.nombre} · {e.duracion || 60} min</option>)}</select></div>}
         </div>
-
-        {/* RIGHT PANEL */}
         <div style={rightPanel}>
-
-          {/* STEP 1 — Calendar + Slots */}
-          {step===1&&(
-            <div>
-              <div style={{fontSize:20,fontWeight:700,color:'#0F172A',marginBottom:24,letterSpacing:'-0.3px'}}>Selecciona una fecha y hora</div>
-              <div style={{display:'flex',flexDirection:isMobile?'column':'row',gap:24}}>
-                {/* Calendar */}
-                <div style={{flex:1}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
-                    <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))}
-                      style={{width:32,height:32,borderRadius:8,border:'1px solid #E2E8F0',cursor:'pointer',fontSize:16,background:'#fff',color:'#374151',display:'flex',alignItems:'center',justifyContent:'center'}}>‹</button>
-                    <span style={{fontWeight:700,fontSize:15,color:'#0F172A',letterSpacing:'-0.3px'}}>{MESES[curDate.getMonth()]} {curDate.getFullYear()}</span>
-                    <button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()+1,1))}
-                      style={{width:32,height:32,borderRadius:8,border:'1px solid #E2E8F0',cursor:'pointer',fontSize:16,background:'#fff',color:'#374151',display:'flex',alignItems:'center',justifyContent:'center'}}>›</button>
-                  </div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,marginBottom:8}}>
-                    {DIAS_H.map(d=><div key={d} style={{fontSize:10,fontWeight:700,color:'#9ca3af',textAlign:'center',padding:'4px 0'}}>{d}</div>)}
-                  </div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2}}>{renderCalDays()}</div>
-                </div>
-
-                {/* Slots */}
-                {selDate&&(
-                  <div style={{width:isMobile?'100%':200,flexShrink:0}}>
-                    <div style={{fontWeight:600,fontSize:14,color:'#0F172A',marginBottom:12,textTransform:'capitalize'}}>{selDateFmt}</div>
-                    {loadingSlots&&<div style={{color:'#9ca3af',fontSize:13,textAlign:'center',padding:16}}>Cargando...</div>}
-                    {!loadingSlots&&slots.length===0&&<div style={{color:'#9ca3af',fontSize:13,textAlign:'center',padding:'16px 0'}}>Sin horarios disponibles este día</div>}
-                    <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:400,overflowY:'auto'}}>
-                      {slots.map((s,i)=>(
-                        selSlot?.time===s.time ? (
-                          <div key={i} style={{display:'flex',gap:8}}>
-                            <button style={{flex:1,padding:'11px 8px',borderRadius:10,
-                              border:`2px solid ${S.colorPrimario}`,
-                              background:S.colorPrimario+'18',color:S.colorPrimario,
-                              cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',letterSpacing:'-0.01em'}}>
-                              {s.time}
-                            </button>
-                            <button onClick={()=>setStep(2)}
-                              style={{padding:'11px 18px',borderRadius:10,border:'none',background:S.colorPrimario,color:'#fff',
-                                cursor:'pointer',fontSize:14,fontWeight:700,fontFamily:'inherit',whiteSpace:'nowrap',letterSpacing:'-0.01em'}}>
-                              Siguiente →
-                            </button>
-                          </div>
-                        ) : (
-                          <button key={i} onClick={()=>setSelSlot(s)}
-                            style={{width:'100%',padding:'11px 8px',borderRadius:10,
-                              border:`1.5px solid #E2E8F0`,background:'#fff',
-                              color:'#374151',cursor:'pointer',fontSize:14,fontWeight:600,
-                              fontFamily:'inherit',transition:'all .1s',letterSpacing:'-0.01em'}}>
-                            {s.time}
-                          </button>
-                        )
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* STEP 2 — Form */}
-          {step===2&&(
-            <div style={{maxWidth:480}}>
-              <button onClick={()=>setStep(1)} style={{background:'none',border:'none',cursor:'pointer',color:S.colorPrimario,fontSize:14,fontWeight:600,marginBottom:24,fontFamily:'inherit',display:'flex',alignItems:'center',gap:6,padding:0,letterSpacing:'-0.01em'}}>
-                ← Volver
-              </button>
-              <div style={{fontSize:20,fontWeight:700,color:'#0F172A',marginBottom:24,letterSpacing:'-0.3px'}}>Introduzca los detalles</div>
-              <div style={{marginBottom:16}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>Nombre completo *</label>
-                <input style={inp} value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} placeholder=""/>
-              </div>
-              <div style={{marginBottom:16}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>Correo electrónico</label>
-                <input style={inp} type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder=""/>
-              </div>
-              <div style={{marginBottom:16}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>Teléfono WhatsApp *</label>
-                <div style={{display:'flex',gap:0,marginTop:6}}>
-                  <div style={{padding:'10px 12px',border:'1.5px solid #e5e7eb',borderRight:'none',borderRadius:'8px 0 0 8px',fontSize:14,background:'#f9fafb',display:'flex',alignItems:'center',gap:4}}>
-                    🇨🇱 +56
-                  </div>
-                  <input style={{...inp,marginTop:0,borderRadius:'0 8px 8px 0',flex:1}} value={form.telefono} onChange={e=>setForm(f=>({...f,telefono:e.target.value}))} placeholder="9 XXXX XXXX"/>
-                </div>
-              </div>
-              <div style={{marginBottom:16}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>Ingresos líquidos mensuales *</label>
-                <select style={inp} value={form.ingresos} onChange={e=>setForm(f=>({...f,ingresos:e.target.value}))}>
-                  <option value="">Selecciona tu rango</option>
-                  <option value="1500000">$1.500.000 – $2.500.000</option>
-                  <option value="2500000">$2.500.000 – $5.000.000</option>
-                  <option value="5000000">$5.000.000 o más</option>
-                </select>
-              </div>
-              <div style={{marginBottom:28}}>
-                <label style={{fontSize:13,fontWeight:600,color:'#374151',letterSpacing:'-0.01em'}}>¿Algo que debamos saber antes de la reunión?</label>
-                <textarea style={{...inp,minHeight:80,resize:'none'}} value={form.notas} onChange={e=>setForm(f=>({...f,notas:e.target.value}))}/>
-              </div>
-              <div style={{fontSize:12,color:'#94a3b8',marginBottom:16}}>
-                Al continuar, aceptas nuestra política de privacidad y términos de servicio.
-              </div>
-              <button onClick={confirmar} disabled={confirming||!form.nombre||!form.telefono||!form.ingresos}
-                style={{...btnBlue,width:'100%',opacity:confirming||!form.nombre||!form.telefono||!form.ingresos?0.5:1}}>
-                {confirming?'Confirmando...':'Programar reunión'}
-              </button>
-            </div>
-          )}
-
-          {/* STEP 3 — Success */}
-          {step===3&&(
-            <div style={{textAlign:'center',padding:'60px 24px'}}>
-              <div style={{width:72,height:72,borderRadius:'50%',background:'#DCFCE7',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 20px',fontSize:32}}>🎉</div>
-              <div style={{fontSize:24,fontWeight:800,color:'#0F172A',marginBottom:10,letterSpacing:'-0.5px'}}>¡Reunión confirmada!</div>
-              <div style={{fontSize:15,color:'#64748B',lineHeight:1.7,marginBottom:24,maxWidth:380,margin:'0 auto 24px'}}>
-                Tu reunión fue agendada para el <strong style={{color:'#0F172A',textTransform:'capitalize'}}>{selDateFmt}</strong> a las <strong style={{color:'#0F172A'}}>{selSlot?.time}</strong>.<br/>
-                Recibirás confirmación por WhatsApp.
-              </div>
-              {result?.meetLink&&(
-                <a href={result.meetLink} target="_blank" rel="noopener noreferrer"
-                  style={{display:'inline-flex',alignItems:'center',gap:8,padding:'13px 28px',borderRadius:99,
-                    background:'#1a73e8',color:'#fff',textDecoration:'none',fontWeight:700,fontSize:15,letterSpacing:'-0.01em'}}>
-                  🎥 Unirse a Google Meet
-                </a>
-              )}
-            </div>
-          )}
+          {step===1&&<div><div style={{fontSize:21,fontWeight:900,color:'#0F172A',marginBottom:24,letterSpacing:'-0.5px'}}>Selecciona fecha y hora</div><div style={{display:'flex',flexDirection:isMobile?'column':'row',gap:26}}><div style={{flex:1,minWidth:0}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}><button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))} style={{width:34,height:34,borderRadius:10,border:'1px solid #E2E8F0',cursor:'pointer',fontSize:18,background:'#fff',color:'#334155'}}>‹</button><span style={{fontWeight:900,fontSize:15,color:'#0F172A'}}>{MESES[curDate.getMonth()]} {curDate.getFullYear()}</span><button onClick={()=>setCurDate(d=>new Date(d.getFullYear(),d.getMonth()+1,1))} style={{width:34,height:34,borderRadius:10,border:'1px solid #E2E8F0',cursor:'pointer',fontSize:18,background:'#fff',color:'#334155'}}>›</button></div><div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4,marginBottom:8}}>{DIAS_H.map(d=><div key={d} style={{fontSize:10,fontWeight:900,color:'#94A3B8',textAlign:'center',padding:'4px 0'}}>{d}</div>)}</div><div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4}}>{renderCalDays()}</div></div>{selDate&&<div style={{width:isMobile?'100%':220,flexShrink:0}}><div style={{fontWeight:800,fontSize:14,color:'#0F172A',marginBottom:12,textTransform:'capitalize'}}>{selDateFmt}</div>{loadingSlots&&<div style={{color:'#94A3B8',fontSize:13,textAlign:'center',padding:18}}>Cargando horarios...</div>}{!loadingSlots&&slots.length===0&&<div style={{color:'#94A3B8',fontSize:13,textAlign:'center',padding:'18px 0'}}>Sin horarios disponibles</div>}<div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:420,overflowY:'auto'}}>{slots.map((s,i)=> selSlot?.time===s.time ? <div key={i} style={{display:'flex',gap:8}}><button style={{flex:1,padding:'12px 8px',borderRadius:12,border:`2px solid ${S.colorPrimario}`,background:S.colorPrimario+'18',color:S.colorPrimario,cursor:'pointer',fontSize:14,fontWeight:900,fontFamily:'inherit'}}>{s.time}</button><button onClick={()=>setStep(2)} style={{padding:'12px 16px',borderRadius:12,border:'none',background:S.colorPrimario,color:'#fff',cursor:'pointer',fontSize:14,fontWeight:900,fontFamily:'inherit',whiteSpace:'nowrap'}}>Siguiente</button></div> : <button key={i} onClick={()=>setSelSlot(s)} style={{width:'100%',padding:'12px 8px',borderRadius:12,border:'1.5px solid #E2E8F0',background:'#fff',color:'#334155',cursor:'pointer',fontSize:14,fontWeight:800,fontFamily:'inherit'}}>{s.time}</button>)}</div></div>}</div></div>}
+          {step===2&&<div style={{maxWidth:500}}><button onClick={()=>setStep(1)} style={{background:'none',border:'none',cursor:'pointer',color:S.colorPrimario,fontSize:14,fontWeight:800,marginBottom:24,fontFamily:'inherit',padding:0}}>← Volver</button><div style={{fontSize:21,fontWeight:900,color:'#0F172A',marginBottom:20}}>Datos para confirmar</div><div style={{display:'grid',gap:14}}><label style={{fontSize:13,fontWeight:800,color:'#334155'}}>Nombre completo *<input style={inp} value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))}/></label><label style={{fontSize:13,fontWeight:800,color:'#334155'}}>Correo electrónico<input style={inp} type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))}/></label><label style={{fontSize:13,fontWeight:800,color:'#334155'}}>Teléfono WhatsApp *<input style={inp} value={form.telefono} onChange={e=>setForm(f=>({...f,telefono:e.target.value}))} placeholder="+56 9 XXXX XXXX"/></label><label style={{fontSize:13,fontWeight:800,color:'#334155'}}>Dato de calificación opcional<select style={inp} value={form.ingresos} onChange={e=>setForm(f=>({...f,ingresos:e.target.value}))}><option value="">No indicar ahora</option><option value="1500000">$1.500.000 – $2.500.000</option><option value="2500000">$2.500.000 – $5.000.000</option><option value="5000000">$5.000.000 o más</option></select></label><label style={{fontSize:13,fontWeight:800,color:'#334155'}}>Comentario opcional<textarea style={{...inp,minHeight:84,resize:'none'}} value={form.notas} onChange={e=>setForm(f=>({...f,notas:e.target.value}))}/></label></div><button onClick={confirmar} disabled={confirming||!form.nombre||!form.telefono} style={{...btnBlue,width:'100%',marginTop:22,opacity:confirming||!form.nombre||!form.telefono?0.5:1}}>{confirming?'Confirmando...':'Programar reunión'}</button></div>}
+          {step===3&&<div style={{textAlign:'center',padding:'60px 24px'}}><div style={{width:76,height:76,borderRadius:'50%',background:'#DCFCE7',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 20px',fontSize:34}}>✓</div><div style={{fontSize:25,fontWeight:900,color:'#0F172A',marginBottom:10}}>Reunión confirmada</div><div style={{fontSize:15,color:'#64748B',lineHeight:1.7,marginBottom:24,maxWidth:420,margin:'0 auto 24px'}}>Tu reunión fue agendada para el <strong style={{color:'#0F172A',textTransform:'capitalize'}}>{selDateFmt}</strong> a las <strong style={{color:'#0F172A'}}>{selSlot?.time}</strong>. Recibirás la confirmación.</div>{result?.meetLink&&<a href={result.meetLink} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:8,padding:'13px 28px',borderRadius:999,background:'#1a73e8',color:'#fff',textDecoration:'none',fontWeight:900,fontSize:15}}>🎥 Unirse a Google Meet</a>}</div>}
         </div>
       </div>
     </div>
@@ -1663,9 +1470,12 @@ export default function App() {
             :              ['kanban','lista','mis comisiones','mi agenda','nuevo lead',                                                                   ...(mpVisible?['marketplace']:[]) ]
 
   // ── AGENDA PÚBLICA — no requiere login ─────────────────────────────────────
-  if (typeof window !== 'undefined' && window.location.pathname === '/agenda') {
+  if (typeof window !== 'undefined' && (window.location.pathname === '/agenda' || window.location.pathname.startsWith('/reservar/'))) {
     const savedSettings = JSON.parse(localStorage.getItem('rcrm_agenda_settings')||'{}')
-    return <AgendaPublicaView settings={savedSettings}/>
+    const brokerSlug = window.location.pathname.startsWith('/reservar/')
+      ? decodeURIComponent(window.location.pathname.replace('/reservar/','').split('/')[0] || '')
+      : ''
+    return <AgendaPublicaView settings={savedSettings} brokerSlug={brokerSlug}/>
   }
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
@@ -6738,7 +6548,7 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
   const [localConfigs, setLocalConfigs] = React.useState(() => {
     const map = {}
     todosAgentes.forEach(u => {
-      map[u.id] = u.agenda_config || {activa:false,enAgenda:false,peso:5,duracion:60,anticipacion:12,ingresos_categorias:['cualquiera'],dias:{}}
+      map[u.id] = u.agenda_config || {activa:false,enAgenda:false,peso:5,duracion:60,anticipacion:12,ingresos_categorias:['cualquiera'],dias:{},bookingSlug:''}
     })
     return map
   })
@@ -6774,7 +6584,8 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
     // Update users with merged agenda_config
     const updated = (users||[]).map(u => {
       if (u.role !== 'agent') return u
-      const cfg = {...(u.agenda_config||{}), ...localConfigs[u.id]}
+      const cfgRaw = {...(u.agenda_config||{}), ...localConfigs[u.id]}
+      const cfg = {...cfgRaw, bookingSlug: bookingSlug(cfgRaw.bookingSlug || u.name)}
       return {...u, agenda_config: cfg}
     })
     await saveUsers(updated)
@@ -6791,7 +6602,8 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
     setSaving(false)
   }
 
-  const agendaLink = 'https://crm.rabbittscapital.com/agenda'
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://crm.rabbittscapital.com'
+  const agendaLink = `${baseUrl}/agenda`
 
   const agendaTeams = Array.isArray(agendaSettings?.teams) && agendaSettings.teams.length
     ? agendaSettings.teams
@@ -6833,6 +6645,8 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
     const isOpen = editingId === u.id
     const cats = cfg.ingresos_categorias || ['cualquiera']
     const diasActivos = Object.entries(cfg.dias||{}).filter(([,d])=>d.activo).length
+    const directSlug = bookingSlug(cfg.bookingSlug || u.name)
+    const directUrl = `${baseUrl}/reservar/${directSlug}`
 
     return (
       <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden',
@@ -6847,6 +6661,7 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
               <div style={{fontSize:11,color:'#9ca3af',display:'flex',gap:6,flexWrap:'wrap',marginTop:1}}>
                 {u.google_tokens ? <span style={{color:'#14532d',fontWeight:600}}>✅ Calendar</span> : <span>❌ Sin Calendar</span>}
                 <span>· P:{cfg.peso||5} · {diasActivos}d · {cfg.duracion||60}min</span>
+                <span style={{color:B.primary,fontWeight:800}}>· /reservar/{directSlug}</span>
               </div>
             </div>
           </div>
@@ -6861,6 +6676,10 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
                   background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
               </button>
             </div>
+            <button onClick={()=>navigator.clipboard?.writeText(directUrl).then(()=>{setSavedMsg('Link copiado');setTimeout(()=>setSavedMsg(''),1500)})}
+              style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #BFDBFE',background:'#EFF6FF',color:B.primary,cursor:'pointer',fontWeight:800}}>
+              Copiar link
+            </button>
             {/* Remove from agenda */}
             <button onClick={()=>quitarBroker(u.id)}
               style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #fca5a5',
@@ -6904,6 +6723,16 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
                 </select>
               </div>
             </div>
+            <div style={{marginBottom:12,padding:'10px 12px',border:'1px solid #DBEAFE',background:'#EFF6FF',borderRadius:10}}>
+              <div style={{fontSize:11,fontWeight:900,color:B.primary,marginBottom:6}}>🔗 Link individual del broker</div>
+              <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                <span style={{fontSize:12,color:'#64748B'}}>{baseUrl}/reservar/</span>
+                <input value={cfg.bookingSlug || directSlug} onChange={e=>updConfig(u.id,'bookingSlug',bookingSlug(e.target.value))} style={{...sty.inp,flex:1,minWidth:180,padding:'7px 10px'}}/>
+                <a href={directUrl} target="_blank" rel="noopener noreferrer" style={{...sty.btnP,fontSize:11,textDecoration:'none',padding:'7px 10px'}}>Ver</a>
+              </div>
+              <div style={{fontSize:10,color:'#64748B',marginTop:6}}>Este link agenda solo con este broker, cruzando su disponibilidad + Google Calendar.</div>
+            </div>
+
             <div style={{marginBottom:10}}>
               <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:6}}>💰 Ingresos que atiende</div>
               <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -6954,6 +6783,21 @@ function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agenda
         </button>
       </div>
 
+      {/* Resumen ejecutivo */}
+      <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(4,1fr)',gap:10,marginBottom:16}}>
+        {[
+          {t:'Brokers activos',v:brokersEnAgenda.filter(u=>localConfigs[u.id]?.activa).length,sub:'reciben reuniones'},
+          {t:'Google Calendar',v:brokersEnAgenda.filter(u=>u.google_tokens).length,sub:'conectados'},
+          {t:'Links directos',v:brokersEnAgenda.length,sub:'por broker'},
+          {t:'Distribución',v:(agendaSettings?.distributionMode||'round_robin')==='collective'?'Colectivo':'Round Robin',sub:'modo principal'}
+        ].map((c,i)=>(
+          <div key={i} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:'14px 16px',boxShadow:'0 1px 3px rgba(15,23,42,.04)'}}>
+            <div style={{fontSize:11,fontWeight:900,color:'#94A3B8',textTransform:'uppercase',letterSpacing:'.06em'}}>{c.t}</div>
+            <div style={{fontSize:22,fontWeight:950,color:'#0F172A',marginTop:4}}>{c.v}</div>
+            <div style={{fontSize:12,color:B.mid,marginTop:2}}>{c.sub}</div>
+          </div>
+        ))}
+      </div>
       {/* Link público */}
       <div style={{background:B.light,border:'1px solid #BFDBFE',borderRadius:12,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
         <div style={{flex:1,minWidth:0}}>
@@ -7222,15 +7066,19 @@ function MiAgendaView({me, users, setUsers, saveUsers, supabase, dbReady}) {
     sab:{activo:false, desde:'10:00',hasta:'14:00'},
     dom:{activo:false, desde:'10:00',hasta:'14:00'},
   })
+  const [bookingSlugState, setBookingSlugState] = React.useState(existingConfig.bookingSlug || bookingSlug(myUser.name || me.name))
   const [saving, setSaving] = React.useState(false)
   const [saved, setSaved] = React.useState(false)
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://crm.rabbittscapital.com'
+  const directSlug = bookingSlug(bookingSlugState || myUser.name || me.name)
+  const directUrl = `${baseUrl}/reservar/${directSlug}`
 
   const updDia = (dk, field, val) => setDias(prev => ({...prev, [dk]: {...prev[dk], [field]: val}}))
 
   const save = async () => {
     setSaving(true)
     // Merge with existing admin config (don't overwrite peso, duracion, etc.)
-    const newConfig = { ...existingConfig, activa, dias }
+    const newConfig = { ...existingConfig, activa, dias, bookingSlug: directSlug }
     const updated = (users||[]).map(u => u.id===me.id ? {...u, agenda_config: newConfig} : u)
     await saveUsers(updated)
     setSaved(true)
@@ -7266,6 +7114,25 @@ function MiAgendaView({me, users, setUsers, saveUsers, supabase, dbReady}) {
           <div style={{position:'absolute',top:3,left:activa?24:3,width:20,height:20,borderRadius:'50%',
             background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
         </button>
+      </div>
+
+      {/* Link individual */}
+      <div style={{background:'#fff',border:'1px solid #DBEAFE',borderRadius:12,padding:'14px 16px',marginBottom:12}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
+          <div style={{flex:1,minWidth:220}}>
+            <div style={{fontWeight:800,fontSize:13,color:'#0F172A',marginBottom:4}}>🔗 Tu link personal de reservas</div>
+            <div style={{fontSize:12,color:B.mid,marginBottom:10}}>Compártelo para que los clientes agenden directo contigo, cruzando tu horario y Google Calendar.</div>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <span style={{fontSize:12,color:'#64748B'}}>{baseUrl}/reservar/</span>
+              <input value={bookingSlugState} onChange={e=>setBookingSlugState(bookingSlug(e.target.value))} style={{...sty.inp,width:isMobile?'100%':220,padding:'7px 10px',marginTop:0}}/>
+            </div>
+            <div style={{fontSize:12,color:'#0F172A',marginTop:8,wordBreak:'break-all',fontWeight:700}}>{directUrl}</div>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={()=>navigator.clipboard?.writeText(directUrl).then(()=>setSaved(true))} style={{...sty.btn,fontSize:12}}>Copiar</button>
+            <a href={directUrl} target="_blank" rel="noopener noreferrer" style={{...sty.btnP,fontSize:12,textDecoration:'none',padding:'8px 12px'}}>Ver</a>
+          </div>
+        </div>
       </div>
 
       {/* Schedule */}
