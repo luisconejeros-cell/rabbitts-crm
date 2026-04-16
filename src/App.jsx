@@ -2158,7 +2158,7 @@ export default function App() {
               </button>
             </div>
             <div id="kanban-scroll" style={{display:'flex',gap:10,overflowX:'auto',overflowY:'auto',alignItems:'flex-start',WebkitOverflowScrolling:'touch',scrollbarWidth:'thin',scrollbarColor:'#A8C0F0 #f0f4ff',height:'calc(100vh - '+(isMobile?'130px':'170px')+')',paddingBottom:8}}>
-              {(isOps ? stages.filter(s=>OPS_STAGES.includes(s.id)) : stages).map(st => {
+              {(isOps ? stages.filter(s=>OPS_STAGES.includes(s.id)) : isFinanzas ? stages.filter(s=>['firma','escritura','ganado'].includes(s.id)) : stages).map(st => {
                 const cols = (vL||[]).filter(l=>l.stage===st.id)
                 return (
                   <div key={st.id} style={{minWidth:200,flexShrink:0,display:'flex',flexDirection:'column'}}>
