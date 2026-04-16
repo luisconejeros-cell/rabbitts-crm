@@ -172,7 +172,13 @@ export async function generateAgentResponse({
   // Check if IA is active
   if (iaConfig.activo === false) return { reply: '', action: 'ia_off', leadUpdate: {}, statusUpdate: '' }
 
-  const ANTHROPIC_KEY = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || '')
+  const ANTHROPIC_KEY = clean(
+    process.env.ANTHROPIC_KEY ||
+    process.env.VITE_ANTHROPIC_KEY ||
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.CLAUDE_API_KEY ||
+    ''
+  )
   const agentName = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Rabito')
   const agenda = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.calendlyLink || '')
 
@@ -239,7 +245,8 @@ Responde SOLO con JSON válido:
 
   // ── No API key: fallback ─────────────────────────────────────────────────
   if (!ANTHROPIC_KEY) {
-    console.error('[AGENT] No Anthropic API key found')
+    console.error('[AGENT] CRITICAL: No Anthropic API key found. Check env vars: ANTHROPIC_KEY, VITE_ANTHROPIC_KEY, ANTHROPIC_API_KEY')
+    console.error('[AGENT] Available env keys:', Object.keys(process.env).filter(k => k.includes('ANTHROP') || k.includes('CLAUDE')).join(', ') || 'none found')
     const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
     return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '' }
   }
@@ -331,6 +338,19 @@ export default async function handler(req, res) {
     } catch (e) {
       return res.status(200).json({ error: e.message, text: '' })
     }
+  }
+
+  // Diagnostic endpoint
+  if (action === 'diagnostico') {
+    const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || '')
+    const sbUrl = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '')
+    const sbKey = clean(process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '')
+    return res.status(200).json({
+      anthropic_key: key ? `✅ Configurada (${key.slice(0,8)}...)` : '❌ NO ENCONTRADA',
+      supabase_url: sbUrl ? `✅ ${sbUrl.slice(0,30)}...` : '❌ NO ENCONTRADA',
+      supabase_key: sbKey ? '✅ Configurada' : '❌ NO ENCONTRADA',
+      env_with_anthrop: Object.keys(process.env).filter(k => k.toLowerCase().includes('anthrop')),
+    })
   }
 
   try {
