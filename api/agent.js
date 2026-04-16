@@ -265,11 +265,14 @@ Respuesta preferida: ${x.improved || 'sin respuesta exacta'}`).join('\n\n'),
 
 function directTrainingReply(training, message, iaConfig) {
   const q = normalize(message)
+  // Exact or near-exact match → reply directly without calling Claude
   const exact = (training.items || []).find(x => x.improved && (
     normalize(x.context) === q ||
     normalize(x.original) === q ||
-    normalize(x.reason).includes(q) ||
-    x.s >= 5
+    // Partial match: training context is contained in message or vice versa
+    (normalize(x.context).length > 6 && q.includes(normalize(x.context))) ||
+    (normalize(x.original).length > 6 && q.includes(normalize(x.original))) ||
+    x.s >= 4
   ))
   if (!exact) return ''
   return cleanOutput(exact.improved, iaConfig)
@@ -413,44 +416,51 @@ export async function generateAgentResponse({
 
   const agentName = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Asistente')
 
-  const system = `Eres ${agentName}. Eres un agente comercial genérico.
+  const personalidad = clean(iaConfig.personalidad || iaConfig.identidad || '')
+  const guion = clean(iaConfig.guion || iaConfig.flujo || iaConfig.procesoVenta || '')
+  const rentaMin = iaConfig.rentaMinima || iaConfig.renta_minima || ''
+  const rentaMinPareja = iaConfig.rentaMinimaPareja || iaConfig.renta_minima_pareja || ''
+  const calendlyLink = clean(iaConfig.calendlyLink || iaConfig.agendaLink || iaConfig.linkAgenda || '')
 
-REGLA CENTRAL:
-No tienes negocio, producto, guion ni oferta propia en el código. Solo puedes vender, explicar y orientar usando lo que está en el PANEL IA, CONOCIMIENTO, DOCUMENTOS y APRENDIZAJES.
+  const system = `Eres ${agentName}, agente comercial de Rabbitts Capital.
 
-DISPONIBILIDAD Y ESTILO HUMANO:
-- Estás disponible para responder ahora. Nunca digas que hay alta demanda, que responderás después, que no tienes disponibilidad o que estás saturado.
-- No te presentes como IA, bot, modelo ni asistente artificial, salvo que el panel lo pida expresamente.
-- Si no tienes un dato, no bloquees la conversación: reconoce el límite en una frase y haz una sola pregunta útil o deriva al siguiente paso definido.
-- Usa mensajes cortos de WhatsApp, naturales, sin sonar robótico.
+═══ IDENTIDAD ═══
+Tu nombre es ${agentName}. Eres parte del equipo de Rabbitts Capital, empresa de inversión inmobiliaria en Chile.
+NUNCA digas que eres IA, bot ni asistente artificial.
+NUNCA digas que tienes alta demanda, que responderás después, o que no estás disponible.
 
-PANEL IA:
-${panel || 'Panel IA sin información suficiente.'}
+═══ CONFIGURACIÓN DEL PANEL IA ═══
+${panel || 'Sin configuración en Panel IA aún.'}
+${guion ? '\nGUION DE VENTAS:\n' + guion : ''}
+${rentaMin ? '\nRENTA MÍNIMA INDIVIDUAL: $' + Number(rentaMin).toLocaleString('es-CL') : ''}
+${rentaMinPareja ? '\nRENTA MÍNIMA EN PAREJA: $' + Number(rentaMinPareja).toLocaleString('es-CL') : ''}
 
-APRENDIZAJES Y FEEDBACK PERMANENTE:
-${training.text || 'Sin aprendizajes cargados.'}
+═══ APRENDIZAJES Y FEEDBACK — SIGÚELOS EXACTAMENTE ═══
+ESTAS SON CORRECCIONES REALES. Cuando el cliente pregunte algo similar al "Contexto", responde EXACTAMENTE como dice "Respuesta preferida".
+No improvises si hay un aprendizaje relevante. Úsalo literal.
+${training.text || '(Sin aprendizajes aún — el admin puede corregir tus respuestas desde el CRM)'}
 
-CONOCIMIENTO RELEVANTE:
-${knowledge.text || 'Sin documentos relevantes.'}
+═══ CEREBRO / DOCUMENTOS ═══
+${knowledge.text || 'Sin documentos cargados. Sube PDFs y documentos en Cerebro Rabito para que pueda consultarlos.'}
 
-DATOS DEL CONTACTO:
-${flatten(leadData) || 'Sin datos estructurados.'}
+═══ DATOS DEL CONTACTO ═══
+${flatten(leadData) || 'Lead nuevo, sin datos aún.'}
 
-LINK DE AGENDA DISPONIBLE:
-${agenda || 'No configurado'}
+═══ AGENDAR REUNIÓN ═══
+${agenda ? 'Link para agendar: ' + agenda + '\nCuando el lead califica o muestra interés concreto, invítalo a agendar.' : 'Sin link de agenda configurado aún.'}
 
-INSTRUCCIONES:
-- Responde en español natural de WhatsApp.
-- Sé breve, claro y vendedor.
-- No repitas preguntas ya respondidas en el historial.
-- Usa el feedback y reglas del panel por sobre tu criterio general.
-- Si el cliente ya entregó lo necesario según el panel, avanza al siguiente paso definido en el panel.
-- Si corresponde agendar y hay link de agenda, entrega el link.
-- No inventes precios, condiciones, promesas ni datos que no estén en el conocimiento.
-- Prohibido decir “alta demanda”, “no estoy disponible”, “responderé después” o frases similares.
-- Solo deriva a humano o revisión si las reglas duras del panel lo indican explícitamente.
-- Devuelve SOLO JSON válido, sin markdown:
-{"reply":"mensaje visible al cliente","action":"conversando|calificado|agenda|sin_datos","statusUpdate":"activo|calificado|frio|no_interesado|","leadUpdate":{},"memoryUpdate":{},"escalateToHuman":false}`
+═══ REGLAS ═══
+- Mensajes cortos estilo WhatsApp (2-4 líneas), sin asteriscos ni listas largas.
+- Una sola pregunta por mensaje.
+- NO repitas preguntas ya respondidas en el historial.
+- NO inventes precios ni condiciones que no estén en los documentos.
+- NO expliques qué es Rabbitts Capital salvo que te pregunten directamente — el cliente ya sabe por qué te escribió.
+- Si el lead califica por renta, invítalo a agendar de inmediato.
+- Avanza siempre la conversación hacia el siguiente paso del guion.
+- Si no sabes algo específico, di "te averiguo" y pregunta algo útil para calificar al lead.
+
+Responde SOLO con JSON válido, sin markdown:
+{"reply":"mensaje al cliente","action":"conversando|calificado|agenda|sin_datos","statusUpdate":"activo|calificado|frio|no_interesado|","leadUpdate":{},"escalateToHuman":false}`
 
   const msgs = []
   const hist = Array.isArray(conversationHistory) ? conversationHistory.slice(-16) : []
@@ -531,7 +541,32 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' })
 
-  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false } = req.body || {}
+  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false, action, file, mediaType, fileName } = req.body || {}
+
+  // PDF/Word extraction for Cerebro Rabito
+  if (action === 'extract' && file) {
+    try {
+      const apiKey = clean(process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_KEY || '')
+      if (!apiKey) throw new Error('API key no configurada')
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'pdfs-2024-09-25' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001', max_tokens: 4096,
+          messages: [{ role: 'user', content: [
+            { type: 'document', source: { type: 'base64', media_type: mediaType, data: file } },
+            { type: 'text', text: 'Extrae y devuelve TODO el texto de este documento exactamente como aparece. Sin resúmenes ni comentarios. Solo el texto completo.' }
+          ]}]
+        })
+      })
+      const data = await r.json()
+      if (!r.ok || data.error) throw new Error(data?.error?.message || 'Error extrayendo')
+      return res.status(200).json({ text: data.content?.[0]?.text || '' })
+    } catch(e) {
+      return res.status(200).json({ error: e.message, text: '' })
+    }
+  }
+
   try {
     const result = await generateAgentResponse({ message, conversationHistory, iaConfig, leadData, debug })
     return res.status(200).json(result)
