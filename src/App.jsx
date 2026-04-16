@@ -402,8 +402,12 @@ export default function App() {
   const [nl, setNl] = useState(EL)
   const [conv, setConv] = useState(''); const [xing, setXing] = useState(false); const [xerr, setXerr] = useState('')
   const [fa, setFa] = useState('all'); const [fs, setFs] = useState('all'); const [ft, setFt] = useState('all')
+  const [brokerSearch, setBrokerSearch] = useState('')  // broker lead search
   const [toast, setToast] = useState('')
   const [comment, setComment] = useState('')
+  const [contactModal, setContactModal] = useState(null)  // {leadId}
+  const [contactMethod, setContactMethod] = useState('')
+  const [editResumen, setEditResumen] = useState(null)
   const [lossR, setLossR] = useState(LOSS_REASONS[0]); const [lossOth, setLossOth] = useState(''); const [lossTgt, setLossTgt] = useState(null)
   const [editP, setEditP] = useState({name:'',phone:'',email:''})
   const [pinF,  setPinF]  = useState({cur:'',n1:'',n2:''}); const [pinErr, setPinErr] = useState(''); const [profErr, setProfErr] = useState('')
@@ -1310,6 +1314,11 @@ export default function App() {
       setPropModal(lid)
       return
     }
+    // Contactado: broker debe indicar medio de contacto
+    if (sid === 'contactado') {
+      setContactModal({ leadId: lid })
+      return
+    }
     moveStage(lid, sid, null)
   }
 
@@ -1634,6 +1643,29 @@ export default function App() {
     }
     setPropModal(null); setPendingStage(null); setEditingProps([])
     msg(stageId ? 'Propiedades guardadas y etapa actualizada' : 'Propiedades guardadas')
+
+    // ── Notificaciones automáticas al llegar a Reserva ───────────────────────
+    if (stageId === 'reserva') {
+      const lead = leads.find(l => l.id === leadId)
+      const agent = (users||[]).find(u => u.id === lead?.assigned_to)
+      const opsUsers = (users||[]).filter(u => u.role === 'operaciones' || u.role === 'admin')
+      const notifyPayload = {
+        type: 'reserva_documentos',
+        agentName: agent?.name || 'Broker',
+        leadNombre: lead?.nombre || 'el cliente',
+        leadId,
+        agentEmail: agent?.email,
+        agentPhone: agent?.phone,
+        opsEmails: opsUsers.map(u=>u.email).filter(Boolean),
+        opsPhones: opsUsers.map(u=>u.phone).filter(Boolean),
+        reminderDays: 3
+      }
+      fetch('/api/notify', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(notifyPayload)
+      }).catch(()=>{})
+    }
   }
 
   async function deleteLead(id) {
@@ -1672,7 +1704,7 @@ export default function App() {
     ? leads.filter(l => (fa==='all'||(fa===''?(!l.assigned_to):l.assigned_to===fa)) && (fs==='all'||l.stage===fs) && (ft==='all'||l.tag===ft))
     : isPartner ? leads.filter(l => l.tag==='pool')
     : isOps     ? leads.filter(l => OPS_STAGES.includes(l.stage))
-    : leads.filter(l => l.assigned_to===me.id)
+    : leads.filter(l => l.assigned_to===me.id && (!brokerSearch || [l.nombre,l.telefono,l.email,l.rut].join(' ').toLowerCase().includes(brokerSearch.toLowerCase())))
 
   const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
   const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','ia','rabito_interno','conversaciones','agenda','etapas','importar','extraer','marketplace']
@@ -2073,6 +2105,17 @@ export default function App() {
                     {['pool','lead','referido'].map(t=><option key={t} value={t}>{t}</option>)}
                   </select>
                 </>}
+                {isAgent && (
+                  <input
+                    value={brokerSearch}
+                    onChange={e=>setBrokerSearch(e.target.value)}
+                    placeholder="🔍 Buscar por nombre, teléfono, email, RUT..."
+                    style={{...sty.sel,width:260,padding:'6px 10px',fontSize:12}}
+                  />
+                )}
+                {isAgent && brokerSearch && (
+                  <button onClick={()=>setBrokerSearch('')} style={{...sty.btn,fontSize:11,padding:'4px 8px'}}>✕ Limpiar</button>
+                )}
                 <span style={{fontSize:12,color:B.mid,fontWeight:500}}>{(vL||[]).length} leads</span>
               </div>
               <div style={{display:'flex',gap:8}}>
@@ -3505,7 +3548,7 @@ export default function App() {
             {sel.stage==='perdido'&&sel.loss_reason&&<span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:'#FEF2F2',color:'#991b1b'}}>Motivo: {sel.loss_reason}</span>}
           </div>
           <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:12}}>
-            {[['Email',sel.email],['Renta',sel.renta],['Origen',sel.origen||'—'],['Creado',fmt(sel.fecha)],['Agente',((users||[]).find(u=>u.id===sel.assigned_to)||{}).name||'Sin asignar']].map(([k,v])=>(
+            {[['Email',sel.email],['RUT',sel.rut||'—'],['Renta',sel.renta],['Origen',sel.origen||'—'],['Creado',fmt(sel.fecha)],['Agente',((users||[]).find(u=>u.id===sel.assigned_to)||{}).name||'Sin asignar']].map(([k,v])=>(
               <div key={k} style={{background:B.light,padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0'}}>
                 <div style={{fontSize:11,color:B.mid,marginBottom:2,fontWeight:600}}>{k}</div>
                 <div style={{fontSize:13,color:'#0F172A'}}>{v}</div>
@@ -3516,7 +3559,103 @@ export default function App() {
               <WaLink phone={sel.telefono} label={sel.telefono}/>
             </div>
           </div>
-          <div style={{background:B.light,padding:'10px 12px',borderRadius:8,fontSize:13,color:'#374151',lineHeight:1.6,marginBottom:12,border:'1px solid #E2E8F0'}}>{sel.resumen}</div>
+          {/* Resumen — solo admin puede editar */}
+          <div style={{marginBottom:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+              <span style={{fontSize:12,fontWeight:600,color:B.mid}}>Resumen del cliente</span>
+              {isAdmin && <button onClick={()=>setEditResumen(sel.resumen||'')} style={{fontSize:11,color:B.primary,background:'none',border:'none',cursor:'pointer',fontWeight:600}}>✏️ Editar</button>}
+            </div>
+            {editResumen!==null && isAdmin ? (
+              <div>
+                <textarea value={editResumen} onChange={e=>setEditResumen(e.target.value)}
+                  style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #1B4FC8',fontSize:13,minHeight:72,resize:'vertical',boxSizing:'border-box'}}/>
+                <div style={{display:'flex',gap:6,marginTop:6}}>
+                  <button onClick={async()=>{
+                    const ls=leads.map(l=>l.id===sel.id?{...l,resumen:editResumen}:l)
+                    setLeads(ls);setSel(ls.find(l=>l.id===sel.id))
+                    if(dbReady)await supabase.from('crm_leads').update({resumen:editResumen}).eq('id',sel.id)
+                    setEditResumen(null);msg('Resumen actualizado')
+                  }} style={{...sty.btnP,fontSize:12}}>Guardar</button>
+                  <button onClick={()=>setEditResumen(null)} style={{...sty.btn,fontSize:12}}>Cancelar</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{background:B.light,padding:'10px 12px',borderRadius:8,fontSize:13,color:'#374151',lineHeight:1.6,border:'1px solid #E2E8F0'}}>{sel.resumen||'Sin resumen'}</div>
+            )}
+          </div>
+
+          {/* Comentario Venta — puede escribir el broker, la IA lo lee */}
+          <div style={{marginBottom:12}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+              <span style={{fontSize:12,fontWeight:600,color:B.mid}}>💼 Comentario Venta</span>
+              <span style={{fontSize:10,color:'#9ca3af'}}>(la IA de Rabito puede leer esto)</span>
+            </div>
+            <textarea
+              value={sel.comentario_venta||''}
+              onChange={async e=>{
+                const val=e.target.value
+                const ls=leads.map(l=>l.id===sel.id?{...l,comentario_venta:val}:l)
+                setLeads(ls);setSel(ls.find(l=>l.id===sel.id))
+                clearTimeout(window._cvTimer)
+                window._cvTimer=setTimeout(async()=>{
+                  if(dbReady)await supabase.from('crm_leads').update({comentario_venta:val}).eq('id',sel.id)
+                },1000)
+              }}
+              placeholder="Escribe aquí lo que sabes del cliente, sus intereses, objeciones, próximos pasos..."
+              style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,minHeight:60,resize:'vertical',boxSizing:'border-box',lineHeight:1.5}}
+            />
+          </div>
+
+          {/* Análisis IA del broker — solo visible para admin */}
+          {isAdmin && (() => {
+            const agBroker = (users||[]).find(u=>u.id===sel.assigned_to)
+            return (
+              <div style={{marginBottom:12}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+                  <span style={{fontSize:12,fontWeight:600,color:'#5b21b6'}}>🤖 Análisis IA del broker</span>
+                  <button onClick={async()=>{
+                    if(!agBroker) return msg('Lead sin agente asignado')
+                    const brokerLeads = leads.filter(l=>l.assigned_to===agBroker.id)
+                    const prompt = `Analiza el desempeño del broker "${agBroker.name}" en este lead y en general.
+Lead actual: ${sel.nombre} | Etapa: ${sel.stage} | Renta: ${sel.renta||'no indicada'}
+Comentario venta: ${sel.comentario_venta||'sin comentarios'}
+Historial de etapas: ${(sel.stage_history||[]).map(h=>h.stage).join(' → ')}
+Medio de contacto: ${sel.contacto_medio||'no registrado'}
+Total leads del broker: ${brokerLeads.length} | En firma/escritura: ${brokerLeads.filter(l=>['firma','escritura','ganado'].includes(l.stage)).length}
+
+Genera un análisis breve (4-6 líneas) con:
+1. Qué está haciendo bien este broker con este lead
+2. Qué puede mejorar (seguimiento, documentación, velocidad)
+3. Una recomendación concreta para avanzar este lead específico
+Responde en español, directo, sin formalismos.`
+                    try {
+                      const r = await fetch('/api/agent', {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({message: prompt, iaConfig:{}, action:'summary'})
+                      })
+                      const d = await r.json()
+                      const summary = d.reply || d.text || ''
+                      if (!summary) return msg('No se pudo generar el análisis')
+                      const ls = leads.map(l=>l.id===sel.id?{...l,ia_broker_summary:summary}:l)
+                      setLeads(ls); setSel(ls.find(l=>l.id===sel.id))
+                      if(dbReady) await supabase.from('crm_leads').update({ia_broker_summary:summary}).eq('id',sel.id)
+                      msg('Análisis generado')
+                    } catch(e) { msg('Error generando análisis') }
+                  }} style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #c4b5fd',background:'#F5F3FF',color:'#5b21b6',cursor:'pointer',fontWeight:600}}>
+                    ✨ Generar
+                  </button>
+                </div>
+                {sel.ia_broker_summary ? (
+                  <div style={{background:'#F5F3FF',border:'1px solid #c4b5fd',borderRadius:8,padding:'10px 12px'}}>
+                    <div style={{fontSize:12,color:'#374151',lineHeight:1.6,whiteSpace:'pre-wrap'}}>{sel.ia_broker_summary}</div>
+                    <div style={{fontSize:10,color:'#9ca3af',marginTop:4}}>Solo visible para admin</div>
+                  </div>
+                ) : (
+                  <div style={{fontSize:12,color:'#9ca3af',fontStyle:'italic'}}>Presiona "Generar" para que Rabito analice al broker en este lead.</div>
+                )}
+              </div>
+            )
+          })()}
           {(sel.stage_history||[]).length>1&&(
             <div style={{marginBottom:12}}>
               <div style={{fontSize:12,fontWeight:600,color:B.mid,marginBottom:6}}>Historial de etapas</div>
@@ -3684,13 +3823,23 @@ export default function App() {
                   <textarea value={p.condiciones_especiales||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,condiciones_especiales:e.target.value}:x))} placeholder="Descuentos, regalos, renta garantizada, plazos, acuerdos especiales..." style={{...sty.inp,minHeight:54,resize:'vertical'}}/>
                 </Fld>
                 {(pendingStage?.stageId==='solicitud_promesa' || (leads.find(l=>l.id===propModal)?.stage==='solicitud_promesa')) && (
-                  <PromiseDocsPanel
-                    p={p}
-                    idx={idx}
-                    setEditingProps={setEditingProps}
-                    me={me}
-                    isReviewer={isAdmin||isOps}
-                  />
+                  <div>
+                    <Fld label="📅 Fecha solicitud de promesa *">
+                      <input type="date"
+                        value={p.solicitud_promesa_fecha || new Date().toISOString().slice(0,10)}
+                        onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,solicitud_promesa_fecha:e.target.value}:x))}
+                        style={{...sty.inp,fontWeight:600,color:B.primary}}
+                      />
+                      <div style={{fontSize:11,color:'#6b7280',marginTop:3}}>Fecha en que se solicita la promesa a la inmobiliaria.</div>
+                    </Fld>
+                    <PromiseDocsPanel
+                      p={p}
+                      idx={idx}
+                      setEditingProps={setEditingProps}
+                      me={me}
+                      isReviewer={isAdmin||isOps}
+                    />
+                  </div>
                 )}
                 <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
                   <Fld label="Moneda">
@@ -3823,6 +3972,40 @@ export default function App() {
       )}
 
       {/* Perdido */}
+      
+      {/* MODAL: Cómo se contactó al lead */}
+      {contactModal && (
+        <Modal title="¿Cómo contactaste a este lead?" onClose={()=>{setContactModal(null);setContactMethod('')}}>
+          <p style={{fontSize:13,color:'#6b7280',marginBottom:16}}>Antes de mover a Contactado, indica el medio que usaste.</p>
+          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20}}>
+            {['📞 Llamada telefónica','💬 WhatsApp','📱 SMS','📧 Email','🤝 Presencial'].map(method => (
+              <label key={method} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',border:`2px solid ${contactMethod===method?'#1B4FC8':'#E2E8F0'}`,borderRadius:10,cursor:'pointer',background:contactMethod===method?'#EEF2FF':'#fff',fontWeight:contactMethod===method?700:400,fontSize:13}}>
+                <input type="radio" name="contactMethod" value={method} checked={contactMethod===method} onChange={()=>setContactMethod(method)} style={{accentColor:'#1B4FC8'}}/>
+                {method}
+              </label>
+            ))}
+          </div>
+          <button
+            disabled={!contactMethod}
+            onClick={async ()=>{
+              const lid = contactModal.leadId
+              await moveStage(lid, 'contactado', null)
+              // Save contact method to lead comments
+              const lead = leads.find(l=>l.id===lid)
+              const note = {id:'c-'+Date.now(), text:`Medio de contacto: ${contactMethod}`, author_name:me.name, date:new Date().toISOString(), system:true}
+              const updated = leads.map(l => l.id===lid ? {...l, contacto_medio:contactMethod, comments:[...(l.comments||[]),note]} : l)
+              const updLead = updated.find(l=>l.id===lid)
+              setLeads(updated)
+              if (sel?.id===lid) setSel(updLead)
+              if (dbReady) await supabase.from('crm_leads').update({contacto_medio:contactMethod, comments:updLead.comments}).eq('id',lid)
+              setContactModal(null); setContactMethod(''); msg('Lead movido a Contactado')
+            }}
+            style={{width:'100%',padding:'11px',borderRadius:8,border:'none',background:contactMethod?'#1B4FC8':'#e5e7eb',color:contactMethod?'#fff':'#9ca3af',fontWeight:700,fontSize:14,cursor:contactMethod?'pointer':'not-allowed'}}>
+            Confirmar y mover a Contactado
+          </button>
+        </Modal>
+      )}
+
       {modal==='lost' && (
         <Modal title="Marcar como perdido" onClose={()=>setModal(sel?'lead':null)}>
           <p style={{margin:'0 0 12px',fontSize:13,color:'#6b7280'}}>Selecciona el motivo de pérdida.</p>
@@ -4157,6 +4340,7 @@ function LeadForm({data, onChange, onSubmit}) {
       <Fld label="Nombre completo *"><input value={data.nombre} onChange={e=>onChange(p=>({...p,nombre:e.target.value}))} placeholder="María González" style={sI}/></Fld>
       <Fld label="Teléfono *"><input value={data.telefono} onChange={e=>onChange(p=>({...p,telefono:e.target.value}))} placeholder="+56 9 8765 4321" style={sI}/></Fld>
       <Fld label="Email"><input value={data.email} onChange={e=>onChange(p=>({...p,email:e.target.value}))} placeholder="maria@email.com" style={sI}/></Fld>
+      <Fld label="RUT (opcional)"><input value={data.rut||''} onChange={e=>onChange(p=>({...p,rut:e.target.value}))} placeholder="12.345.678-9" style={sI}/></Fld>
       <Fld label="Renta / Presupuesto"><input value={data.renta} onChange={e=>onChange(p=>({...p,renta:e.target.value}))} placeholder="$1.500.000 CLP" style={sI}/></Fld>
       <Fld label="Etiqueta">
         <select value={data.tag} onChange={e=>onChange(p=>({...p,tag:e.target.value}))} style={{...sI,cursor:'pointer'}}>
