@@ -70,6 +70,124 @@ export default async function handler(req, res) {
       })
       return res.status(200).json({ success: true, type: 'wa_sent' })
     }
+    // ── Notificación solicitud de visita ─────────────────────────────────────
+    if (type === 'visita_solicitada') {
+      const { brokerName, brokerEmail, brokerPhone, leadNombre, fecha, hora, proyecto, comentario, opsEmails, opsPhones } = body
+      const EVO_URL = process.env.EVO_URL || 'https://wa.rabbittscapital.com'
+      const EVO_KEY = process.env.EVO_KEY || 'rabbitts2024'
+      const RESEND_KEY = process.env.RESEND_API_KEY
+      const FROM = process.env.CRM_FROM_EMAIL || 'crm@rabbittscapital.com'
+
+      let instanceName = ''
+      try {
+        const sbUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
+        const sbKey = (process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
+        if (sbUrl && sbKey) {
+          const r = await fetch(`${sbUrl}/rest/v1/crm_settings?key=eq.wa_numeros&select=value`, { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } })
+          const d = await r.json()
+          instanceName = (d?.[0]?.value || []).find(n => n.activo)?.instanceName || ''
+        }
+      } catch(_) {}
+
+      const sendWA = async (phone, text) => {
+        if (!phone || !instanceName) return
+        await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', apikey: EVO_KEY },
+          body: JSON.stringify({ number: String(phone).replace(/[^0-9]/g,''), text, delay: 500 })
+        }).catch(()=>{})
+      }
+
+      const detalles = `📅 ${fecha} a las ${hora}\n🏢 ${proyecto}${comentario ? '\n💬 ' + comentario : ''}`
+
+      // WA + email a ops
+      const opsMsg = `🏠 Nueva solicitud de visita\nBroker: *${brokerName}*\nCliente: *${leadNombre}*\n${detalles}\n\nConfirma o rechaza desde el CRM.`
+      for (const p of (opsPhones||[])) await sendWA(p, opsMsg)
+      if (RESEND_KEY) {
+        for (const e of (opsEmails||[])) {
+          await fetch('https://api.resend.com/emails', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${RESEND_KEY}`},
+            body: JSON.stringify({ from: FROM, to: e, subject: `🏠 Solicitud de visita — ${leadNombre} (${brokerName})`,
+              html: `<div style="font-family:Arial;padding:20px"><h3 style="color:#059669">Nueva solicitud de visita</h3><p>El broker <b>${brokerName}</b> solicita visita para el cliente <b>${leadNombre}</b>.</p><table style="border-collapse:collapse;font-size:14px"><tr><td style="padding:6px;color:#6b7280">Fecha</td><td style="padding:6px;font-weight:700">${fecha}</td></tr><tr><td style="padding:6px;color:#6b7280">Hora</td><td style="padding:6px;font-weight:700">${hora}</td></tr><tr><td style="padding:6px;color:#6b7280">Proyecto</td><td style="padding:6px;font-weight:700">${proyecto}</td></tr>${comentario?`<tr><td style="padding:6px;color:#6b7280">Comentario</td><td style="padding:6px">${comentario}</td></tr>`:''}</table><p style="margin-top:16px">Confirma o rechaza la visita desde el CRM → Operaciones 360.</p></div>`
+            })
+          }).catch(()=>{})
+        }
+      }
+
+      // WA + email al broker
+      const brokerMsg = `✅ ¡Hola ${brokerName}! Tu solicitud de visita para *${leadNombre}* fue enviada.\n${detalles}\nOperaciones la revisará y te avisará la confirmación.`
+      if (brokerPhone) await sendWA(brokerPhone, brokerMsg)
+      if (RESEND_KEY && brokerEmail) {
+        await fetch('https://api.resend.com/emails', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${RESEND_KEY}`},
+          body: JSON.stringify({ from: FROM, to: brokerEmail, subject: `✅ Solicitud de visita enviada — ${leadNombre}`,
+            html: `<div style="font-family:Arial;padding:20px"><h3 style="color:#059669">Tu solicitud fue enviada</h3><p>Hola <b>${brokerName}</b>, tu solicitud de visita para <b>${leadNombre}</b> fue enviada a Operaciones.</p><p><b>Detalles:</b> ${fecha} a las ${hora} — ${proyecto}</p><p style="color:#6b7280;font-size:12px">Recibirás un aviso cuando sea confirmada o rechazada.</p></div>`
+          })
+        }).catch(()=>{})
+      }
+
+      return res.status(200).json({ success: true, type: 'visita_notificada' })
+    }
+
+    // ── Solicitud de visita ────────────────────────────────────────────────────
+    if (type === 'visita_solicitada') {
+      const { brokerName, brokerEmail, brokerPhone, leadNombre, fecha, hora, proyecto, comentario, opsEmails, opsPhones } = body
+      const EVO_URL = process.env.EVO_URL || 'https://wa.rabbittscapital.com'
+      const EVO_KEY = process.env.EVO_KEY || 'rabbitts2024'
+      const RESEND_KEY = process.env.RESEND_API_KEY
+      const FROM = process.env.CRM_FROM_EMAIL || 'crm@rabbittscapital.com'
+
+      let instanceName = ''
+      try {
+        const sbUrl = (process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL||'').trim()
+        const sbKey = (process.env.SUPABASE_SERVICE_KEY||process.env.VITE_SUPABASE_ANON_KEY||'').trim()
+        if (sbUrl&&sbKey) {
+          const r = await fetch(`${sbUrl}/rest/v1/crm_settings?key=eq.wa_numeros&select=value`,{headers:{apikey:sbKey,Authorization:`Bearer ${sbKey}`}})
+          const d = await r.json()
+          instanceName = (d?.[0]?.value||[]).find(n=>n.activo)?.instanceName||''
+        }
+      } catch(_){}
+
+      const sendWA = async (phone, text) => {
+        if (!phone||!instanceName) return
+        await fetch(`${EVO_URL}/message/sendText/${instanceName}`,{
+          method:'POST',headers:{'Content-Type':'application/json',apikey:EVO_KEY},
+          body:JSON.stringify({number:String(phone).replace(/[^0-9]/g,''),text,delay:500})
+        }).catch(()=>{})
+      }
+
+      const waOps = `🏠 Nueva solicitud de visita\n\nBroker: ${brokerName}\nCliente: ${leadNombre}\nFecha: ${fecha} ${hora}\nProyecto: ${proyecto||'No especificado'}${comentario?'\nNota: '+comentario:''}\n\nConfirma o rechaza en Operaciones 360 del CRM.`
+      for (const p of (opsPhones||[])) await sendWA(p, waOps)
+
+      const waBroker = `✅ Tu solicitud de visita fue recibida.\n\nCliente: ${leadNombre}\nFecha: ${fecha} ${hora}\nProyecto: ${proyecto||'No especificado'}\n\nEl equipo de Operaciones confirmará a la brevedad.`
+      if (brokerPhone) await sendWA(brokerPhone, waBroker)
+
+      const emailHtml = `<div style="font-family:Arial,sans-serif;padding:20px;max-width:580px">
+        <h2 style="color:#1B4FC8">🏠 Nueva solicitud de visita</h2>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+          <tr><td style="padding:6px 0;color:#6b7280">Broker</td><td><strong>${brokerName}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280">Cliente</td><td><strong>${leadNombre}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280">Fecha</td><td><strong>${fecha} ${hora}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280">Proyecto</td><td>${proyecto||'No especificado'}</td></tr>
+          ${comentario?`<tr><td style="padding:6px 0;color:#6b7280">Nota</td><td>${comentario}</td></tr>`:''}
+        </table>
+        <p style="color:#9ca3af;font-size:12px;margin-top:20px">Confirma o rechaza la visita en Operaciones 360 del CRM.</p>
+      </div>`
+
+      if (RESEND_KEY) {
+        for (const em of (opsEmails||[])) {
+          await fetch('https://api.resend.com/emails',{method:'POST',
+            headers:{'Content-Type':'application/json',Authorization:`Bearer ${RESEND_KEY}`},
+            body:JSON.stringify({from:FROM,to:em,subject:`🏠 Visita solicitada — ${leadNombre} (${fecha})`,html:emailHtml})
+          }).catch(()=>{})
+        }
+        if (brokerEmail) {
+          await fetch('https://api.resend.com/emails',{method:'POST',
+            headers:{'Content-Type':'application/json',Authorization:`Bearer ${RESEND_KEY}`},
+            body:JSON.stringify({from:FROM,to:brokerEmail,subject:`✅ Visita solicitada — ${leadNombre}`,html:`<div style="font-family:Arial;padding:20px"><h3 style="color:#059669">Tu solicitud fue enviada a Operaciones</h3><p>Cliente: <strong>${leadNombre}</strong><br>Fecha: <strong>${fecha} ${hora}</strong><br>Proyecto: ${proyecto||'No especificado'}</p><p style="color:#6b7280;font-size:12px">Te avisaremos cuando sea confirmada.</p></div>`})
+          }).catch(()=>{})
+        }
+      }
+      return res.status(200).json({success:true,type:'visita_enviada'})
+    }
+
     // ── Notificación Reserva: subir documentos ────────────────────────────────
     if (type === 'reserva_documentos') {
       const { agentName, leadNombre, agentEmail, agentPhone, opsEmails, opsPhones, reminderDays } = body
@@ -158,6 +276,54 @@ Ingresa al CRM y súbelos en la ficha del cliente. Tienes 3 días 💪`
       }
 
       return res.status(200).json({ success: true, type: 'reserva_notificado' })
+    }
+
+    // ── Visita solicitada ─────────────────────────────────────────────────────
+    if (type === 'visita_solicitada') {
+      const { brokerName, brokerEmail, brokerPhone, leadNombre, fecha, hora, proyecto, comentario, opsEmails, opsPhones } = body
+      const EVO_URL = process.env.EVO_URL || 'https://wa.rabbittscapital.com'
+      const EVO_KEY = process.env.EVO_KEY || 'rabbitts2024'
+      const RESEND_KEY = process.env.RESEND_API_KEY
+      const FROM = process.env.CRM_FROM_EMAIL || 'crm@rabbittscapital.com'
+
+      let instanceName = ''
+      try {
+        const sbUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
+        const sbKey = (process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
+        if (sbUrl && sbKey) {
+          const r = await fetch(`${sbUrl}/rest/v1/crm_settings?key=eq.wa_numeros&select=value`, { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } })
+          const d = await r.json()
+          instanceName = (d?.[0]?.value || []).find(n => n.activo)?.instanceName || ''
+        }
+      } catch(_) {}
+
+      const sendWA = async (phone, text) => {
+        if (!phone || !instanceName) return
+        await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', apikey: EVO_KEY },
+          body: JSON.stringify({ number: String(phone).replace(/[^0-9]/g,''), text, delay: 500 })
+        }).catch(()=>{})
+      }
+
+      const msgOps = `🏠 Visita solicitada\nBroker: ${brokerName}\nCliente: ${leadNombre}\nFecha: ${fecha} ${hora}\nProyecto: ${proyecto}${comentario?'\nComentario: '+comentario:''}\n\nRevisa el CRM en Visitas para confirmar o rechazar.`
+      const msgBroker = `✅ Tu solicitud de visita fue recibida.\nCliente: ${leadNombre}\nFecha: ${fecha} ${hora}\nProyecto: ${proyecto}\n\nOperaciones revisará y te confirmará pronto.`
+
+      for (const p of (opsPhones||[])) await sendWA(p, msgOps)
+      if (brokerPhone) await sendWA(brokerPhone, msgBroker)
+
+      if (RESEND_KEY) {
+        const htmlOps = `<div style="font-family:Arial;padding:20px"><h3 style="color:#1B4FC8">🏠 Nueva solicitud de visita</h3><p><b>Broker:</b> ${brokerName}</p><p><b>Cliente:</b> ${leadNombre}</p><p><b>Fecha:</b> ${fecha} ${hora}</p><p><b>Proyecto:</b> ${proyecto}</p>${comentario?`<p><b>Comentario:</b> ${comentario}</p>`:''}<p>Ingresa al CRM → Visitas para confirmar o rechazar.</p></div>`
+        const htmlBroker = `<div style="font-family:Arial;padding:20px"><h3 style="color:#059669">✅ Solicitud de visita recibida</h3><p>Hola ${brokerName}, tu solicitud de visita fue registrada.</p><p><b>Cliente:</b> ${leadNombre} | <b>Fecha:</b> ${fecha} ${hora} | <b>Proyecto:</b> ${proyecto}</p><p>Operaciones revisará y te confirmará por WhatsApp y email.</p></div>`
+        for (const e of (opsEmails||[])) {
+          await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${RESEND_KEY}`},
+            body:JSON.stringify({from:FROM,to:e,subject:`🏠 Visita solicitada — ${leadNombre} (${brokerName})`,html:htmlOps})}).catch(()=>{})
+        }
+        if (brokerEmail) {
+          await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${RESEND_KEY}`},
+            body:JSON.stringify({from:FROM,to:brokerEmail,subject:`✅ Visita registrada — ${leadNombre}`,html:htmlBroker})}).catch(()=>{})
+        }
+      }
+      return res.status(200).json({ success: true, type: 'visita_notificada' })
     }
 
     if (!to || !agentName) return res.status(400).json({ error: 'Faltan campos' })
