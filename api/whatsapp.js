@@ -435,7 +435,40 @@ async function answer(db, { conv, tel, phone, lid, instance, text }) {
   if (allowedByHardRules && result.escalateToHuman === true) upd.mode = 'humano'
 
   try { await db.from('crm_conversations').update(upd).eq('id', conv.id) } catch (e) { console.error('[WA] update after reply:', e.message) }
+  // Auto-crear leads para calificados sin agendar
+  autoCreateLeads(db).catch(() => {})
   return { ok: true, replied: true, sendStatus: sent.status || 0 }
+}
+
+
+// Auto-crear leads para convs calificadas hace 2+ horas sin lead_id
+async function autoCreateLeads(db) {
+  try {
+    const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    const { data: pending } = await db.from('crm_conversations')
+      .select('*').eq('status', 'calificado').is('lead_id', null).lt('updated_at', cutoff).limit(5)
+    if (!pending?.length) return
+    for (const conv of pending) {
+      const { data: existing } = await db.from('crm_leads').select('id').eq('telefono', conv.telefono).limit(1)
+      if (existing?.length) {
+        await db.from('crm_conversations').update({ lead_id: existing[0].id }).eq('id', conv.id)
+        continue
+      }
+      const now = new Date().toISOString()
+      const newLead = {
+        id: 'l-auto-' + Date.now() + '-' + conv.id.slice(-4),
+        nombre: conv.nombre || conv.telefono, telefono: conv.telefono || '', email: '—', renta: '—',
+        calificacion: '—', resumen: `Auto-creado desde WhatsApp. Último mensaje: ${(conv.last_message||'').slice(0,100)}`,
+        tag: 'lead', stage: 'nuevo', origen: 'whatsapp_auto', fecha: now, stage_moved_at: now,
+        creado_por: 'rabito', comments: [], stage_history: [{ stage: 'nuevo', date: now }]
+      }
+      const { data: lead, error } = await db.from('crm_leads').upsert(newLead).select().single()
+      if (!error && lead) {
+        await db.from('crm_conversations').update({ lead_id: lead.id }).eq('id', conv.id)
+        console.log('[WA] Auto-lead:', conv.telefono, lead.id)
+      }
+    }
+  } catch(e) { console.warn('[WA] autoCreateLeads error:', e.message) }
 }
 
 export default async function handler(req, res) {
