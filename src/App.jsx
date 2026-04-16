@@ -23,6 +23,7 @@ const DEFAULT_STAGES = [
   { id:'nuevo',      label:'Nuevo lead',          bg:'#F1F5FF', col:'#1B4FC8', dot:'#A8C0F0' },
   { id:'contactado', label:'Contactado',           bg:'#EFF6FF', col:'#1d4ed8', dot:'#93c5fd' },
   { id:'agenda',     label:'Agenda reunión',       bg:'#F5F3FF', col:'#5b21b6', dot:'#c4b5fd' },
+  { id:'visita_proyecto', label:'Visita proyecto',   bg:'#FFF0F6', col:'#9d174d', dot:'#f9a8d4' },
   { id:'credito',    label:'Crédito aprobado',     bg:'#FFFBEB', col:'#92400e', dot:'#fcd34d' },
   { id:'reserva',    label:'Reserva',              bg:'#F0FDF4', col:'#166534', dot:'#86efac' },
   { id:'solicitud_promesa', label:'Solicitud de promesa', bg:'#ECFEFF', col:'#155e75', dot:'#22d3ee', restricted:true },
@@ -3471,7 +3472,7 @@ export default function App() {
         {/* MARKETPLACE */}
         {/* CONDICIONES COMERCIALES */}
         {nav==='condiciones' && (isAdmin||isOps) && (
-          <CondicionesComerciales
+          <CondicionesComView
             condiciones={condiciones}
             setCondiciones={setCondiciones}
             supabase={supabase}
@@ -8050,6 +8051,202 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
     </div>
   )
 }
+
+
+// ─── Cerebro Rabito ────────────────────────────────────────────────────────
+function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
+  const [docs, setDocs] = React.useState([])
+  const [uploading, setUploading] = React.useState(false)
+  const [msg, setMsg] = React.useState(null)
+  const fileRef = React.useRef(null)
+  const B = { primary:'#4F46E5', light:'#EEF2FF', mid:'#6b7280', border:'#E8EFFE' }
+
+  React.useEffect(() => {
+    try {
+      const saved = Array.isArray(iaConfig?.cerebroDocs) ? iaConfig.cerebroDocs : []
+      setDocs(saved)
+    } catch(e) { setDocs([]) }
+  }, [iaConfig?.cerebroDocs])
+
+  const toBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = e => resolve(e.target.result.split(',')[1])
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+
+  const readFileText = async (file) => {
+    const name = file.name.toLowerCase()
+    if (name.endsWith('.pdf') || name.endsWith('.docx') || name.endsWith('.doc')) {
+      const base64 = await toBase64(file)
+      const isPdf = name.endsWith('.pdf')
+      const mediaType = isPdf
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      // Extraer via servidor (evita CORS con Anthropic API)
+      const r = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'extract', file: base64, mediaType, fileName: file.name })
+      })
+      const data = await r.json()
+      if (!r.ok || data.error) throw new Error(data.error || 'Error extrayendo texto')
+      return data.text || ''
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = e => resolve(e.target.result)
+      reader.onerror = reject
+      reader.readAsText(file, 'UTF-8')
+    })
+  }
+
+  const uploadFiles = async (files) => {
+    if (!files || !files.length) return
+    setUploading(true)
+    setMsg(null)
+    const newDocs = []
+    for (const file of Array.from(files)) {
+      try {
+        setMsg({ type: 'info', text: `Leyendo ${file.name}...` })
+        const text = await readFileText(file)
+        const clean = text.replace(/[\x00-\x08\x0B\x0E-\x1F]/g, '').trim()
+        if (clean.length < 10) { setMsg({ type: 'error', text: `${file.name}: vacío o no legible` }); continue }
+        newDocs.push({
+          id: 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
+          nombre: file.name,
+          content: clean.slice(0, 15000),
+          chars: clean.length,
+          truncado: clean.length > 15000,
+          fecha: new Date().toISOString()
+        })
+      } catch (e) {
+        setMsg({ type: 'error', text: `Error con ${file.name}: ${e.message}` })
+      }
+    }
+    if (newDocs.length) {
+      const allDocs = [...docs, ...newDocs]
+      setDocs(allDocs)
+      const driveContent = {
+        files: allDocs.map(d => ({ name: d.nombre, content: d.content })),
+        synced_at: new Date().toISOString(),
+        source: 'manual_upload'
+      }
+      try {
+        if (dbReady && supabase) {
+          await supabase.from('crm_settings').upsert({ key: 'drive_content', value: driveContent })
+          if (upd) { upd(['cerebroDocs'], allDocs); upd(['driveConectado'], true) }
+        }
+        setMsg({ type: 'success', text: `✅ ${newDocs.length} documento(s) cargado(s). Rabito ya puede leerlos.` })
+      } catch (e) {
+        setMsg({ type: 'error', text: 'Error guardando: ' + e.message })
+      }
+    }
+    setUploading(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const deleteDoc = async (docId) => {
+    const updated = docs.filter(d => d.id !== docId)
+    setDocs(updated)
+    const driveContent = {
+      files: updated.map(d => ({ name: d.nombre, content: d.content })),
+      synced_at: new Date().toISOString()
+    }
+    try {
+      if (dbReady && supabase) {
+        await supabase.from('crm_settings').upsert({ key: 'drive_content', value: driveContent })
+        if (upd) { upd(['cerebroDocs'], updated); upd(['driveConectado'], updated.length > 0) }
+      }
+    } catch(e) {}
+    setMsg({ type: 'success', text: 'Documento eliminado' })
+  }
+
+  const totalChars = docs.reduce((s, d) => s + (Number(d.chars) || d.content?.length || 0), 0)
+
+  return (
+    <div style={{display:'flex', flexDirection:'column', gap:16}}>
+      <div style={{background:B.light, border:'1px solid '+B.border, borderRadius:12, padding:'16px'}}>
+        <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
+          <span style={{fontSize:24}}>🧠</span>
+          <div>
+            <div style={{fontWeight:800, fontSize:15, color:B.primary}}>Cerebro de Rabito</div>
+            <div style={{fontSize:12, color:B.mid}}>Sube documentos y Rabito los leerá en cada conversación</div>
+          </div>
+          {docs.length > 0 && (
+            <span style={{marginLeft:'auto', fontSize:11, padding:'4px 12px', borderRadius:20, background:'#DCFCE7', color:'#14532d', fontWeight:700}}>
+              ✅ {docs.length} doc(s) · {(totalChars/1000).toFixed(1)}k caracteres
+            </span>
+          )}
+        </div>
+        <div style={{fontSize:12, color:'#6b7280', padding:'8px 12px', background:'#fff', borderRadius:8, border:'1px solid #e5e7eb'}}>
+          💡 Sube: personalidad, guión de ventas, proyectos, precios, preguntas frecuentes.<br/>
+          Formatos: <strong>PDF, Word (.docx), TXT, MD, CSV</strong>
+        </div>
+      </div>
+
+      <div
+        onClick={() => fileRef.current && fileRef.current.click()}
+        onDragOver={e => { e.preventDefault(); e.currentTarget.style.background='#EEF2FF' }}
+        onDragLeave={e => { e.currentTarget.style.background='#f9fafb' }}
+        onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files); e.currentTarget.style.background='#f9fafb' }}
+        style={{border:'2px dashed '+B.border, borderRadius:12, padding:'32px', textAlign:'center', cursor:'pointer', background:'#f9fafb', transition:'background .2s'}}
+      >
+        <div style={{fontSize:32, marginBottom:8}}>📂</div>
+        <div style={{fontWeight:700, fontSize:14, color:B.primary, marginBottom:4}}>
+          {uploading ? '⏳ Procesando...' : 'Haz clic o arrastra archivos aquí'}
+        </div>
+        <div style={{fontSize:12, color:B.mid}}>PDF, DOCX, TXT, MD, CSV</div>
+        <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.html"
+          style={{display:'none'}}
+          onChange={e => uploadFiles(e.target.files)}
+        />
+      </div>
+
+      {msg && (
+        <div style={{padding:'10px 14px', borderRadius:8, fontSize:13, fontWeight:600,
+          background: msg.type==='error'?'#FEF2F2': msg.type==='info'?'#EEF2FF':'#DCFCE7',
+          color: msg.type==='error'?'#991b1b': msg.type==='info'?'#1B4FC8':'#14532d'}}>
+          {msg.text}
+        </div>
+      )}
+
+      {docs.length > 0 && (
+        <div style={{background:'#fff', border:'1px solid #E2E8F0', borderRadius:12, padding:'16px'}}>
+          <div style={{fontWeight:700, fontSize:13, color:B.primary, marginBottom:12}}>
+            📚 Documentos en el cerebro ({docs.length})
+          </div>
+          {docs.map(doc => (
+            <div key={doc.id} style={{display:'flex', alignItems:'center', gap:10, padding:'10px 12px', borderRadius:8, border:'1px solid #f0f4ff', marginBottom:6, background:'#f9fbff'}}>
+              <span style={{fontSize:20}}>
+                {doc.nombre?.endsWith('.pdf') ? '📕' : doc.nombre?.endsWith('.docx')||doc.nombre?.endsWith('.doc') ? '📘' : '📄'}
+              </span>
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontWeight:600, fontSize:13, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{doc.nombre}</div>
+                <div style={{fontSize:11, color:B.mid}}>
+                  {((Number(doc.chars)||doc.content?.length||0)/1000).toFixed(1)}k caracteres
+                  {doc.truncado && <span style={{color:'#f59e0b', fontWeight:600}}> · truncado a 15k</span>}
+                  {' · '}{doc.fecha ? new Date(doc.fecha).toLocaleDateString('es-CL') : ''}
+                </div>
+              </div>
+              <button onClick={() => deleteDoc(doc.id)}
+                style={{padding:'4px 10px', borderRadius:6, border:'1px solid #fca5a5', background:'#FEF2F2', color:'#991b1b', cursor:'pointer', fontSize:11, fontWeight:600, flexShrink:0}}>
+                🗑️
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {docs.length === 0 && !uploading && (
+        <div style={{textAlign:'center', color:B.mid, fontSize:13, padding:'24px'}}>
+          Sin documentos aún. Sube tus primeros archivos para que Rabito aprenda.
+        </div>
+      )}
+    </div>
+  )
+}
+
 
 function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) {
   const [editing, setEditing] = React.useState(false)
