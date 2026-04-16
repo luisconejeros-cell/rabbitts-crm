@@ -1,7 +1,5 @@
-*{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f4ff;color:#111827;}
-input,select,textarea{font-family:inherit;}
-input:focus,select:focus,textarea:focus{outline:2px solid #1B4FC8;outline-offset:1px;}
-::-webkit-scrollbar{width:6px;height:6px;}
-::-webkit-scrollbar-track{background:#f0f4ff;}
-::-webkit-scrollbar-thumb{background:#a8bfff;border-radius:3px;}
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App.jsx'
+import './index.css'
+ReactDOM.createRoot(document.getElementById('root')).render(<App />)
