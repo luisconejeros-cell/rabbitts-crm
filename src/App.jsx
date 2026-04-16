@@ -55,7 +55,21 @@ const EMPTY_PROP = {
   inmob_monto_recibido:'',   // monto exacto recibido
   broker_factura_fecha:'',   // cuando el broker envió su factura a Rabbitts
   broker_factura_numero:'',  // N° factura del broker
-  broker_pago_fecha:''       // cuando Rabbitts pagó al broker
+  broker_pago_fecha:'',      // cuando Rabbitts pagó al broker
+  // Operación 360 — post reserva
+  negocio_id:'',
+  estado_operativo:'handoff_pendiente', // handoff_pendiente | docs_incompletos | en_revision | promesa | credito | escritura | entregado
+  estado_financiero:'no_devengado',     // no_devengado | solicitar_oc | oc_recibida | facturado | cobrado_inmob | broker_facturar | broker_pagado
+  riesgo_caida:'medio',                 // bajo | medio | alto
+  responsable_ops:'',
+  fecha_reserva:'', monto_reserva:'', comprobante_reserva:'', ejecutivo_inmobiliaria:'',
+  forma_pago_pie:'', condiciones_especiales:'', documentos_cliente:'',
+  promesa_enviada:'', promesa_firmada:'', pie_confirmado:'',
+  banco_mutuaria:'', ejecutivo_hipotecario:'', preaprobacion:'', aprobacion_final:'', tasacion:'', estudio_titulos:'',
+  notaria:'', escritura_firmada:'', inscripcion_cbr:'', entrega_propiedad:'',
+  amoblamiento:'', administracion:'', tributacion:'', proxima_inversion:'',
+  docs_estado:{},
+  operational_log:[]
 }
 
 // Color presets for stage editor
@@ -1373,13 +1387,21 @@ export default function App() {
     return {...p, precio_sin_bono: p.bono_pie ? Math.round((precio - bono)*100)/100 : precio}
   }
 
-  async function savePropField(leadId, propId, fields) {
-    // Update a single property's fields without changing stage
+  async function savePropField(leadId, propId, fields, auditLabel='Actualización operación') {
+    // Update a single property's fields without changing stage. Guarda trazabilidad por operación.
     const updated = leads.map(l => {
       if (l.id !== leadId) return l
-      const props = (l.propiedades||[]).map(p =>
-        (p.id===propId) ? {...p, ...fields} : p
-      )
+      const props = (l.propiedades||[]).map(p => {
+        if (p.id !== propId) return p
+        const logItem = {
+          at: new Date().toISOString(),
+          by: me?.name || 'Sistema',
+          role: me?.role || '',
+          action: auditLabel,
+          fields: Object.keys(fields || {}).filter(k => k !== 'operational_log')
+        }
+        return {...p, ...fields, operational_log:[...(p.operational_log||[]), logItem].slice(-60)}
+      })
       return {...l, propiedades: props}
     })
     const changedLead = updated.find(l => l.id === leadId)
@@ -1387,6 +1409,8 @@ export default function App() {
     if (sel?.id===leadId) setSel(changedLead)
     if (dbReady && changedLead) {
       await supabase.from('crm_leads').update({propiedades: changedLead.propiedades}).eq('id', leadId)
+    } else {
+      localStorage.setItem('rcrm_leads', JSON.stringify(updated))
     }
   }
 
@@ -1463,11 +1487,17 @@ export default function App() {
     : leads.filter(l => l.assigned_to===me.id)
 
   const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
-  const NAV = isAdmin    ? ['dashboard','kanban','lista','usuarios','ranking','finanzas','ia','conversaciones','agenda','etapas','importar','extraer','marketplace']
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','finanzas','ia','rabito_interno','conversaciones','agenda','etapas','importar','extraer','marketplace']
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
-            : isOps      ? ['kanban','lista',                                                                                                            ...(mpVisible?['marketplace']:[]) ]
-            : isFinanzas ? ['dashboard_finanzas','comisiones',                                                                                           ...(mpVisible?['marketplace']:[]) ]
-            :              ['kanban','lista','mis comisiones','mi agenda','nuevo lead',                                                                   ...(mpVisible?['marketplace']:[]) ]
+            : isOps      ? ['operaciones','kanban','lista','rabito_interno',                                                                              ...(mpVisible?['marketplace']:[]) ]
+            : isFinanzas ? ['dashboard_finanzas','finanzas_360','comisiones','rabito_interno',                                                            ...(mpVisible?['marketplace']:[]) ]
+            :              ['kanban','lista','portal_broker','mis comisiones','mi agenda','nuevo lead',                                                    ...(mpVisible?['marketplace']:[]) ]
+
+  const NAV_LABELS = {
+    dashboard:'Dashboard', kanban:'Leads', lista:'Lista', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
+    operaciones:'Operaciones 360', finanzas_360:'Finanzas 360', portal_broker:'Portal Broker', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead'
+  }
+  const navLabel = n => NAV_LABELS[n] || n.charAt(0).toUpperCase()+n.slice(1).replace('_',' ')
 
   // ── AGENDA PÚBLICA — no requiere login ─────────────────────────────────────
   if (typeof window !== 'undefined' && (window.location.pathname === '/agenda' || window.location.pathname.startsWith('/reservar/'))) {
@@ -1669,12 +1699,12 @@ export default function App() {
           {!isMobile && <div style={{display:'flex',gap:2,flexWrap:'wrap'}}>
             {NAV.map(n => (
               <button key={n} onClick={()=>setNav(n)} style={{fontSize:13,padding:'5px 12px',borderRadius:8,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#6b7280',fontWeight:nav===n?700:400}}>
-                {n.charAt(0).toUpperCase()+n.slice(1)}
+                {navLabel(n)}
               </button>
             ))}
           </div>}
           {/* Mobile: current page title */}
-          {isMobile && <span style={{fontSize:14,fontWeight:700,color:B.primary}}>{nav.charAt(0).toUpperCase()+nav.slice(1)}</span>}
+          {isMobile && <span style={{fontSize:14,fontWeight:700,color:B.primary}}>{navLabel(nav)}</span>}
         </div>
         {/* Financial indicators - hide on mobile */}
         {!isMobile && <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
@@ -1767,12 +1797,12 @@ export default function App() {
               </div>
             </div>
             {NAV.map(n => {
-              const icons = {dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬','mis comisiones':'💵','nuevo lead':'➕',etapas:'⚙️',importar:'📥',extraer:'🧠',dashboard_finanzas:'📊',comisiones:'💰',pool:'🌐',marketplace:'🏪'}
+              const icons = {dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬','mis comisiones':'💵','nuevo lead':'➕',etapas:'⚙️',importar:'📥',extraer:'🧠',dashboard_finanzas:'📊',finanzas_360:'🏦',comisiones:'💰',pool:'🌐',marketplace:'🏪',operaciones:'🧩',portal_broker:'🧑‍💼',rabito_interno:'🐰'}
               return (
                 <button key={n} onClick={()=>{setNav(n);setMobileMenuOpen(false)}}
                   style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:10,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#374151',fontWeight:nav===n?700:400,fontSize:14,textAlign:'left',width:'100%'}}>
                   <span style={{fontSize:18}}>{icons[n]||'•'}</span>
-                  {n.charAt(0).toUpperCase()+n.slice(1).replace('_',' ')}
+                  {navLabel(n)}
                 </button>
               )
             })}
@@ -1806,7 +1836,7 @@ export default function App() {
         <div style={{position:'fixed',bottom:0,left:0,right:0,background:'#fff',borderTop:'2px solid #dce8ff',display:'flex',zIndex:100,boxShadow:'0 -2px 12px rgba(27,79,200,0.08)'}}>
           {[
             {n:'kanban',     icon:'📋', label:'Leads'},
-            {n:'lista',      icon:'📝', label:'Lista'},
+            {n:'portal_broker', icon:'🧑‍💼', label:'Operación'},
             {n:'mis comisiones', icon:'💵', label:'Comisiones'},
             {n:'nuevo lead', icon:'➕', label:'Nuevo'},
           ].map(({n,icon,label})=>(
@@ -3229,6 +3259,26 @@ export default function App() {
           <MiAgendaView me={me} users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady}/>
         )}
 
+        {/* OPERACIONES 360 */}
+        {nav==='operaciones' && (isAdmin||isOps) && (
+          <Operaciones360View leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} savePropField={savePropField} setSel={setSel} setModal={setModal} me={me}/>
+        )}
+
+        {/* FINANZAS 360 */}
+        {nav==='finanzas_360' && (isAdmin||isFinanzas) && (
+          <Finanzas360View leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} savePropField={savePropField} saveCommission={saveCommission} setCommissions={setCommissions}/>
+        )}
+
+        {/* PORTAL BROKER */}
+        {nav==='portal_broker' && isAgent && (
+          <PortalBrokerView leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} me={me}/>
+        )}
+
+        {/* RABITO INTERNO */}
+        {nav==='rabito_interno' && (isAdmin||isOps||isFinanzas) && (
+          <RabitoInternoView leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators}/>
+        )}
+
         {/* EXTRAER */}
         {nav==='extraer' && isAdmin && (
           <div style={{maxWidth:560}}>
@@ -3425,11 +3475,25 @@ export default function App() {
                     </select>
                   </Fld>
                 </div>
-                <div style={{marginBottom:8}}>
+                <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
+                  <Fld label="Fecha reserva / handoff">
+                    <input type="date" value={p.fecha_reserva||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,fecha_reserva:e.target.value}:x))} style={sty.inp}/>
+                  </Fld>
                   <Fld label="Fecha escritura (opcional)">
                     <input type="date" value={p.fecha_escritura||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,fecha_escritura:e.target.value}:x))} style={sty.inp}/>
                   </Fld>
                 </div>
+                <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
+                  <Fld label="Ejecutivo inmobiliaria">
+                    <input value={p.ejecutivo_inmobiliaria||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,ejecutivo_inmobiliaria:e.target.value}:x))} placeholder="Nombre / teléfono" style={sty.inp}/>
+                  </Fld>
+                  <Fld label="Forma pago pie">
+                    <input value={p.forma_pago_pie||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,forma_pago_pie:e.target.value}:x))} placeholder="Ej: 48 cuotas / contado / bono pie" style={sty.inp}/>
+                  </Fld>
+                </div>
+                <Fld label="Condiciones especiales prometidas al cliente">
+                  <textarea value={p.condiciones_especiales||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,condiciones_especiales:e.target.value}:x))} placeholder="Descuentos, regalos, renta garantizada, plazos, acuerdos especiales..." style={{...sty.inp,minHeight:54,resize:'vertical'}}/>
+                </Fld>
                 <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
                   <Fld label="Moneda">
                     <select value={p.moneda} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,moneda:e.target.value}:x))} style={sty.sel}>
@@ -3670,6 +3734,91 @@ export default function App() {
       )}
     </div>
   )
+}
+
+// ─── Operación 360 / Finanzas / Portal Broker ───────────────────────────────
+const OP_STATUS = {
+  handoff_pendiente: {l:'Handoff pendiente', bg:'#FEF2F2', col:'#991b1b'},
+  docs_incompletos: {l:'Docs incompletos', bg:'#FFFBEB', col:'#92400e'},
+  en_revision: {l:'En revisión', bg:'#EFF6FF', col:'#1d4ed8'},
+  promesa: {l:'Promesa', bg:'#FFF7ED', col:'#9a3412'},
+  credito: {l:'Crédito', bg:'#F5F3FF', col:'#5b21b6'},
+  escritura: {l:'Escritura', bg:'#FEF9C3', col:'#713f12'},
+  entregado: {l:'Entregado', bg:'#DCFCE7', col:'#14532d'},
+}
+const FIN_STATUS = {
+  no_devengado: {l:'No devengado', bg:'#F9FAFB', col:'#374151'},
+  solicitar_oc: {l:'Solicitar OC', bg:'#FFFBEB', col:'#92400e'},
+  oc_recibida: {l:'OC recibida', bg:'#EFF6FF', col:'#1d4ed8'},
+  facturado: {l:'Facturado Rabbitts', bg:'#F5F3FF', col:'#5b21b6'},
+  cobrado_inmob: {l:'Cobrado inmobiliaria', bg:'#FEF9C3', col:'#713f12'},
+  broker_facturar: {l:'Broker debe facturar', bg:'#FFF7ED', col:'#9a3412'},
+  broker_pagado: {l:'Broker pagado', bg:'#DCFCE7', col:'#14532d'},
+}
+const DOCS_360 = ['Cédula/Pasaporte','Comprobante reserva','Preaprobación','Liquidaciones','Carpeta tributaria','Promesa','Comprobante pie','Escritura','Factura Rabbitts','Factura broker','Administración','Tributación']
+function nnum(v){ return parseFloat(String(v||'').replace(/\./g,'').replace(',','.')) || 0 }
+function fmt360(v){ return (parseFloat(v)||0).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}) }
+function days360(iso){ if(!iso) return 9999; return Math.floor((Date.now()-new Date(iso).getTime())/86400000) }
+function docsProgress360(d){ const states=d.docs_estado||{}; const ok=DOCS_360.filter(x=>states[x]==='aprobado'||states[x]==='recibido').length; return {ok,total:DOCS_360.length,pct:DOCS_360.length?Math.round(ok*100/DOCS_360.length):0} }
+function inferOpStatus360(p){ if(p.entrega_propiedad||p.estado_operativo==='entregado') return 'entregado'; if(p.escritura_firmada||p.inscripcion_cbr||p.estado_operativo==='escritura') return 'escritura'; if(p.aprobacion_final||p.estado_operativo==='credito') return 'credito'; if(p.promesa_firmada||p.estado_operativo==='promesa') return 'promesa'; if(docsProgress360(p).pct<45) return 'docs_incompletos'; return p.estado_operativo||'en_revision' }
+function inferFinStatus360(p){ if(p.broker_pago_fecha||p.estado_financiero==='broker_pagado'||p.oc_estado==='pagado_broker') return 'broker_pagado'; if(p.inmob_pago_fecha||p.estado_financiero==='broker_facturar'||p.oc_estado==='broker_factura') return 'broker_facturar'; if(p.factura_fecha||p.estado_financiero==='facturado'||p.oc_estado==='factura_rabbitts') return 'facturado'; if(p.oc_fecha_recepcion||p.estado_financiero==='oc_recibida'||p.oc_estado==='oc_recibida') return 'oc_recibida'; if(p.estado_financiero==='solicitar_oc'||p.oc_estado==='pendiente_oc') return 'solicitar_oc'; return p.estado_financiero||'no_devengado' }
+function slaAlerts360(d){
+  const rules = [
+    {l:'Reserva sin handoff completo', d:2, test:x=>!x.fecha_reserva||!x.ejecutivo_inmobiliaria||!x.condiciones_especiales},
+    {l:'Reserva sin promesa firmada', d:7, test:x=>!x.promesa_firmada&&!['escritura','entregado'].includes(x.estado_operativo)},
+    {l:'Documentos incompletos', d:5, test:x=>(x.estado_operativo||'')==='docs_incompletos'||x.docProgress.pct<45},
+    {l:'OC pendiente', d:10, test:x=>x.estado_financiero==='solicitar_oc'||(x.oc_estado==='pendiente_oc'&&['firma','escritura','ganado'].includes(x.leadStage))},
+    {l:'Factura Rabbitts pendiente', d:15, test:x=>x.estado_financiero==='oc_recibida'||x.oc_estado==='oc_recibida'},
+    {l:'Cobro inmobiliaria atrasado', d:30, test:x=>x.estado_financiero==='facturado'||x.oc_estado==='factura_rabbitts'},
+    {l:'Broker pendiente de factura/pago', d:7, test:x=>x.estado_financiero==='broker_facturar'||x.oc_estado==='broker_factura'},
+  ]
+  return rules.filter(r=>d.days>=r.d&&r.test(d)).map(r=>r.l)
+}
+function buildDeals360(leads=[], users=[], stages=[], commissions={}, indicators={}){
+  const uf = indicators.uf ? nnum(indicators.uf) : 0
+  const usd = indicators.dolar ? nnum(indicators.dolar) : 0
+  return (leads||[]).flatMap(l=>(l.propiedades||[]).map((p,pi)=>{
+    const key=l.id+'-'+(p.id||('idx'+pi)); const comm=commissions[key]||{pctComision:'',pctBroker:'',cobrado:false}; const base=nnum(p.bono_pie?p.precio_sin_bono:p.precio)
+    const comisionTotal=base*nnum(comm.pctComision)/100; const comisionBroker=comisionTotal*nnum(comm.pctBroker)/100
+    const clp=p.moneda==='UF'&&uf?Math.round(comisionBroker*uf):p.moneda==='USD'&&usd?Math.round(comisionBroker*usd):0
+    const ag=users.find(u=>u.id===l.assigned_to)||{}; const st=stages.find(s=>s.id===l.stage)||{}; const created=p.fecha_reserva||l.stage_moved_at||l.fecha
+    const d={...p,key,leadId:l.id,propId:p.id,idx:pi,leadNombre:l.nombre,leadTelefono:l.telefono,leadEmail:l.email,leadStage:l.stage,leadStageLabel:st.label||l.stage,brokerId:l.assigned_to,brokerName:ag.name||'Sin broker',brokerPhone:ag.phone||'',created,days:days360(created),comm,base,comisionTotal,comisionBroker,comisionClp:clp}
+    d.estado_operativo=inferOpStatus360(d); d.estado_financiero=inferFinStatus360(d); d.docProgress=docsProgress360(d); d.alerts=slaAlerts360(d); d.health=d.riesgo_caida==='alto'||d.alerts.length>=3?'alto':d.alerts.length>=1||d.riesgo_caida==='medio'?'medio':'bajo'
+    return d
+  }))
+}
+function Chip360({children, styleMap, value}){ const s=(styleMap&&styleMap[value])||{l:value,bg:'#F9FAFB',col:'#374151'}; return <span style={{fontSize:11,padding:'4px 10px',borderRadius:99,background:s.bg,color:s.col,fontWeight:800,whiteSpace:'nowrap'}}>{children||s.l}</span> }
+function Kpi360({label,value,sub,bg='#fff',col=B.primary}){ return <div style={{background:bg,border:'1px solid #E2E8F0',borderRadius:14,padding:'14px 16px'}}><div style={{fontSize:11,color:'#64748B',fontWeight:800,textTransform:'uppercase',letterSpacing:.4}}>{label}</div><div style={{fontSize:24,fontWeight:900,color:col,marginTop:4}}>{value}</div>{sub&&<div style={{fontSize:11,color:'#64748B',marginTop:2}}>{sub}</div>}</div> }
+function Field360({label, children}){ return <div><div style={{fontSize:11,color:'#64748B',fontWeight:800,marginBottom:4}}>{label}</div>{children}</div> }
+function Select360({value,onChange,children}){ return <select value={value||''} onChange={e=>onChange(e.target.value)} style={{...sty.sel,fontSize:12,padding:'7px 10px'}}>{children}</select> }
+function Text360({value,onChange,placeholder=''}){ return <input value={value||''} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{...sty.inp,fontSize:12,padding:'7px 10px'}}/> }
+
+function Operaciones360View({leads, users, stages, commissions, indicators, savePropField, setSel, setModal}){
+  const [q,setQ]=React.useState(''); const [status,setStatus]=React.useState('all'); const [risk,setRisk]=React.useState('all'); const [expanded,setExpanded]=React.useState({})
+  const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','firma','escritura','ganado','desistio'].includes(d.leadStage)||d.fecha_reserva||d.estado_operativo!=='handoff_pendiente')
+  const filtered=deals.filter(d=>{const txt=(d.leadNombre+' '+d.brokerName+' '+d.inmobiliaria+' '+d.proyecto+' '+d.depto).toLowerCase(); if(q&&!txt.includes(q.toLowerCase()))return false; if(status!=='all'&&d.estado_operativo!==status)return false; if(risk!=='all'&&d.health!==risk)return false; return true})
+  const alerts=deals.flatMap(d=>d.alerts.map(a=>({a,d}))); const update=(d,fields,label='Operaciones 360')=>savePropField&&savePropField(d.leadId,d.propId,fields,label)
+  return <div><div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:14}}><div><div style={{fontSize:20,fontWeight:900,color:B.primary}}>🧩 Operaciones 360</div><div style={{fontSize:12,color:B.mid}}>Control post reserva: documentos, promesa, crédito, escritura, entrega y trazabilidad.</div></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar cliente, broker, proyecto..." style={{...sty.inp,width:260}}/><Select360 value={status} onChange={setStatus}><option value="all">Todos los estados</option>{Object.entries(OP_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360><Select360 value={risk} onChange={setRisk}><option value="all">Todo riesgo</option><option value="alto">Riesgo alto</option><option value="medio">Riesgo medio</option><option value="bajo">Riesgo bajo</option></Select360></div></div>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginBottom:14}}><Kpi360 label="Operaciones" value={deals.length}/><Kpi360 label="Alertas SLA" value={alerts.length} bg="#FEF2F2" col="#991b1b"/><Kpi360 label="Docs promedio" value={(deals.length?Math.round(deals.reduce((s,d)=>s+d.docProgress.pct,0)/deals.length):0)+'%'}/><Kpi360 label="Riesgo alto" value={deals.filter(d=>d.health==='alto').length} bg="#FFF7ED" col="#9a3412"/></div>
+    {alerts.length>0&&<div style={{background:'#fff',border:'1px solid #FCA5A5',borderRadius:14,padding:14,marginBottom:14}}><div style={{fontWeight:900,color:'#991b1b',fontSize:13,marginBottom:8}}>🚨 Alertas que requieren acción</div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:8}}>{alerts.slice(0,8).map((x,i)=><div key={i} style={{fontSize:12,padding:10,borderRadius:10,background:'#FEF2F2',color:'#7f1d1d'}}><strong>{x.d.leadNombre}</strong> · {x.d.proyecto}<br/>{x.a} · {x.d.days} días</div>)}</div></div>}
+    <div style={{display:'grid',gap:10}}>{filtered.map(d=>{const open=!!expanded[d.key]; return <div key={d.key} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden'}}><div style={{padding:14,display:'flex',gap:12,alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap'}}><div style={{minWidth:260,flex:1}}><div style={{fontWeight:900,color:'#0F172A',fontSize:14}}>{d.leadNombre} · {d.proyecto}{d.depto?' · '+d.depto:''}</div><div style={{fontSize:12,color:'#64748B',marginTop:3}}>Broker: <strong>{d.brokerName}</strong> · {d.inmobiliaria} · {d.moneda} {fmt360(d.base)}</div><div style={{marginTop:8,display:'flex',gap:6,flexWrap:'wrap'}}><Chip360 styleMap={OP_STATUS} value={d.estado_operativo}/><Chip360 styleMap={{alto:{l:'Riesgo alto',bg:'#FEF2F2',col:'#991b1b'},medio:{l:'Riesgo medio',bg:'#FFFBEB',col:'#92400e'},bajo:{l:'Riesgo bajo',bg:'#DCFCE7',col:'#14532d'}}} value={d.health}/><span style={{fontSize:11,color:'#64748B',fontWeight:800,padding:'4px 10px'}}>Docs {d.docProgress.pct}%</span></div></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><button onClick={()=>setExpanded(e=>({...e,[d.key]:!open}))} style={sty.btnO}>{open?'Cerrar':'Gestionar'}</button><button onClick={()=>{const lead=leads.find(l=>l.id===d.leadId); if(lead){setSel(lead);setModal('lead')}}} style={sty.btn}>Ver lead</button></div></div>{open&&<div style={{borderTop:'1px solid #E2E8F0',padding:14,background:'#F8FAFC'}}><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10,marginBottom:12}}><Field360 label="Estado operativo"><Select360 value={d.estado_operativo} onChange={v=>update(d,{estado_operativo:v},'Cambio estado operativo')}>{Object.entries(OP_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360></Field360><Field360 label="Riesgo de caída"><Select360 value={d.riesgo_caida||'medio'} onChange={v=>update(d,{riesgo_caida:v},'Cambio riesgo operación')}><option value="bajo">Bajo</option><option value="medio">Medio</option><option value="alto">Alto</option></Select360></Field360><Field360 label="Ejecutivo inmobiliaria"><Text360 value={d.ejecutivo_inmobiliaria} onChange={v=>update(d,{ejecutivo_inmobiliaria:v},'Actualiza ejecutivo inmobiliaria')} placeholder="Nombre / WhatsApp"/></Field360><Field360 label="Forma pago pie"><Text360 value={d.forma_pago_pie} onChange={v=>update(d,{forma_pago_pie:v},'Actualiza pago pie')} placeholder="Ej: 48 cuotas"/></Field360></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:12}}>{[['Fecha reserva','fecha_reserva'],['Promesa enviada','promesa_enviada'],['Promesa firmada','promesa_firmada'],['Pie confirmado','pie_confirmado'],['Preaprobación','preaprobacion'],['Aprobación final','aprobacion_final'],['Escritura firmada','escritura_firmada'],['Entrega propiedad','entrega_propiedad']].map(([lbl,k])=><Field360 key={k} label={lbl}><input type="date" value={d[k]||''} onChange={e=>update(d,{[k]:e.target.value},'Actualiza '+lbl)} style={{...sty.inp,fontSize:12,padding:'7px 10px'}}/></Field360>)}</div><Field360 label="Condiciones especiales prometidas al cliente"><textarea value={d.condiciones_especiales||''} onChange={e=>update(d,{condiciones_especiales:e.target.value},'Actualiza condiciones especiales')} style={{...sty.inp,minHeight:60,resize:'vertical'}} placeholder="Aquí debe quedar todo lo prometido por el broker o la inmobiliaria."/></Field360><div style={{marginTop:12,background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:12}}><div style={{fontWeight:900,color:B.primary,fontSize:13,marginBottom:8}}>📎 Documentos por operación</div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:8}}>{DOCS_360.map(doc=>{const val=(d.docs_estado||{})[doc]||'pendiente'; return <div key={doc} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,fontSize:12,padding:8,border:'1px solid #E2E8F0',borderRadius:10}}><span>{doc}</span><select value={val} onChange={e=>update(d,{docs_estado:{...(d.docs_estado||{}),[doc]:e.target.value}},'Actualiza documento '+doc)} style={{fontSize:11,border:'1px solid #E2E8F0',borderRadius:7,padding:'4px 6px'}}><option value="pendiente">Pendiente</option><option value="recibido">Recibido</option><option value="aprobado">Aprobado</option><option value="rechazado">Rechazado</option></select></div>})}</div></div>{(d.operational_log||[]).length>0&&<div style={{marginTop:12,fontSize:11,color:'#64748B'}}>Última trazabilidad: {(d.operational_log||[]).slice(-3).reverse().map((x,i)=><span key={i} style={{display:'block'}}>• {fmt(x.at)} · {x.by}: {x.action}</span>)}</div>}</div>}</div>})}</div>{filtered.length===0&&<div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:30,textAlign:'center',color:'#94a3b8'}}>Sin operaciones con este filtro.</div>}</div>
+}
+
+function Finanzas360View({leads, users, stages, commissions, indicators, savePropField, saveCommission, setCommissions}){
+  const [f,setF]=React.useState('all'); const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','firma','escritura','ganado'].includes(d.leadStage)||d.fecha_reserva); const filtered=f==='all'?deals:deals.filter(d=>d.estado_financiero===f); const totalComision=filtered.reduce((s,d)=>s+d.comisionTotal,0); const totalBroker=filtered.reduce((s,d)=>s+d.comisionBroker,0); const margen=totalComision-totalBroker; const update=(d,fields,label='Finanzas 360')=>savePropField&&savePropField(d.leadId,d.propId,fields,label)
+  const setComm=(d,field,val)=>{const next={...(commissions[d.key]||{}),[field]:val}; setCommissions(prev=>({...prev,[d.key]:next})); saveCommission&&saveCommission(d.key,next)}
+  return <div><div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:14}}><div><div style={{fontSize:20,fontWeight:900,color:B.primary}}>🏦 Finanzas 360</div><div style={{fontSize:12,color:B.mid}}>Cuentas por cobrar a inmobiliarias, cuentas por pagar a brokers y margen Rabbitts.</div></div><Select360 value={f} onChange={setF}><option value="all">Todos los estados financieros</option>{Object.entries(FIN_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:10,marginBottom:14}}><Kpi360 label="Comisión total" value={fmt360(totalComision)} sub="UF/USD según operación"/><Kpi360 label="Pago brokers" value={fmt360(totalBroker)} bg="#FFFBEB" col="#92400e"/><Kpi360 label="Margen Rabbitts" value={fmt360(margen)} bg="#DCFCE7" col="#14532d"/><Kpi360 label="Pendientes cobro" value={deals.filter(d=>!d.inmob_pago_fecha&&!d.broker_pago_fecha).length} bg="#FEF2F2" col="#991b1b"/></div><div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden'}}><table className="rcrm-table" style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{background:B.light,color:B.primary,textAlign:'left'}}>{['Cliente / operación','Broker','Estado financiero','% comisión','% broker','Por cobrar','Por pagar','Fechas clave'].map(h=><th key={h} style={{padding:10}}>{h}</th>)}</tr></thead><tbody>{filtered.map(d=><tr key={d.key} style={{borderTop:'1px solid #E2E8F0'}}><td style={{padding:10,fontWeight:700}}>{d.leadNombre}<div style={{fontWeight:500,color:'#64748B'}}>{d.inmobiliaria} · {d.proyecto} · {d.moneda} {fmt360(d.base)}</div></td><td style={{padding:10}}>{d.brokerName}</td><td style={{padding:10}}><Select360 value={d.estado_financiero} onChange={v=>update(d,{estado_financiero:v},'Cambio estado financiero')}>{Object.entries(FIN_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360></td><td style={{padding:10,width:110}}><input value={d.comm.pctComision||''} onChange={e=>setComm(d,'pctComision',e.target.value)} placeholder="4" style={{...sty.inp,padding:6,fontSize:12}}/></td><td style={{padding:10,width:110}}><input value={d.comm.pctBroker||''} onChange={e=>setComm(d,'pctBroker',e.target.value)} placeholder="60" style={{...sty.inp,padding:6,fontSize:12}}/></td><td style={{padding:10,fontWeight:800,color:B.primary}}>{d.moneda} {fmt360(d.comisionTotal)}</td><td style={{padding:10,fontWeight:800,color:'#166534'}}>{d.moneda} {fmt360(d.comisionBroker)}{d.comisionClp?<div style={{fontSize:10,color:'#64748B'}}>${d.comisionClp.toLocaleString('es-CL')} CLP</div>:null}</td><td style={{padding:10,minWidth:210}}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>{[['OC','oc_fecha_recepcion'],['Fact. R.','factura_fecha'],['Pagó Inmob.','inmob_pago_fecha'],['Pagó Broker','broker_pago_fecha']].map(([lbl,k])=><label key={k} style={{fontSize:10,color:'#64748B',fontWeight:700}}>{lbl}<input type="date" value={d[k]||''} onChange={e=>update(d,{[k]:e.target.value},'Actualiza '+lbl)} style={{...sty.inp,padding:5,fontSize:11}}/></label>)}</div></td></tr>)}</tbody></table>{filtered.length===0&&<div style={{padding:30,textAlign:'center',color:'#94a3b8'}}>Sin operaciones con este filtro.</div>}</div></div>
+}
+
+function PortalBrokerView({leads, users, stages, commissions, indicators, me}){
+  const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>d.brokerId===me.id); const activos=deals.filter(d=>d.estado_financiero!=='broker_pagado'); const pagados=deals.filter(d=>d.estado_financiero==='broker_pagado')
+  return <div><div style={{fontSize:20,fontWeight:900,color:B.primary,marginBottom:4}}>🧑‍💼 Portal Broker</div><div style={{fontSize:12,color:B.mid,marginBottom:14}}>Tus operaciones, pendientes post reserva, comisiones proyectadas y pagos.</div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginBottom:14}}><Kpi360 label="Operaciones activas" value={activos.length}/><Kpi360 label="Comisión proyectada" value={fmt360(deals.reduce((s,d)=>s+d.comisionBroker,0))}/><Kpi360 label="Por cobrar" value={fmt360(activos.reduce((s,d)=>s+d.comisionBroker,0))} bg="#FFFBEB" col="#92400e"/><Kpi360 label="Pagadas" value={pagados.length} bg="#DCFCE7" col="#14532d"/></div><div style={{display:'grid',gap:10}}>{deals.map(d=><div key={d.key} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><div><div style={{fontWeight:900,color:'#0F172A'}}>{d.leadNombre} · {d.proyecto}{d.depto?' · '+d.depto:''}</div><div style={{fontSize:12,color:'#64748B'}}>{d.inmobiliaria} · {d.moneda} {fmt360(d.base)} · Etapa {d.leadStageLabel}</div></div><div style={{textAlign:'right'}}><div style={{fontSize:11,color:'#64748B',fontWeight:800}}>Mi comisión</div><div style={{fontSize:20,fontWeight:900,color:'#14532d'}}>{d.moneda} {fmt360(d.comisionBroker)}</div>{d.comisionClp?<div style={{fontSize:11,color:'#64748B'}}>${d.comisionClp.toLocaleString('es-CL')} CLP</div>:null}</div></div><div style={{marginTop:10,display:'flex',gap:6,flexWrap:'wrap'}}><Chip360 styleMap={OP_STATUS} value={d.estado_operativo}/><Chip360 styleMap={FIN_STATUS} value={d.estado_financiero}/><span style={{fontSize:11,color:'#64748B',fontWeight:800,padding:'4px 10px'}}>Docs {d.docProgress.pct}%</span>{d.alerts.length>0&&<span style={{fontSize:11,padding:'4px 10px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:800}}>⚠ {d.alerts.length} pendiente(s)</span>}</div>{d.estado_financiero==='broker_facturar'&&<div style={{marginTop:10,padding:10,borderRadius:10,background:'#FFF7ED',color:'#9a3412',fontSize:12,fontWeight:700}}>La inmobiliaria ya pagó. Debes enviar tu factura/boleta a Rabbitts para liberar pago.</div>}</div>)}</div>{deals.length===0&&<div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:30,textAlign:'center',color:'#94a3b8'}}>Aún no tienes operaciones post reserva registradas.</div>}</div>
+}
+
+function RabitoInternoView({leads, users, stages, commissions, indicators}){
+  const [ask,setAsk]=React.useState('operaciones atrasadas'); const deals=buildDeals360(leads,users,stages,commissions,indicators); const atrasadas=deals.filter(d=>d.alerts.length>0).sort((a,b)=>b.alerts.length-a.alerts.length); const brokerPend=deals.filter(d=>d.estado_financiero==='broker_facturar'); const ocPend=deals.filter(d=>['solicitar_oc','oc_recibida','facturado'].includes(d.estado_financiero)&&!d.inmob_pago_fecha)
+  const respuesta=(()=>{const q=ask.toLowerCase(); if(q.includes('broker')||q.includes('pagar')) return brokerPend.length?'Hay '+brokerPend.length+' operación(es) donde el broker debe facturar o Finanzas debe pagar. Prioridad: '+brokerPend.slice(0,5).map(d=>d.leadNombre+' / '+d.brokerName).join(', ')+'.':'No veo pagos a broker bloqueados ahora.'; if(q.includes('oc')||q.includes('cobrar')||q.includes('inmobiliaria')) return ocPend.length?'Hay '+ocPend.length+' cuenta(s) por cobrar o por gestionar con inmobiliarias. Revisa primero: '+ocPend.slice(0,5).map(d=>d.inmobiliaria+' / '+d.leadNombre).join(', ')+'.':'No veo OC/cobros críticos pendientes.'; if(q.includes('document')){const docs=deals.filter(d=>d.docProgress.pct<60); return docs.length?'Hay '+docs.length+' operación(es) con documentación bajo 60%. Primeras: '+docs.slice(0,5).map(d=>d.leadNombre+' '+d.docProgress.pct+'%').join(', ')+'.':'La documentación se ve razonablemente avanzada.'} return atrasadas.length?'Hay '+atrasadas.length+' operación(es) atrasadas. Prioridad: '+atrasadas.slice(0,6).map(d=>d.leadNombre+' ('+d.alerts[0]+')').join(', ')+'.':'No veo operaciones atrasadas según las reglas SLA configuradas.'})()
+  return <div><div style={{fontSize:20,fontWeight:900,color:B.primary,marginBottom:4}}>🐰 Rabito Interno</div><div style={{fontSize:12,color:B.mid,marginBottom:14}}>Asistente operativo basado en datos del CRM. Sirve para detectar atrasos, cobros, pagos y documentación.</div><div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16,marginBottom:14}}><Field360 label="Pregunta interna"><input value={ask} onChange={e=>setAsk(e.target.value)} placeholder="Ej: qué operaciones están atrasadas, qué brokers hay que pagar, qué OC faltan..." style={sty.inp}/></Field360><div style={{marginTop:14,padding:14,borderRadius:12,background:B.light,color:'#0F172A',lineHeight:1.55,fontSize:14}}><strong>Rabito:</strong> {respuesta}</div></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10}}><Kpi360 label="Operaciones con alerta" value={atrasadas.length} bg="#FEF2F2" col="#991b1b"/><Kpi360 label="Brokers por facturar/pagar" value={brokerPend.length} bg="#FFF7ED" col="#9a3412"/><Kpi360 label="Cobros inmobiliaria pendientes" value={ocPend.length} bg="#FFFBEB" col="#92400e"/></div></div>
 }
 
 // ─── Lead Form ────────────────────────────────────────────────────────────────
