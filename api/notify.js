@@ -70,6 +70,96 @@ export default async function handler(req, res) {
       })
       return res.status(200).json({ success: true, type: 'wa_sent' })
     }
+    // ── Notificación Reserva: subir documentos ────────────────────────────────
+    if (type === 'reserva_documentos') {
+      const { agentName, leadNombre, agentEmail, agentPhone, opsEmails, opsPhones, reminderDays } = body
+      const EVO_URL = process.env.EVO_URL || 'https://wa.rabbittscapital.com'
+      const EVO_KEY = process.env.EVO_KEY || 'rabbitts2024'
+
+      // Get WA instance
+      let instanceName = ''
+      try {
+        const sbUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
+        const sbKey = (process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
+        if (sbUrl && sbKey) {
+          const r = await fetch(`${sbUrl}/rest/v1/crm_settings?key=eq.wa_numeros&select=value`, { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } })
+          const d = await r.json()
+          instanceName = (d?.[0]?.value || []).find(n => n.activo)?.instanceName || ''
+        }
+      } catch(_) {}
+
+      const sendWA = async (phone, text) => {
+        if (!phone || !instanceName) return
+        const clean = String(phone).replace(/[^0-9]/g, '')
+        await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', apikey: EVO_KEY },
+          body: JSON.stringify({ number: clean, text, delay: 500 })
+        }).catch(()=>{})
+      }
+
+      // 1. WhatsApp al broker
+      const waTextBroker = `📋 ¡Hola ${agentName}! El cliente *${leadNombre}* pasó a *Reserva*. 
+Debes subir los documentos esenciales para solicitar la promesa:
+• Cédula / Pasaporte
+• Comprobante de reserva
+• Preaprobación hipotecaria
+• Liquidaciones de renta
+• Carpeta tributaria
+Ingresa al CRM y súbelos en la ficha del cliente. Tienes 3 días 💪`
+      if (agentPhone) await sendWA(agentPhone, waTextBroker)
+
+      // 2. WhatsApp a operaciones
+      const waTextOps = `🏠 Nueva reserva: *${leadNombre}* fue reservado por el broker *${agentName}*. Revisa el CRM para hacer seguimiento de los documentos.`
+      for (const phone of (opsPhones || [])) await sendWA(phone, waTextOps)
+
+      // 3. Email al broker
+      if (agentEmail) {
+        subject = `📋 Reserva confirmada — Sube los documentos de ${leadNombre}`
+        html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px">
+          <h2 style="color:#1B4FC8">¡Hola ${agentName}!</h2>
+          <p>El cliente <strong>${leadNombre}</strong> pasó a etapa de <strong>Reserva</strong>.</p>
+          <p>Debes subir los siguientes documentos en el CRM dentro de los próximos 3 días para solicitar la promesa:</p>
+          <ul style="color:#374151;font-size:14px;line-height:2">
+            <li>Cédula de identidad / Pasaporte</li>
+            <li>Comprobante de reserva</li>
+            <li>Preaprobación o evaluación hipotecaria</li>
+            <li>Liquidaciones / respaldo de renta</li>
+            <li>Carpeta tributaria</li>
+            <li>Condiciones comerciales / pie</li>
+          </ul>
+          <p style="color:#9ca3af;font-size:12px">Rabbitts Capital CRM — Recordatorio automático</p>
+        </div>`
+        const RESEND_KEY = process.env.RESEND_API_KEY
+        const FROM = process.env.CRM_FROM_EMAIL || 'crm@rabbittscapital.com'
+        if (RESEND_KEY) {
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_KEY}` },
+            body: JSON.stringify({ from: FROM, to: agentEmail, subject, html })
+          }).catch(()=>{})
+        }
+      }
+
+      // 4. Email a operaciones
+      if ((opsEmails||[]).length > 0) {
+        const opsSubject = `🏠 Nueva reserva — ${leadNombre} (broker: ${agentName})`
+        const opsHtml = `<div style="font-family:Arial,sans-serif;padding:20px"><h3 style="color:#1B4FC8">Nueva reserva registrada</h3><p>El broker <strong>${agentName}</strong> registró la reserva del cliente <strong>${leadNombre}</strong>.</p><p>Revisa el CRM para hacer seguimiento de la documentación requerida.</p></div>`
+        const RESEND_KEY = process.env.RESEND_API_KEY
+        const FROM = process.env.CRM_FROM_EMAIL || 'crm@rabbittscapital.com'
+        if (RESEND_KEY) {
+          for (const opsEmail of opsEmails) {
+            await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_KEY}` },
+              body: JSON.stringify({ from: FROM, to: opsEmail, subject: opsSubject, html: opsHtml })
+            }).catch(()=>{})
+          }
+        }
+      }
+
+      return res.status(200).json({ success: true, type: 'reserva_notificado' })
+    }
+
     if (!to || !agentName) return res.status(400).json({ error: 'Faltan campos' })
 
     const ROLE_LABELS = {
