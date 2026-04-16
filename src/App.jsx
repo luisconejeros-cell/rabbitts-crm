@@ -3398,6 +3398,67 @@ export default function App() {
 
 
 
+        {nav==='ia' && isAdmin && (
+          <IAConfigView iaConfig={iaConfig} setIaConfig={setIaConfig} users={users} leads={leads} supabase={supabase} dbReady={dbReady}/>
+        )}
+
+        {/* MARKETPLACE */}
+        {nav==='marketplace' && (isAdmin||isAgent||isPartner) && (
+          <MarketplaceView
+            config={marketplaceConfig}
+            setConfig={setMarketplaceConfig}
+            isAdmin={isAdmin}
+            supabase={supabase}
+            dbReady={dbReady}
+            me={me}
+          />
+        )}
+
+        {/* CONVERSACIONES */}
+        {nav==='conversaciones' && isAdmin && (
+          <ConversacionesView
+            conversations={conversations}
+            convMessages={convMessages}
+            activeConv={activeConv}
+            setActiveConv={setActiveConv}
+            loadConvMessages={loadConvMessages}
+            upsertConversation={upsertConversation}
+            saveConvMessage={saveConvMessage}
+            iaConfig={iaConfig}
+            users={users}
+            leads={leads}
+            setLeads={setLeads}
+            supabase={supabase}
+            dbReady={dbReady}
+            me={me}
+            setConversations={setConversations}
+            deleteConversation={deleteConversation}
+            setIaConfig={setIaConfig}
+          />
+        )}
+
+        {/* AGENDA EQUIPO — admin config */}
+        {nav==='agenda' && isAdmin && (
+          <AgendaEquipoView users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady} agendaSettings={agendaSettings} setAgendaSettings={setAgendaSettings}/>
+        )}
+
+        {/* MI AGENDA — broker availability config */}
+        {nav==='mi agenda' && isAgent && (
+          <MiAgendaView me={me} users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady}/>
+        )}
+
+        {/* OPERACIONES 360 */}
+        {nav==='operaciones' && (isAdmin||isOps) && (
+          <Operaciones360View leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} savePropField={savePropField} setSel={setSel} setModal={setModal} me={me}/>
+        )}
+
+        {/* FINANZAS 360 */}
+        {nav==='finanzas_360' && (isAdmin||isFinanzas) && (
+          <Finanzas360View leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} savePropField={savePropField} saveCommission={saveCommission} setCommissions={setCommissions}/>
+        )}
+
+        {/* PORTAL BROKER */}
+
         {nav==='portal_broker' && isAgent && (
           <PortalBrokerView leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} me={me}/>
         )}
