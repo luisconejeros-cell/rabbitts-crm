@@ -1,539 +1,305 @@
-// api/agent.js — Rabito genérico estable
-// Principio: el agente NO trae negocio pregrabado. Responde desde Panel IA + documentos + feedback + memoria.
+// api/agent.js — Rabito: agente de ventas Rabbitts Capital
+// FLUJO: cliente escribe → agente lee entrenamiento completo → analiza contexto → responde
 
 import { createClient } from '@supabase/supabase-js'
 
 const clean = (v = '') => String(v ?? '').trim()
 const normalize = (v = '') => clean(v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-const nowIso = () => new Date().toISOString()
 
-const DEFAULT_BLOCKED_PHRASES = [
-  'alta demanda',
-  'mucha demanda',
-  'demanda alta',
-  'estoy con alta demanda',
-  'estamos con alta demanda',
-  'no estoy disponible',
-  'no tengo disponibilidad',
-  'responderé después',
-  'te responderé después',
-  'te responderé más tarde',
-  'te contesto más tarde',
-  'en cuanto pueda',
-  'cuando esté disponible',
-  'soy una ia',
-  'soy un modelo de lenguaje',
-  'como modelo de lenguaje',
-  'no puedo responder ahora',
-  'no puedo atender ahora'
-]
-
-function baseActiveFallback(iaConfig = {}) {
-  const name = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Rabito') || 'Rabito'
-  return `${name} por acá. Cuéntame qué necesitas y te ayudo de inmediato.`
-}
-
-function looksUnavailable(text = '') {
-  const n = normalize(text)
-  return /(alta demanda|mucha demanda|demanda alta|no estoy disponible|no tengo disponibilidad|respondere despues|respondere mas tarde|contesto mas tarde|cuando este disponible|no puedo responder ahora|no puedo atender ahora|soy una ia|modelo de lenguaje)/i.test(n)
-}
-
-function buildTrace({ panel = '', agenda = '', knowledge = {}, training = {}, iaConfig = {}, debug = false } = {}) {
-  const hardRules = flatten([iaConfig.reglasDuras, iaConfig.reglasDerivacion, iaConfig.reglasRevision, iaConfig.reglasRabito, iaConfig.instrucciones])
-  const derivationAllowedByHardRules = /humano|ejecutivo|asesor|derivar|requiere_revision|requiere revision/i.test(hardRules)
-  const chunksUsed = (knowledge.used || []).map(x => ({ docName: x.title || x.docName || 'Conocimiento', title: x.title || x.docName || 'Conocimiento', score: x.score || x.s || 0 }))
-  const feedbackUsed = (training.used || []).map(x => ({ ...x, score: x.score || x.s || 0 }))
-  const trace = {
-    panelLoaded: Boolean(clean(panel)),
-    agendaConfigured: Boolean(clean(agenda)),
-    chunksAvailable: (knowledge.used || []).length,
-    chunksUsed,
-    feedbackUsed,
-    memoryLoaded: true,
-    derivationAllowedByHardRules
-  }
-  return debug ? trace : { derivationAllowedByHardRules }
-}
-
-
-function getSupabase() {
+// ── Supabase ──────────────────────────────────────────────────────────────────
+function makeSupa() {
   const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
   const key = clean(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
   if (!url || !key) return null
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 }
 
-function safeJson(text = '') {
-  try { return JSON.parse(text) } catch { return null }
-}
-
-function stripCodeFence(text = '') {
-  return clean(text).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
-}
-
-function extractJson(text = '') {
-  const src = stripCodeFence(text)
-  const first = src.indexOf('{')
-  const last = src.lastIndexOf('}')
-  if (first === -1 || last === -1 || last <= first) return ''
-  return src.slice(first, last + 1)
-}
-
-function flatten(value, depth = 0) {
-  if (value == null || depth > 5) return ''
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return clean(value)
-  if (Array.isArray(value)) return value.map(v => flatten(v, depth + 1)).filter(Boolean).join('\n')
-  if (typeof value === 'object') {
-    return Object.entries(value)
-      .filter(([k]) => !/token|apikey|api_key|secret|password|key$/i.test(k))
-      .map(([k, v]) => {
-        const txt = flatten(v, depth + 1)
-        return txt ? `${k}: ${txt}` : ''
-      })
-      .filter(Boolean)
-      .join('\n')
+// ── Flatten any value to readable text ───────────────────────────────────────
+function flatten(v, d = 0) {
+  if (v == null || d > 4) return ''
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return clean(String(v))
+  if (Array.isArray(v)) return v.map(x => flatten(x, d + 1)).filter(Boolean).join('\n')
+  if (typeof v === 'object') {
+    return Object.entries(v)
+      .filter(([k]) => !/token|apikey|api_key|secret|password/i.test(k))
+      .map(([k, val]) => { const t = flatten(val, d + 1); return t ? `${k}: ${t}` : '' })
+      .filter(Boolean).join('\n')
   }
   return ''
 }
 
-function words(text = '') {
-  return normalize(text).replace(/[^a-z0-9ñáéíóúü\s]/gi, ' ').split(/\s+/).filter(w => w.length >= 3)
-}
+// ── Read all training from DB ─────────────────────────────────────────────────
+// Returns a single string with ALL training content the admin configured
+async function loadTraining(db, iaConfig) {
+  const lines = []
 
-function score(query = '', text = '') {
-  const qs = [...new Set(words(query))]
-  const nt = normalize(text)
-  let s = 0
-  for (const w of qs) if (nt.includes(w)) s += w.length >= 6 ? 3 : 1
-  return s
-}
-
-async function readSetting(db, key, fallback = null) {
-  if (!db) return fallback
-  try {
-    const { data } = await db.from('crm_settings').select('value').eq('key', key).single()
-    return data?.value ?? fallback
-  } catch { return fallback }
-}
-
-async function readSettings(db) {
-  if (!db) return { map: {}, text: '', rows: [] }
-  const keys = ['ia_config', 'agent_training', 'rabito_knowledge', 'rabito_knowledge_chunks', 'drive_content', 'ia_knowledge', 'agent_rules']
-  const mergeValue = (oldVal, newVal) => {
-    if (oldVal == null) return newVal
-    if (Array.isArray(oldVal) && Array.isArray(newVal)) return [...newVal, ...oldVal]
-    if (Array.isArray(oldVal)) return [newVal, ...oldVal].filter(Boolean)
-    if (Array.isArray(newVal)) return [...newVal, oldVal].filter(Boolean)
-    if (typeof oldVal === 'object' && typeof newVal === 'object' && oldVal && newVal) {
-      const out = { ...oldVal, ...newVal }
-      // Merge common arrays instead of overwriting them. This is critical when crm_settings has duplicated keys.
-      for (const k of ['items', 'docs', 'chunks', 'files', 'entrenamiento', 'cerebroDocs']) {
-        if (Array.isArray(oldVal[k]) || Array.isArray(newVal[k])) {
-          out[k] = [...(Array.isArray(newVal[k]) ? newVal[k] : []), ...(Array.isArray(oldVal[k]) ? oldVal[k] : [])]
-        }
-      }
-      return out
-    }
-    return newVal
-  }
-  try {
-    const { data, error } = await db.from('crm_settings').select('key,value').in('key', keys).limit(200)
-    if (error) throw error
-    const map = {}
-    for (const row of data || []) map[row.key] = mergeValue(map[row.key], row.value)
-    const text = Object.entries(map).map(([k, v]) => {
-      const txt = flatten(v)
-      return txt ? `### ${k}\n${txt}` : ''
-    }).filter(Boolean).join('\n\n').slice(0, 35000)
-    return { map, text, rows: data || [] }
-  } catch (e) {
-    console.error('[AGENT] readSettings error:', e.message)
-    return { map: {}, text: '', rows: [] }
-  }
-}
-
-function mergeIaConfig(reqConfig = {}, settings = {}) {
-  const saved = settings.map?.ia_config && typeof settings.map.ia_config === 'object' ? settings.map.ia_config : {}
-  return { ...saved, ...(reqConfig && typeof reqConfig === 'object' ? reqConfig : {}) }
-}
-
-function knowledgeFromSettings(settings = {}) {
-  const out = []
-
-  const chunksValue = settings.map?.rabito_knowledge_chunks
-  const chunks = Array.isArray(chunksValue?.chunks) ? chunksValue.chunks : Array.isArray(chunksValue) ? chunksValue : []
-  for (const c of chunks) {
-    const content = clean(c.content || c.contenido || c.text || c.texto)
-    if (content) out.push({ title: clean(c.title || c.titulo || c.docName || c.nombre || 'Conocimiento'), content, active: c.activo !== false })
-  }
-
-  const docsGroups = [
-    settings.map?.rabito_knowledge?.docs,
-    settings.map?.ia_config?.cerebroDocs,
-    settings.map?.drive_content?.files,
-    settings.map?.ia_knowledge?.docs
-  ]
-  for (const group of docsGroups) {
-    if (!Array.isArray(group)) continue
-    for (const d of group) {
-      const content = clean(d.content || d.contenido || d.text || d.extract || d.body)
-      if (content) out.push({ title: clean(d.name || d.title || d.nombre || 'Documento'), content, active: d.activo !== false })
+  // 1. Training pairs saved in Panel IA (entrenamiento tab)
+  const entrenamiento = iaConfig?.entrenamiento
+  if (Array.isArray(entrenamiento) && entrenamiento.length) {
+    lines.push('=== PARES PREGUNTA-RESPUESTA (sigue estos exactamente) ===')
+    for (const item of entrenamiento) {
+      const ctx  = clean(item.context  || item.pregunta  || item.original || '')
+      const resp = clean(item.improved || item.respuesta || item.correction || '')
+      const rule = clean(item.reason   || item.regla     || '')
+      if (resp) lines.push(`CLIENTE DICE: ${ctx || '(cualquier mensaje)'}\nRABITO RESPONDE: ${resp}${rule ? '\nPOR QUÉ: ' + rule : ''}`)
     }
   }
-  return out.filter(x => x.active && x.content)
-}
 
-async function readKnowledge(db, query = '', settings = {}) {
-  const rows = []
+  // 2. agent_training table in crm_settings
   if (db) {
     try {
-      const { data } = await db.from('crm_knowledge_chunks')
-        .select('id,title,titulo,content,contenido,tags,producto,canal,activo')
-        .limit(300)
-      for (const c of data || []) {
-        const content = clean(c.content || c.contenido)
-        if (content && c.activo !== false) rows.push({ title: clean(c.title || c.titulo || 'Conocimiento'), content, tags: flatten([c.tags, c.producto, c.canal]) })
+      const { data } = await db.from('crm_settings').select('value').eq('key', 'agent_training').single()
+      const items = Array.isArray(data?.value) ? data.value : Array.isArray(data?.value?.items) ? data.value.items : []
+      if (items.length) {
+        lines.push('=== REGLAS Y CORRECCIONES ADICIONALES ===')
+        for (const item of items) {
+          const ctx  = clean(item.context  || item.pregunta  || item.original || '')
+          const resp = clean(item.improved || item.respuesta || item.correction || '')
+          const rule = clean(item.reason   || item.regla     || '')
+          if (resp) lines.push(`SI: ${ctx || '(general)'}\nDI: ${resp}${rule ? '\nREGLA: ' + rule : ''}`)
+        }
       }
     } catch {}
   }
 
-  rows.push(...knowledgeFromSettings(settings))
-  if (!rows.length) return { text: settings.text.slice(0, 18000), used: [] }
-
-  const ranked = rows.map((r, i) => ({ ...r, i, s: score(query, `${r.title}\n${r.tags || ''}\n${r.content}`) }))
-    .sort((a, b) => b.s - a.s)
-  const picked = ranked.filter(r => r.s > 0).slice(0, 6)
-  const final = picked.length ? picked : ranked.slice(0, 4)
-  return {
-    text: final.map((r, idx) => `### Conocimiento ${idx + 1}: ${r.title}\n${r.content.slice(0, 2200)}`).join('\n\n'),
-    used: final.map(r => ({ title: r.title, score: r.s }))
-  }
-}
-
-function normalizeTrainingItem(x = {}) {
-  return {
-    original: clean(x.original || x.msg_content || x.message || x.before || x.incorrect || x.mensajeOriginal || x.pregunta || ''),
-    context: clean(x.context || x.pregunta || x.prompt || x.userMessage || x.cliente || x.entrada || ''),
-    improved: clean(x.improved || x.correction || x.after || x.correct || x.respuestaCorrecta || x.mensajeMejorado || x.respuesta || ''),
-    reason: clean(x.reason || x.feedback || x.explanation || x.instruccion || x.regla || x.razon || ''),
-    active: x.active !== false && x.activo !== false
-  }
-}
-
-async function readTraining(db, query = '', settings = {}) {
-  const items = []
-
-  const saved = settings.map?.agent_training
-  const savedArr = Array.isArray(saved) ? saved : Array.isArray(saved?.items) ? saved.items : []
-  items.push(...savedArr)
-
-  const iaTraining = settings.map?.ia_config?.entrenamiento
-  if (Array.isArray(iaTraining)) items.push(...iaTraining)
-
+  // 3. Feedback from real conversations (crm_conv_feedback)
   if (db) {
     try {
       const { data } = await db.from('crm_conv_feedback')
-        .select('msg_content,feedback,correction,improved,created_at')
+        .select('msg_content,correction,improved,feedback')
         .order('created_at', { ascending: false })
-        .limit(100)
-      items.push(...(data || []))
+        .limit(50)
+      const feedback = (data || []).filter(x => clean(x.correction || x.improved))
+      if (feedback.length) {
+        lines.push('=== CORRECCIONES DE CONVERSACIONES REALES ===')
+        for (const fb of feedback) {
+          const original = clean(fb.msg_content || '')
+          const corrected = clean(fb.correction || fb.improved || '')
+          if (corrected) lines.push(`CUANDO DIGAN: "${original}"\nDI: "${corrected}"`)
+        }
+      }
     } catch {}
   }
 
-  const normalized = items.map(normalizeTrainingItem).filter(x => x.active && (x.context || x.original || x.improved || x.reason))
-  const ranked = normalized.map(x => {
-    const haystack = `${x.context}
-${x.original}
-${x.reason}
-${x.improved}`
-    return { ...x, s: score(query, haystack), haystack }
-  }).sort((a, b) => b.s - a.s)
-  const picked = ranked.filter(x => x.s > 0).slice(0, 10)
-  const final = picked.length ? picked : ranked.slice(0, 8)
+  return lines.join('\n\n')
+}
 
-  return {
-    items: final,
-    allItems: normalized,
-    text: final.map((x, i) => `### Aprendizaje ${i + 1}
-Contexto del cliente: ${x.context || 'general'}
-Respuesta mala/anterior: ${x.original || 'sin ejemplo'}
-Regla/razón: ${x.reason || 'sin razón'}
-Respuesta preferida: ${x.improved || 'sin respuesta exacta'}`).join('\n\n'),
-    used: final.map(x => ({ context: x.context, original: x.original, correction: x.improved, score: x.s }))
+// ── Load knowledge docs (Cerebro Rabito) ─────────────────────────────────────
+async function loadCerebro(db, iaConfig) {
+  const docs = []
+
+  // From iaConfig.cerebroDocs
+  for (const d of (iaConfig?.cerebroDocs || [])) {
+    const txt = clean(d.content || d.extract || d.text || '')
+    if (txt) docs.push({ name: d.name || d.title || 'Documento', content: txt })
+  }
+
+  // From rabito_knowledge in crm_settings
+  if (db) {
+    try {
+      const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge').single()
+      for (const d of (data?.value?.docs || [])) {
+        const txt = clean(d.content || d.extract || d.text || '')
+        if (txt) docs.push({ name: d.name || d.title || 'Conocimiento', content: txt })
+      }
+    } catch {}
+
+    // From rabito_knowledge_chunks
+    try {
+      const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge_chunks').single()
+      const chunks = Array.isArray(data?.value?.chunks) ? data.value.chunks : Array.isArray(data?.value) ? data.value : []
+      for (const ch of chunks) {
+        const txt = clean(ch.content || ch.contenido || '')
+        if (txt) docs.push({ name: ch.title || ch.titulo || 'Conocimiento', content: txt })
+      }
+    } catch {}
+
+    // From crm_knowledge_chunks table
+    try {
+      const { data } = await db.from('crm_knowledge_chunks').select('title,content,activo').limit(50)
+      for (const row of (data || [])) {
+        if (row.activo !== false && row.content) docs.push({ name: row.title || 'Conocimiento', content: row.content })
+      }
+    } catch {}
+  }
+
+  if (!docs.length) return ''
+  return docs.map((d, i) => `### Documento ${i + 1}: ${d.name}\n${d.content.slice(0, 3000)}`).join('\n\n')
+}
+
+// ── Parse Claude's JSON response ──────────────────────────────────────────────
+function parseReply(raw = '') {
+  const txt = clean(raw).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+  try {
+    const j = JSON.parse(txt)
+    return { reply: clean(j.reply || j.message || j.text || ''), action: j.action || 'conversando', statusUpdate: j.statusUpdate || '' }
+  } catch {
+    const m = txt.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (m) return { reply: clean(m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')), action: 'conversando', statusUpdate: '' }
+    // If Claude didn't follow JSON format, use raw text directly
+    if (txt && !txt.startsWith('{')) return { reply: txt.slice(0, 700), action: 'conversando', statusUpdate: '' }
+    return { reply: '', action: 'conversando', statusUpdate: '' }
   }
 }
 
-function directTrainingReply(training, message, iaConfig) {
-  const q = normalize(message)
-  // Exact or near-exact match → reply directly without calling Claude
-  const exact = (training.items || []).find(x => x.improved && (
-    normalize(x.context) === q ||
-    normalize(x.original) === q ||
-    // Partial match: training context is contained in message or vice versa
-    (normalize(x.context).length > 6 && q.includes(normalize(x.context))) ||
-    (normalize(x.original).length > 6 && q.includes(normalize(x.original))) ||
-    x.s >= 4
-  ))
-  if (!exact) return ''
-  return cleanOutput(exact.improved, iaConfig)
-}
-
-function panelText(iaConfig = {}) {
-  const priority = [
-    'nombreAgente','agentName','nombre','rol','identidad','personalidad','tono',
-    'oferta','productos','servicios','catalogo','propuestaValor','beneficios',
-    'procesoVenta','pasos','flujo','guion','metodoVenta',
-    'reglas','reglasDuras','reglasDerivacion','reglasRevision','instrucciones','noDecir','frasesProhibidas',
-    'objeciones','faq','preguntasFrecuentes','entrenamiento','respuestasGuardadas',
-    'agendaLink','linkAgenda','urlAgenda','mensajeFallback','fallbackMessage'
-  ]
-  const used = new Set()
-  const blocks = []
-  for (const k of priority) {
-    if (!(k in iaConfig)) continue
-    used.add(k)
-    const txt = flatten(iaConfig[k])
-    if (txt) blocks.push(`### ${k}\n${txt}`)
-  }
-  for (const [k, v] of Object.entries(iaConfig)) {
-    if (used.has(k) || /token|apikey|secret|password/i.test(k)) continue
-    const txt = flatten(v)
-    if (txt) blocks.push(`### ${k}\n${txt}`)
-  }
-  return blocks.join('\n\n').slice(0, 30000)
-}
-
-function blockedPhrases(iaConfig = {}) {
-  const raw = flatten([iaConfig.frasesProhibidas, iaConfig.noDecir, iaConfig.blockedPhrases, iaConfig.reglasDuras])
-  const fromPanel = raw.split('\n').map(clean).filter(x => x.length >= 4 && x.length <= 180)
-  return [...new Set([...DEFAULT_BLOCKED_PHRASES, ...fromPanel])]
-}
-
-function cleanOutput(reply = '', iaConfig = {}) {
-  let out = stripCodeFence(reply)
-  if (!out) return ''
-  if (out.startsWith('{')) out = parseOutput(out).reply || ''
-  out = clean(out.replace(/\[ACCION:[^\]]+\]/gi, '').replace(/\[DATOS:[^\]]+\]/gi, '').replace(/\*\*/g, ''))
-  for (const p of blockedPhrases(iaConfig)) {
-    const re = new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig')
-    out = out.replace(re, '')
-  }
-  out = out.replace(/\s{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
-  if (!out || looksUnavailable(out)) out = baseActiveFallback(iaConfig)
-  const max = Number(iaConfig.maxCaracteresRespuesta || iaConfig.replyMaxLength || 700) || 700
-  if (out.length > max) out = out.slice(0, Math.max(160, max - 20)).replace(/\s+\S*$/, '') + '...'
-  return out
-}
-
-function parseOutput(raw = '') {
-  const src = stripCodeFence(raw)
-  const parsed = safeJson(src) || safeJson(extractJson(src))
-  if (parsed && typeof parsed === 'object') {
-    return {
-      reply: clean(parsed.reply || parsed.message || parsed.text || ''),
-      action: clean(parsed.action || 'conversando'),
-      statusUpdate: clean(parsed.statusUpdate || parsed.status || ''),
-      leadUpdate: parsed.leadUpdate && typeof parsed.leadUpdate === 'object' ? parsed.leadUpdate : {},
-      memoryUpdate: parsed.memoryUpdate && typeof parsed.memoryUpdate === 'object' ? parsed.memoryUpdate : {},
-      escalateToHuman: parsed.escalateToHuman === true,
-      reason: clean(parsed.reason || parsed.derivationReason || '')
-    }
-  }
-  return { reply: src, action: 'conversando', statusUpdate: '', leadUpdate: {}, memoryUpdate: {}, escalateToHuman: false, reason: '' }
-}
-
-function getFallback(iaConfig = {}, training = null, input = '') {
-  const fromPanel = clean(iaConfig.mensajeFallback || iaConfig.fallbackMessage || iaConfig.respuestaFallback || '')
-  if (fromPanel) return fromPanel
-
-  const candidates = [
-    ...(training?.items || []),
-    ...(training?.allItems || [])
-  ].filter(x => x?.improved)
-
-  const byRule = candidates.find(x => /fallback|cuando no sepas|respuesta base|saludo|inicio|primera respuesta|mensaje inicial/i.test(`${x.context} ${x.original} ${x.reason}`))
-  if (byRule?.improved) return byRule.improved
-
-  const best = candidates
-    .map(x => ({ ...x, s2: score(input, `${x.context}
-${x.original}
-${x.reason}
-${x.improved}`) }))
-    .sort((a, b) => b.s2 - a.s2)[0]
-  if (best?.improved && best.s2 > 0) return best.improved
-
-  const scripted = clean(iaConfig.guion || iaConfig.pasosRabito || iaConfig.procesoVenta || '')
-  const offer = clean(iaConfig.oferta || iaConfig.productosRabito || iaConfig.productos || iaConfig.servicios || '')
-  if (scripted || offer) return baseActiveFallback(iaConfig)
-  // Fallback operativo: evita que WhatsApp quede sin respuesta cuando falta API key o el modelo falla.
-  return baseActiveFallback(iaConfig)
-}
-
-function validStatus(status = '', iaConfig = {}) {
-  const s = normalize(status).replace(/\s+/g, '_')
-  const allowed = ['activo', 'calificado', 'frio', 'no_interesado']
-  if (allowed.includes(s)) return s
-  if (s === 'requiere_revision') {
-    const rules = normalize(flatten([iaConfig.reglasDuras, iaConfig.reglasRevision, iaConfig.reglasDerivacion]))
-    return /requiere_revision|requiere revision|derivar a revision/.test(rules) ? s : ''
-  }
-  return ''
-}
-
+// ── Main: generate Rabito's response ─────────────────────────────────────────
 export async function generateAgentResponse({
   message,
   conversationHistory = [],
-  iaConfig: reqIaConfig = {},
+  iaConfig: passedConfig = {},
   leadData = {},
   debug = false
-} = {}) {
+} = {}, ctx = {}) {
+
   const input = clean(message)
-  if (!input) return { reply: '', action: 'sin_mensaje', leadUpdate: {}, statusUpdate: '', trace: { error: 'empty_message' } }
+  if (!input) return { reply: '', action: 'sin_mensaje', leadUpdate: {}, statusUpdate: '' }
 
-  const db = getSupabase()
-  const settings = await readSettings(db)
-  const iaConfig = mergeIaConfig(reqIaConfig, settings)
-  const panel = panelText(iaConfig)
-  const historyText = (Array.isArray(conversationHistory) ? conversationHistory : []).slice(-14).map(h => `${h.role || 'user'}: ${h.content || ''}`).join('\n')
-  const leadText = flatten(leadData)
-  const searchQuery = `${input}\n${historyText}\n${leadText}`.slice(0, 12000)
-  const knowledge = await readKnowledge(db, searchQuery, settings)
-  const training = await readTraining(db, searchQuery, settings)
-  const agenda = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.urlAgenda || iaConfig.calendlyLink || '')
-  const traceBase = buildTrace({ panel, agenda, knowledge, training, iaConfig, debug })
-  const direct = directTrainingReply(training, input, iaConfig)
+  // Use db from context (passed by whatsapp.js) or create new one
+  const db = ctx?.db || makeSupa()
 
-  if (direct) {
-    return { reply: direct, action: 'conversando', leadUpdate: {}, statusUpdate: '', trace: debug ? { ...traceBase, directTraining: true, trainingUsed: training.used } : traceBase }
+  // Load iaConfig from DB and merge with what was passed
+  let iaConfig = { ...passedConfig }
+  if (db) {
+    try {
+      const { data } = await db.from('crm_settings').select('value').eq('key', 'ia_config').single()
+      if (data?.value && typeof data.value === 'object') {
+        // DB config is base, passed config overrides
+        iaConfig = { ...data.value, ...passedConfig }
+      }
+    } catch {}
   }
 
-  const ANTHROPIC_KEY = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.CLAUDE_API_KEY)
-  if (!ANTHROPIC_KEY) {
-    const fallback = cleanOutput(getFallback(iaConfig, training, input), iaConfig)
-    console.error('[AGENT] missing Anthropic key')
-    return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '', trace: debug ? { ...traceBase, missingKey: true, trainingCount: training.items.length } : traceBase }
-  }
+  // Check if IA is active
+  if (iaConfig.activo === false) return { reply: '', action: 'ia_off', leadUpdate: {}, statusUpdate: '' }
 
-  const agentName = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Asistente')
+  const ANTHROPIC_KEY = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || '')
+  const agentName = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Rabito')
+  const agenda = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.calendlyLink || '')
 
-  const personalidad = clean(iaConfig.personalidad || iaConfig.identidad || '')
-  const guion = clean(iaConfig.guion || iaConfig.flujo || iaConfig.procesoVenta || '')
-  const rentaMin = iaConfig.rentaMinima || iaConfig.renta_minima || ''
-  const rentaMinPareja = iaConfig.rentaMinimaPareja || iaConfig.renta_minima_pareja || ''
-  const calendlyLink = clean(iaConfig.calendlyLink || iaConfig.agendaLink || iaConfig.linkAgenda || '')
+  // ── Load training (ALL sources) ──────────────────────────────────────────
+  const trainingText = await loadTraining(db, iaConfig)
+  const cerebroText  = await loadCerebro(db, iaConfig)
 
-  const system = `Eres ${agentName}, agente comercial de Rabbitts Capital.
+  // ── Build panel from iaConfig fields ────────────────────────────────────
+  const panelFields = [
+    ['PERSONALIDAD', iaConfig.personalidad || iaConfig.identidad],
+    ['GUION DE VENTAS', iaConfig.guion || iaConfig.flujo || iaConfig.procesoVenta],
+    ['OFERTA / PRODUCTOS', iaConfig.oferta || iaConfig.productos || iaConfig.propuestaValor],
+    ['RENTA MÍNIMA', iaConfig.rentaMinima ? `$${iaConfig.rentaMinima}` : ''],
+    ['RENTA MÍNIMA EN PAREJA', iaConfig.rentaMinimaPareja ? `$${iaConfig.rentaMinimaPareja}` : ''],
+    ['REGLAS DURAS', iaConfig.reglasDuras],
+    ['INSTRUCCIONES EXTRA', iaConfig.instrucciones],
+    ['FRASES PROHIBIDAS', iaConfig.frasesProhibidas || iaConfig.noDecir],
+  ]
+  const panelText = panelFields
+    .map(([k, v]) => { const t = flatten(v); return t ? `${k}:\n${t}` : '' })
+    .filter(Boolean).join('\n\n')
 
-═══ IDENTIDAD ═══
-Tu nombre es ${agentName}. Eres parte del equipo de Rabbitts Capital, empresa de inversión inmobiliaria en Chile.
-NUNCA digas que eres IA, bot ni asistente artificial.
-NUNCA digas que tienes alta demanda, que responderás después, o que no estás disponible.
+  // ── Conversation history ─────────────────────────────────────────────────
+  const histMsgs = (Array.isArray(conversationHistory) ? conversationHistory : []).slice(-12)
 
-═══ CONFIGURACIÓN DEL PANEL IA ═══
-${panel || 'Sin configuración en Panel IA aún.'}
-${guion ? '\nGUION DE VENTAS:\n' + guion : ''}
-${rentaMin ? '\nRENTA MÍNIMA INDIVIDUAL: $' + Number(rentaMin).toLocaleString('es-CL') : ''}
-${rentaMinPareja ? '\nRENTA MÍNIMA EN PAREJA: $' + Number(rentaMinPareja).toLocaleString('es-CL') : ''}
+  // ── System prompt ────────────────────────────────────────────────────────
+  const system = `Eres ${agentName}, asesor de ventas de Rabbitts Capital. Hablas por WhatsApp.
 
-═══ APRENDIZAJES Y FEEDBACK — SIGÚELOS EXACTAMENTE ═══
-ESTAS SON CORRECCIONES REALES. Cuando el cliente pregunte algo similar al "Contexto", responde EXACTAMENTE como dice "Respuesta preferida".
-No improvises si hay un aprendizaje relevante. Úsalo literal.
-${training.text || '(Sin aprendizajes aún — el admin puede corregir tus respuestas desde el CRM)'}
+IDENTIDAD:
+- Tu nombre es ${agentName}. NUNCA digas que eres IA, bot o asistente.
+- Eres humano, cercano, directo. Mensajes cortos (2-4 líneas max).
+- NUNCA digas que estás ocupado, que hay alta demanda, ni que responderás después.
 
-═══ CEREBRO / DOCUMENTOS ═══
-${knowledge.text || 'Sin documentos cargados. Sube PDFs y documentos en Cerebro Rabito para que pueda consultarlos.'}
+${panelText ? `CONFIGURACIÓN DEL NEGOCIO:\n${panelText}` : 'Eres asesor de inversión inmobiliaria de Rabbitts Capital.'}
 
-═══ DATOS DEL CONTACTO ═══
-${flatten(leadData) || 'Lead nuevo, sin datos aún.'}
+${trainingText ? `ENTRENAMIENTO — SIGUE ESTO SIEMPRE:\n${trainingText}` : ''}
 
-═══ AGENDAR REUNIÓN ═══
-${agenda ? 'Link para agendar: ' + agenda + '\nCuando el lead califica o muestra interés concreto, invítalo a agendar.' : 'Sin link de agenda configurado aún.'}
+${cerebroText ? `DOCUMENTOS Y CONOCIMIENTO:\n${cerebroText}` : ''}
 
-═══ REGLAS ═══
-- Mensajes cortos estilo WhatsApp (2-4 líneas), sin asteriscos ni listas largas.
-- Una sola pregunta por mensaje.
-- NO repitas preguntas ya respondidas en el historial.
-- NO inventes precios ni condiciones que no estén en los documentos.
-- NO expliques qué es Rabbitts Capital salvo que te pregunten directamente — el cliente ya sabe por qué te escribió.
-- Si el lead califica por renta, invítalo a agendar de inmediato.
-- Avanza siempre la conversación hacia el siguiente paso del guion.
-- Si no sabes algo específico, di "te averiguo" y pregunta algo útil para calificar al lead.
+DATOS DEL CONTACTO:
+${flatten(leadData) || 'Cliente nuevo sin datos previos.'}
 
-Responde SOLO con JSON válido, sin markdown:
-{"reply":"mensaje al cliente","action":"conversando|calificado|agenda|sin_datos","statusUpdate":"activo|calificado|frio|no_interesado|","leadUpdate":{},"escalateToHuman":false}`
+${agenda ? `LINK PARA AGENDAR: ${agenda}\nCuando el cliente muestra interés real, invítalo a agendar.` : ''}
 
-  const msgs = []
-  const hist = Array.isArray(conversationHistory) ? conversationHistory.slice(-16) : []
-  for (const h of hist) {
+REGLAS DE RESPUESTA:
+1. Lee TODO el entrenamiento antes de responder.
+2. Si hay un par pregunta-respuesta que coincida con lo que pregunta el cliente, úsalo EXACTAMENTE.
+3. Si no hay match exacto, responde según la personalidad y guion configurados.
+4. Una sola pregunta por mensaje. Avanza el guion.
+5. No inventes precios ni condiciones que no estén en los documentos.
+6. Si no sabes algo, di "te averiguo" y haz una pregunta útil.
+
+Responde SOLO con JSON válido:
+{"reply":"tu mensaje para el cliente","action":"conversando|calificado|agenda","statusUpdate":"activo|calificado|frio|no_interesado|"}`
+
+  // ── Build messages array ─────────────────────────────────────────────────
+  const messages = []
+  for (const h of histMsgs) {
     const role = h.role === 'assistant' ? 'assistant' : 'user'
-    const content = clean(h.content)
-    if (content) msgs.push({ role, content })
+    const content = clean(h.content || '')
+    if (content) messages.push({ role, content })
   }
-  msgs.push({ role: 'user', content: input })
+  messages.push({ role: 'user', content: input })
 
-  const modelCandidates = [
-    clean(process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL),
+  // ── No API key: fallback ─────────────────────────────────────────────────
+  if (!ANTHROPIC_KEY) {
+    console.error('[AGENT] No Anthropic API key found')
+    const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
+    return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '' }
+  }
+
+  // ── Call Claude ──────────────────────────────────────────────────────────
+  const models = [
+    clean(process.env.ANTHROPIC_MODEL || ''),
     'claude-haiku-4-5-20251001',
     'claude-haiku-4-5',
     'claude-sonnet-4-5-20250929',
-    'claude-sonnet-4-5',
-    // Legacy fallbacks only. Claude 3.5 Haiku may be deprecated/EOL on newer Anthropic accounts.
     'claude-3-5-haiku-20241022',
-    'claude-3-5-haiku-latest'
   ].filter(Boolean)
 
-  let lastError = ''
-  for (const model of [...new Set(modelCandidates)]) {
+  console.log('[AGENT] start', {
+    agentName,
+    input: input.slice(0, 60),
+    hasTraining: trainingText.length > 0,
+    trainingChars: trainingText.length,
+    hasCerebro: cerebroText.length > 0,
+    hasPanel: panelText.length > 0,
+    historyMsgs: histMsgs.length
+  })
+
+  for (const model of [...new Set(models)]) {
     try {
-      console.log('[AGENT] Claude start', { model, trainingTotal: training.allItems?.length || 0, knowledgeTotal: knowledge.used?.length || 0, settingsRows: settings.rows?.length || 0, feedbackPicked: training.items?.length || 0, knowledgePicked: knowledge.used?.length || 0 })
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_KEY,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({ model, max_tokens: 700, temperature: 0.25, system, messages: msgs })
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model, max_tokens: 600, temperature: 0.2, system, messages })
       })
       const data = await r.json().catch(() => ({}))
-      if (!r.ok || data.error) {
-        const detail = data?.error ? `${data.error.type || 'error'}: ${data.error.message || ''}` : `HTTP ${r.status}`
-        throw new Error(detail)
+
+      if (!r.ok || data.error) throw new Error(data?.error?.message || `HTTP ${r.status}`)
+
+      const raw = (data.content || []).map(b => b.text || '').join('').trim()
+      const parsed = parseReply(raw)
+
+      // Block forbidden phrases
+      let reply = parsed.reply
+      const blocked = ['alta demanda', 'soy una ia', 'soy un bot', 'modelo de lenguaje', 'no estoy disponible', 'responderé después']
+      for (const b of blocked) {
+        if (normalize(reply).includes(normalize(b))) reply = `${agentName} por acá. ${clean(iaConfig.mensajeFallback || 'Cuéntame qué necesitas.')}`
       }
 
-      const raw = data?.content?.map(c => c.text || '').join('\n').trim() || ''
-      const parsed = parseOutput(raw)
-      const reply = cleanOutput(parsed.reply, iaConfig)
-      if (!reply) throw new Error('empty_model_reply')
+      if (!reply) throw new Error('empty_reply')
 
-      const statusUpdate = validStatus(parsed.statusUpdate, iaConfig)
-      console.log('[AGENT] Claude ok', { model, chars: reply.length, statusUpdate })
-      return {
-        reply,
-        action: parsed.action || 'conversando',
-        statusUpdate,
-        leadUpdate: parsed.leadUpdate || {},
-        memoryUpdate: parsed.memoryUpdate || {},
-        escalateToHuman: parsed.escalateToHuman === true && traceBase.derivationAllowedByHardRules === true,
-        trace: debug ? { ...traceBase, model, knowledgeUsed: knowledge.used, trainingUsed: training.used } : traceBase
-      }
+      console.log('[AGENT] ok', { model, replyChars: reply.length })
+      return { reply, action: parsed.action || 'conversando', statusUpdate: parsed.statusUpdate || '', leadUpdate: {} }
+
     } catch (e) {
-      lastError = e.message
-      console.error('[AGENT] Claude error', model, e.message)
+      console.error('[AGENT] error', model, e.message)
     }
   }
 
-  const fallback = cleanOutput(getFallback(iaConfig, training, input), iaConfig)
-  return {
-    reply: fallback,
-    action: 'fallback_model_error',
-    statusUpdate: '',
-    leadUpdate: {},
-    memoryUpdate: {},
-    trace: debug ? { ...traceBase, fallback: true, error: lastError, trainingCount: training.items.length, knowledgeCount: knowledge.used.length } : traceBase
-  }
+  // All models failed
+  const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
+  return { reply: fallback, action: 'fallback_error', leadUpdate: {}, statusUpdate: '' }
 }
 
+// ── HTTP handler ──────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -541,12 +307,12 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' })
 
-  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false, action, file, mediaType, fileName } = req.body || {}
+  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false, action, file, mediaType } = req.body || {}
 
   // PDF/Word extraction for Cerebro Rabito
   if (action === 'extract' && file) {
     try {
-      const apiKey = clean(process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_KEY || '')
+      const apiKey = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || '')
       if (!apiKey) throw new Error('API key no configurada')
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -555,14 +321,14 @@ export default async function handler(req, res) {
           model: 'claude-haiku-4-5-20251001', max_tokens: 4096,
           messages: [{ role: 'user', content: [
             { type: 'document', source: { type: 'base64', media_type: mediaType, data: file } },
-            { type: 'text', text: 'Extrae y devuelve TODO el texto de este documento exactamente como aparece. Sin resúmenes ni comentarios. Solo el texto completo.' }
+            { type: 'text', text: 'Extrae y devuelve TODO el texto del documento. Solo el texto, sin comentarios.' }
           ]}]
         })
       })
       const data = await r.json()
       if (!r.ok || data.error) throw new Error(data?.error?.message || 'Error extrayendo')
       return res.status(200).json({ text: data.content?.[0]?.text || '' })
-    } catch(e) {
+    } catch (e) {
       return res.status(200).json({ error: e.message, text: '' })
     }
   }
