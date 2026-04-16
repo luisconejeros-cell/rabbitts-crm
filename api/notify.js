@@ -22,6 +22,54 @@ export default async function handler(req, res) {
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body
     const { type = 'comment', to, agentName, adminName, leadName } = body
+
+    // ── Alerta ranking subida ─────────────────────────────────────────────────
+    if (type === 'ranking_subida') {
+      const { prevPos, currPos, medal, total } = body
+      subject = `${medal} ¡Subiste al puesto #${currPos} en el ranking!`
+      html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px">
+        <div style="text-align:center;margin-bottom:20px">
+          <div style="font-size:64px">${medal}</div>
+          <h2 style="color:#1B4FC8;margin:8px 0">¡Felicitaciones ${agentName}!</h2>
+          <p style="color:#64748B;font-size:16px">Subiste del puesto #${prevPos} al puesto <strong>#${currPos}</strong> en el ranking.</p>
+          <p style="color:#64748B;font-size:14px">${currPos === 1 ? '¡Eres el #1 del equipo!' : 'Sigue así, vas excelente.'}</p>
+        </div>
+        <div style="text-align:center;background:#EEF2FF;border-radius:12px;padding:20px">
+          <div style="font-size:36px;font-weight:900;color:#4F46E5">#${currPos} / ${total}</div>
+          <div style="color:#6b7280;font-size:13px">Tu posición actual en el ranking de Rabbitts Capital</div>
+        </div>
+        <p style="color:#9ca3af;font-size:11px;text-align:center;margin-top:20px">Rabbitts Capital CRM</p>
+      </div>`
+      return res.status(200).json({ success: true, preview: { to, subject } })
+    }
+
+    // ── Alerta ranking subida WhatsApp ────────────────────────────────────────
+    if (type === 'ranking_subida_wa') {
+      const { phone, prevPos, currPos, medal, total } = body
+      if (!phone) return res.status(200).json({ success: true, skipped: 'no_phone' })
+      const EVO_URL = process.env.EVO_URL || 'https://wa.rabbittscapital.com'
+      const EVO_KEY = process.env.EVO_KEY || 'rabbitts2024'
+      const cleanPhone = String(phone).replace(/[^0-9]/g, '')
+      const text = `${medal} ¡Hola ${agentName}! Subiste del puesto #${prevPos} al puesto #${currPos} en el ranking de Rabbitts Capital. ${currPos === 1 ? '¡Eres el #1 del equipo! 🎉' : 'Sigue así, vas muy bien 💪'}`
+      // Get first active WA instance
+      let instanceName = ''
+      try {
+        const sbUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
+        const sbKey = (process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
+        if (sbUrl && sbKey) {
+          const r = await fetch(`${sbUrl}/rest/v1/crm_settings?key=eq.wa_numeros&select=value`, { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } })
+          const d = await r.json()
+          instanceName = (d?.[0]?.value || []).find(n => n.activo)?.instanceName || ''
+        }
+      } catch(_) {}
+      if (!instanceName) return res.status(200).json({ success: true, skipped: 'no_wa_instance' })
+      await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: EVO_KEY },
+        body: JSON.stringify({ number: cleanPhone, text, delay: 500 })
+      })
+      return res.status(200).json({ success: true, type: 'wa_sent' })
+    }
     if (!to || !agentName) return res.status(400).json({ error: 'Faltan campos' })
 
     const ROLE_LABELS = {
