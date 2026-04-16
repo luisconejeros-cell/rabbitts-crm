@@ -3795,30 +3795,6 @@ Responde en español, directo, sin formalismos.`
 
             {/* Google Calendar — agendar reunión */}
             <div style={{marginBottom:14}}>
-              {/* ── Solicitar visita (brokers) ── */}
-              {isAgent && (
-                <div style={{marginBottom:10}}>
-                  <button onClick={()=>{
-                    setVisitaForm({fecha:new Date().toISOString().slice(0,10),hora:'10:00',proyecto:sel.propiedades?.[0]?.proyecto||'',comentario:''})
-                    setVisitaModal(sel.id)
-                    setModal(null)
-                  }} style={{width:'100%',padding:'9px 14px',borderRadius:8,border:'none',background:'#059669',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
-                    🏠 Solicitar visita a propiedad
-                  </button>
-                  {(sel.visitas||[]).length>0 && (
-                    <div style={{marginTop:6,display:'flex',flexDirection:'column',gap:3}}>
-                      {(sel.visitas||[]).slice(-3).reverse().map((v,i)=>(
-                        <div key={i} style={{fontSize:11,padding:'5px 9px',borderRadius:6,fontWeight:600,
-                          background:v.estado==='confirmada'?'#DCFCE7':v.estado==='rechazada'?'#FEF2F2':'#EFF6FF',
-                          color:v.estado==='confirmada'?'#14532d':v.estado==='rechazada'?'#991b1b':'#1d4ed8'}}>
-                          🏠 {v.fecha} {v.hora} · {v.proyecto||'Sin proyecto'} ·{' '}
-                          {v.estado==='confirmada'?'✅ Confirmada':v.estado==='rechazada'?'❌ Rechazada':'⏳ Pendiente confirmación'}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
               <button onClick={()=>{setGcalForm({fecha:'',hora:'09:00',duracion:60,notas:sel.resumen||''});setGcalModal(sel);setModal(null)}}
                 style={{width:'100%',padding:'9px 14px',borderRadius:8,border:'none',background:'#1a73e8',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
                 📅 Agendar reunión en Google Calendar
@@ -4198,136 +4174,10 @@ Responde en español, directo, sin formalismos.`
       )}
 
       {/* MODAL: Solicitar visita */}
-      {visitaModal && (
-        <Modal title="🏠 Solicitar visita a propiedad" onClose={()=>setVisitaModal(null)}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-            <div>
-              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Fecha *</label>
-              <input type="date" value={visitaForm.fecha} onChange={e=>setVisitaForm(p=>({...p,fecha:e.target.value}))}
-                style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
-            </div>
-            <div>
-              <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Hora *</label>
-              <input type="time" value={visitaForm.hora} onChange={e=>setVisitaForm(p=>({...p,hora:e.target.value}))}
-                style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
-            </div>
-          </div>
-          <div style={{marginBottom:10}}>
-            <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Proyecto / Inmobiliaria *</label>
-            <input value={visitaForm.proyecto} onChange={e=>setVisitaForm(p=>({...p,proyecto:e.target.value}))}
-              placeholder="Ej: Proyecto Ñuñoa / Inmobiliaria XYZ"
-              style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
-          </div>
-          <div style={{marginBottom:16}}>
-            <label style={{fontSize:12,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Comentario (opcional)</label>
-            <textarea value={visitaForm.comentario} onChange={e=>setVisitaForm(p=>({...p,comentario:e.target.value}))}
-              placeholder="Tipo de unidad, piso preferido, condiciones especiales..."
-              style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,minHeight:60,resize:'vertical',boxSizing:'border-box'}}/>
-          </div>
-          <button
-            disabled={!visitaForm.fecha||!visitaForm.proyecto}
-            onClick={async()=>{
-              const lead = leads.find(l=>l.id===visitaModal)
-              const nuevaVisita = {
-                id:'v-'+Date.now(),
-                fecha: visitaForm.fecha,
-                hora: visitaForm.hora,
-                proyecto: visitaForm.proyecto,
-                comentario: visitaForm.comentario,
-                estado: 'solicitada',
-                broker_id: me.id,
-                broker_name: me.name,
-                created_at: new Date().toISOString()
-              }
-              const updVisitas = [...(lead?.visitas||[]), nuevaVisita]
-              const ls = leads.map(l=>l.id===visitaModal?{...l,visitas:updVisitas}:l)
-              setLeads(ls)
-              if(dbReady) await supabase.from('crm_leads').update({visitas:updVisitas}).eq('id',visitaModal)
-              // Notify ops + admin + broker
-              const opsUsers = (users||[]).filter(u=>u.role==='operaciones'||u.role==='admin')
-              fetch('/api/notify',{method:'POST',headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({
-                  type:'visita_solicitada',
-                  brokerName:me.name, brokerEmail:me.email, brokerPhone:me.phone,
-                  leadNombre:lead?.nombre||'', leadId:visitaModal,
-                  fecha:visitaForm.fecha, hora:visitaForm.hora,
-                  proyecto:visitaForm.proyecto, comentario:visitaForm.comentario,
-                  opsEmails:opsUsers.map(u=>u.email).filter(Boolean),
-                  opsPhones:opsUsers.map(u=>u.phone).filter(Boolean)
-                })
-              }).catch(()=>{})
-              setVisitaModal(null)
-              setSel(ls.find(l=>l.id===visitaModal)||null)
-              setModal('lead')
-              msg('✅ Visita solicitada')
-            }}
-            style={{width:'100%',padding:'11px',borderRadius:8,border:'none',
-              background:visitaForm.fecha&&visitaForm.proyecto?'#059669':'#e5e7eb',
-              color:visitaForm.fecha&&visitaForm.proyecto?'#fff':'#9ca3af',
-              fontWeight:700,fontSize:14,cursor:visitaForm.fecha&&visitaForm.proyecto?'pointer':'not-allowed'}}>
-            Enviar solicitud de visita
-          </button>
-        </Modal>
-      )}
 
 
       
       {/* MODAL: Solicitar visita */}
-      {visitaModal && (
-        <Modal title="🏠 Solicitar visita a propiedad" onClose={()=>setVisitaModal(null)}>
-          <p style={{fontSize:13,color:'#6b7280',marginBottom:14}}>Completa los datos y el equipo de Operaciones confirmará la visita.</p>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-            <Fld label="Fecha *">
-              <input type="date" value={visitaForm.fecha} onChange={e=>setVisitaForm(p=>({...p,fecha:e.target.value}))} style={sty.inp}/>
-            </Fld>
-            <Fld label="Hora *">
-              <input type="time" value={visitaForm.hora} onChange={e=>setVisitaForm(p=>({...p,hora:e.target.value}))} style={sty.inp}/>
-            </Fld>
-          </div>
-          <Fld label="Proyecto / Propiedad">
-            <input value={visitaForm.proyecto} onChange={e=>setVisitaForm(p=>({...p,proyecto:e.target.value}))} placeholder="Ej: Proyecto Verde Ñuñoa — Depto 503" style={sty.inp}/>
-          </Fld>
-          <Fld label="Comentario (opcional)">
-            <textarea value={visitaForm.comentario} onChange={e=>setVisitaForm(p=>({...p,comentario:e.target.value}))} placeholder="Notas para operaciones..." style={{...sty.inp,minHeight:54,resize:'vertical'}}/>
-          </Fld>
-          <button
-            disabled={!visitaForm.fecha||!visitaForm.hora}
-            onClick={async()=>{
-              const lead = leads.find(l=>l.id===visitaModal)
-              if(!lead) return
-              const nuevaVisita = {
-                id:'v-'+Date.now(), fecha:visitaForm.fecha, hora:visitaForm.hora,
-                proyecto:visitaForm.proyecto, comentario:visitaForm.comentario,
-                estado:'solicitada', broker_id:me.id, broker_name:me.name,
-                created_at:new Date().toISOString()
-              }
-              const updVisitas = [...(lead.visitas||[]), nuevaVisita]
-              const ls = leads.map(l=>l.id===visitaModal?{...l,visitas:updVisitas}:l)
-              setLeads(ls)
-              if(dbReady) await supabase.from('crm_leads').update({visitas:updVisitas}).eq('id',visitaModal)
-              // Notificaciones
-              const opsUsers = (users||[]).filter(u=>u.role==='operaciones'||u.role==='admin')
-              fetch('/api/notify',{method:'POST',headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({
-                  type:'visita_solicitada',
-                  brokerName:me.name, brokerEmail:me.email, brokerPhone:me.phone,
-                  leadNombre:lead.nombre, fecha:visitaForm.fecha, hora:visitaForm.hora,
-                  proyecto:visitaForm.proyecto, comentario:visitaForm.comentario,
-                  opsEmails:opsUsers.map(u=>u.email).filter(Boolean),
-                  opsPhones:opsUsers.map(u=>u.phone).filter(Boolean)
-                })
-              }).catch(()=>{})
-              setVisitaModal(null)
-              msg('✅ Visita solicitada — Operaciones recibirá la solicitud')
-            }}
-            style={{width:'100%',padding:'11px',marginTop:10,borderRadius:8,border:'none',
-              background:visitaForm.fecha&&visitaForm.hora?'#059669':'#e5e7eb',
-              color:visitaForm.fecha&&visitaForm.hora?'#fff':'#9ca3af',
-              fontWeight:700,fontSize:14,cursor:visitaForm.fecha&&visitaForm.hora?'pointer':'not-allowed'}}>
-            📨 Enviar solicitud de visita
-          </button>
-        </Modal>
-      )}
 
       {modal==='lost' && (
         <Modal title="Marcar como perdido" onClose={()=>setModal(sel?'lead':null)}>
