@@ -1724,13 +1724,14 @@ export default function App() {
         const searchMatch = !brokerSearch || [l.nombre,l.telefono,l.email,l.rut].join(' ').toLowerCase().includes(brokerSearch.toLowerCase())
         return isMyLead && searchMatch
       })
+    : isFinanzas ? leads  // finanzas sees all leads (read-only)
     : leads.filter(l => l.assigned_to===me.id && (!brokerSearch || [l.nombre,l.telefono,l.email,l.rut].join(' ').toLowerCase().includes(brokerSearch.toLowerCase())))
 
   const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
   const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','ia','conversaciones','rabito_interno','visitas','condiciones','agenda','etapas','importar','extraer','marketplace']
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
             : isOps      ? ['operaciones','kanban','lista','visitas','rabito_interno']
-            : isFinanzas ? ['dashboard_finanzas','finanzas_360','lista','rabito_interno']
+            : isFinanzas ? ['dashboard_finanzas','finanzas_360','kanban','rabito_interno']
             :              ['kanban','lista','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
@@ -2106,7 +2107,7 @@ export default function App() {
       <div style={{padding:isMobile?'10px 8px':'16px',paddingLeft:adminSideNav?220:(isMobile?'8px':'16px'),paddingRight:isMobile?'8px':'16px',paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
 
         {/* KANBAN */}
-        {(nav==='kanban'||nav==='pool') && !isFinanzas && (
+        {(nav==='kanban'||nav==='pool') && (
           <div>
             <div style={{display:'flex',alignItems:isMobile?'flex-start':'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8,flexDirection:isMobile?'column':'row'}}>
               <div style={{display:'flex',gap:isMobile?6:8,flexWrap:'wrap',alignItems:'center'}}>
