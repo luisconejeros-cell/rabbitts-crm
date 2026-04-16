@@ -1730,7 +1730,7 @@ export default function App() {
   const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','ia','conversaciones','rabito_interno','condiciones','agenda','etapas','importar','extraer','marketplace']
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
             : isOps      ? ['operaciones','kanban','lista','rabito_interno']
-            : isFinanzas ? ['dashboard_finanzas','finanzas_360','rabito_interno']
+            : isFinanzas ? ['dashboard_finanzas','finanzas_360','lista','rabito_interno']
             :              ['kanban','lista','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
@@ -3532,7 +3532,7 @@ export default function App() {
 
         {/* OPERACIONES 360 */}
         {nav==='operaciones' && (isAdmin||isOps) && (
-          <Operaciones360View leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} savePropField={savePropField} setSel={setSel} setModal={setModal} me={me}/>
+          <Operaciones360View leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} savePropField={savePropField} setSel={setSel} setModal={setModal} me={me} setLeads={setLeads} supabase={supabase} dbReady={dbReady}/>
         )}
 
         {/* FINANZAS 360 */}
@@ -3740,7 +3740,7 @@ Responde en español, directo, sin formalismos.`
               </div>
             </div>
           )}
-          {!isPartner && <>
+          {!isPartner && !isFinanzas && <>
             <div style={{marginBottom:6,fontSize:12,color:B.mid,fontWeight:600}}>Mover a etapa</div>
             <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:14}}>
               {(isOps ? stages.filter(s=>OPS_STAGES.includes(s.id)) : stages).map(st=>{
@@ -3783,7 +3783,7 @@ Responde en español, directo, sin formalismos.`
                 })()}
               </select>
             </Fld>}
-            {!isPartner && (
+            {!isPartner && !isFinanzas && (
               <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
                 <button onClick={()=>setEditLead({nombre:sel.nombre,telefono:sel.telefono,email:sel.email,renta:sel.renta,resumen:sel.resumen})} style={{...sty.btnO,flex:1}}>Editar datos</button>
                 {isAdmin && <button onClick={()=>deleteLead(sel.id)} style={{...sty.btnD,flex:1}}>Eliminar lead</button>}
@@ -3821,6 +3821,7 @@ Responde en español, directo, sin formalismos.`
             </div>
           </>}
           {isPartner && <div style={{padding:'10px 12px',background:B.light,borderRadius:8,fontSize:12,color:B.primary,marginBottom:12}}>Vista de solo lectura — socio comercial</div>}
+          {isFinanzas && <div style={{padding:'10px 12px',background:'#F0FDF4',borderRadius:8,fontSize:12,color:'#166534',fontWeight:600,marginBottom:12,border:'1px solid #86efac'}}>👁 Vista de solo lectura — Finanzas</div>}
 
           {/* Properties section — visible to all; broker can upload docs while in Reserva */}
           {(sel.propiedades||[]).length > 0 && (
@@ -3869,8 +3870,8 @@ Responde en español, directo, sin formalismos.`
             </div>
           ))}
           {!isPartner && <div style={{display:'flex',gap:8,marginTop:8}}>
-            <input value={comment} onChange={e=>setComment(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addComment(sel.id)} placeholder="Escribe un comentario..." style={{...sty.inp,flex:1}}/>
-            <button onClick={()=>addComment(sel.id)} disabled={!comment.trim()} style={{...sty.btnP,opacity:!comment.trim()?0.5:1}}>Enviar</button>
+            {!isFinanzas && <input value={comment} onChange={e=>setComment(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addComment(sel.id)} placeholder="Escribe un comentario..." style={{...sty.inp,flex:1}}/>}
+            {!isFinanzas && <button onClick={()=>addComment(sel.id)} disabled={!comment.trim()} style={{...sty.btnP,opacity:!comment.trim()?0.5:1}}>Enviar</button>}
           </div>}
         </Modal>
       )}
@@ -4370,7 +4371,7 @@ function Field360({label, children}){ return <div><div style={{fontSize:11,color
 function Select360({value,onChange,children}){ return <select value={value||''} onChange={e=>onChange(e.target.value)} style={{...sty.sel,fontSize:12,padding:'7px 10px'}}>{children}</select> }
 function Text360({value,onChange,placeholder=''}){ return <input value={value||''} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{...sty.inp,fontSize:12,padding:'7px 10px'}}/> }
 
-function Operaciones360View({leads, users, stages, commissions, indicators, savePropField, setSel, setModal}){
+function Operaciones360View({leads, users, stages, commissions, indicators, savePropField, setSel, setModal, setLeads, supabase, dbReady}){
   const [q,setQ]=React.useState(''); const [status,setStatus]=React.useState('all'); const [risk,setRisk]=React.useState('all'); const [expanded,setExpanded]=React.useState({})
   const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','solicitud_promesa','firma','escritura','ganado','desistio'].includes(d.leadStage)||d.fecha_reserva||d.estado_operativo!=='handoff_pendiente')
   const filtered=deals.filter(d=>{const txt=(d.leadNombre+' '+d.brokerName+' '+d.inmobiliaria+' '+d.proyecto+' '+d.depto).toLowerCase(); if(q&&!txt.includes(q.toLowerCase()))return false; if(status!=='all'&&d.estado_operativo!==status)return false; if(risk!=='all'&&d.health!==risk)return false; return true})
@@ -4391,10 +4392,9 @@ function Operaciones360View({leads, users, stages, commissions, indicators, save
       </div>
       <select value={v.estado} onChange={async e=>{
         const newEstado=e.target.value
-        const newVisitas=visitas.map((x,xi)=>xi===vi?{...x,estado:newEstado}:x)
-        await supabase.from('crm_leads').update({visitas:newVisitas}).eq('id',d.leadId)
-        const ls=leads.map(l=>l.id===d.leadId?{...l,visitas:newVisitas}:l)
-        // trigger re-render via setSel if needed
+        const newVisitas=visitas.map((x,xi)=>xi===vi?{...x,estado:newEstado,confirmado_por:me?.name||'Operaciones',confirmado_at:new Date().toISOString()}:x)
+        if(supabase&&dbReady) await supabase.from('crm_leads').update({visitas:newVisitas}).eq('id',d.leadId)
+        if(setLeads) setLeads(ls=>ls.map(l=>l.id===d.leadId?{...l,visitas:newVisitas}:l))
       }} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #E2E8F0',fontWeight:700,
         background:v.estado==='confirmada'?'#DCFCE7':v.estado==='rechazada'?'#FEF2F2':'#EFF6FF',
         color:v.estado==='confirmada'?'#14532d':v.estado==='rechazada'?'#991b1b':'#1d4ed8'}}>
