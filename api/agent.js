@@ -231,8 +231,9 @@ REGLAS DE RESPUESTA:
 5. No inventes precios ni condiciones que no estén en los documentos.
 6. Si no sabes algo, di "te averiguo" y haz una pregunta útil.
 
-Responde SOLO con JSON válido:
-{"reply":"tu mensaje para el cliente","action":"conversando|calificado|agenda","statusUpdate":"activo|calificado|frio|no_interesado|"}`
+Responde con JSON:
+{"reply":"tu mensaje WhatsApp para el cliente (texto natural, sin markdown)","action":"conversando","statusUpdate":""}
+Si el cliente califica pon action:"calificado". Si quieres fijarlo como frío pon statusUpdate:"frio".`
 
   // ── Build messages array ─────────────────────────────────────────────────
   const messages = []
@@ -256,8 +257,9 @@ Responde SOLO con JSON válido:
     clean(process.env.ANTHROPIC_MODEL || ''),
     'claude-haiku-4-5-20251001',
     'claude-haiku-4-5',
-    'claude-sonnet-4-5-20250929',
     'claude-3-5-haiku-20241022',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-haiku-20240307',
   ].filter(Boolean)
 
   console.log('[AGENT] start', {
