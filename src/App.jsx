@@ -1727,15 +1727,15 @@ export default function App() {
     : leads.filter(l => l.assigned_to===me.id && (!brokerSearch || [l.nombre,l.telefono,l.email,l.rut].join(' ').toLowerCase().includes(brokerSearch.toLowerCase())))
 
   const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
-  const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','ia','conversaciones','rabito_interno','condiciones','agenda','etapas','importar','extraer','marketplace']
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','ia','conversaciones','rabito_interno','visitas','condiciones','agenda','etapas','importar','extraer','marketplace']
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
-            : isOps      ? ['operaciones','kanban','lista','rabito_interno']
+            : isOps      ? ['operaciones','kanban','lista','visitas','rabito_interno']
             : isFinanzas ? ['dashboard_finanzas','finanzas_360','lista','rabito_interno']
-            :              ['kanban','lista','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
+            :              ['kanban','lista','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
     dashboard:'Dashboard', kanban:'Leads', lista:'Lista', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
-    operaciones:'Operaciones 360', condiciones:'Condiciones Comerciales', finanzas_360:'Finanzas 360', portal_broker:'Mis Comisiones', mi_equipo:'Mi Equipo', condiciones:'📋 Condiciones', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones Brokers', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead','condiciones':'Condiciones Comerciales','team_dashboard':'Mi Equipo'
+    operaciones:'Operaciones 360', condiciones:'Condiciones Comerciales', finanzas_360:'Finanzas 360', portal_broker:'Mis Comisiones', mi_equipo:'Mi Equipo', condiciones:'📋 Condiciones', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones Brokers', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead','condiciones':'Condiciones Comerciales','team_dashboard':'Mi Equipo','visitas':'Visitas','mis_visitas':'Mis Visitas'
   }
   const navLabel = n => NAV_LABELS[n] || n.charAt(0).toUpperCase()+n.slice(1).replace('_',' ')
 
@@ -2037,7 +2037,7 @@ export default function App() {
               </div>
             </div>
             {NAV.map(n => {
-              const icons = {dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬',rabito_interno:'🐰',operaciones:'🧩',finanzas_360:'🏦',condiciones:'📋',agenda:'📅','mi agenda':'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪',pool:'🌐',comisiones:'💰','mis comisiones':'💵','portal_broker':'💵','team_dashboard':'👥','nuevo lead':'➕',dashboard_finanzas:'📊'}
+              const icons = {dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬',rabito_interno:'🐰',operaciones:'🧩',finanzas_360:'🏦',condiciones:'📋',visitas:'📅',mis_visitas:'📅',agenda:'📅','mi agenda':'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪',pool:'🌐',comisiones:'💰','mis comisiones':'💵','portal_broker':'💵','team_dashboard':'👥','nuevo lead':'➕',dashboard_finanzas:'📊'}
               return (
                 <button key={n} onClick={()=>{setNav(n);setMobileMenuOpen(false)}}
                   style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:10,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#374151',fontWeight:nav===n?700:400,fontSize:14,textAlign:'left',width:'100%'}}>
@@ -3592,6 +3592,17 @@ export default function App() {
         )}
 
         {/* ── CONDICIONES COMERCIALES ─────────────────────── */}
+        {/* VISITAS — Operaciones/Admin gestiona, agente ve las suyas */}
+        {nav==='visitas' && (isAdmin||isOps) && (
+          <VisitasGestionView
+            leads={leads} users={users} setLeads={setLeads}
+            supabase={supabase} dbReady={dbReady} me={me}
+          />
+        )}
+        {nav==='mis_visitas' && isAgent && (
+          <MisVisitasView leads={leads} me={me} users={users}/>
+        )}
+
         {nav==='condiciones' && (isAdmin||isOps) && (
           <CondicionesComView
             condiciones={condiciones}
@@ -8146,6 +8157,247 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
           </div>
         )
       })()}
+    </div>
+  )
+}
+
+
+// ─── Visitas Gestión View (Operaciones / Admin) ───────────────────────────────
+function VisitasGestionView({ leads, users, setLeads, supabase, dbReady, me }) {
+  const B = { primary:'#1B4FC8', light:'#EEF2FF', mid:'#6b7280' }
+  const sty = { inp:{padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,width:'100%',boxSizing:'border-box'} }
+  const [filter, setFilter] = React.useState('all') // all | solicitada | confirmada | rechazada
+  const [msgModal, setMsgModal] = React.useState(null) // {leadId, visitaIdx, visita}
+  const [msgText, setMsgText] = React.useState('')
+
+  // Collect all visits across all leads
+  const allVisitas = React.useMemo(() => {
+    const rows = []
+    for (const lead of leads) {
+      for (let vi = 0; vi < (lead.visitas||[]).length; vi++) {
+        const v = lead.visitas[vi]
+        const broker = (users||[]).find(u=>u.id===v.broker_id) || {}
+        rows.push({ lead, leadId:lead.id, vi, v, brokerName: v.broker_name || broker.name || '—', brokerPhone: broker.phone||'', brokerEmail: broker.email||'' })
+      }
+    }
+    return rows.sort((a,b) => (b.v.fecha+b.v.hora).localeCompare(a.v.fecha+a.v.hora))
+  }, [leads, users])
+
+  const filtered = filter==='all' ? allVisitas : allVisitas.filter(x=>x.v.estado===filter)
+
+  const updateVisita = async (leadId, vi, fields) => {
+    const lead = leads.find(l=>l.id===leadId)
+    if (!lead) return
+    const newVisitas = (lead.visitas||[]).map((x,i) => i===vi ? {...x,...fields} : x)
+    if (supabase&&dbReady) await supabase.from('crm_leads').update({visitas:newVisitas}).eq('id',leadId)
+    setLeads(ls => ls.map(l => l.id===leadId ? {...l,visitas:newVisitas} : l))
+  }
+
+  const ESTADO_COLORS = {
+    solicitada: { bg:'#EFF6FF', col:'#1d4ed8', label:'⏳ Solicitada' },
+    confirmada:  { bg:'#DCFCE7', col:'#14532d', label:'✅ Confirmada' },
+    rechazada:   { bg:'#FEF2F2', col:'#991b1b', label:'❌ Rechazada' },
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
+        <span style={{fontSize:26}}>📅</span>
+        <div style={{flex:1}}>
+          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Gestión de Visitas</div>
+          <div style={{fontSize:12,color:B.mid}}>{allVisitas.length} visita(s) en total · Confirma, rechaza o deja un mensaje al broker</div>
+        </div>
+        {/* Filter tabs */}
+        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+          {[['all','Todas'],['solicitada','⏳ Pendientes'],['confirmada','✅ Confirmadas'],['rechazada','❌ Rechazadas']].map(([k,l])=>(
+            <button key={k} onClick={()=>setFilter(k)}
+              style={{padding:'5px 12px',borderRadius:8,border:'none',cursor:'pointer',fontSize:12,fontWeight:700,
+                background:filter===k?B.primary:'#f0f4ff',color:filter===k?'#fff':B.mid}}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length===0 && (
+        <div style={{textAlign:'center',color:B.mid,padding:'40px 20px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,fontSize:13}}>
+          No hay visitas {filter!=='all'?`con estado "${filter}"`:''} registradas.
+        </div>
+      )}
+
+      <div style={{display:'grid',gap:10}}>
+        {filtered.map(({lead,leadId,vi,v,brokerName,brokerPhone,brokerEmail})=>{
+          const ec = ESTADO_COLORS[v.estado]||ESTADO_COLORS.solicitada
+          return (
+            <div key={leadId+'-'+vi} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+              <div style={{display:'flex',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
+                {/* Info */}
+                <div style={{flex:1,minWidth:200}}>
+                  <div style={{fontWeight:800,fontSize:14,color:'#0F172A',marginBottom:2}}>
+                    {lead.nombre}
+                  </div>
+                  <div style={{fontSize:12,color:B.mid,marginBottom:6}}>
+                    📅 <strong>{v.fecha}</strong> a las <strong>{v.hora}</strong>
+                    {v.proyecto && <span> · 🏠 {v.proyecto}</span>}
+                  </div>
+                  <div style={{fontSize:12,color:'#374151',marginBottom:4}}>
+                    👤 Broker: <strong>{brokerName}</strong>
+                    {brokerPhone && <a href={`https://wa.me/${brokerPhone.replace(/\D/g,'')}`} target="_blank" rel="noopener noreferrer" style={{marginLeft:8,color:'#25D366',fontWeight:700,fontSize:11}}>💬 WA</a>}
+                  </div>
+                  {v.comentario && <div style={{fontSize:11,color:'#6b7280',background:'#f9fbff',padding:'5px 8px',borderRadius:6,marginBottom:4}}>Nota broker: {v.comentario}</div>}
+                  {v.mensaje_ops && <div style={{fontSize:11,color:'#166534',background:'#DCFCE7',padding:'5px 8px',borderRadius:6,border:'1px solid #86efac'}}>💬 Tu mensaje: {v.mensaje_ops}</div>}
+                </div>
+                {/* Controls */}
+                <div style={{display:'flex',flexDirection:'column',gap:8,alignItems:'flex-end',minWidth:160}}>
+                  <span style={{fontSize:12,padding:'4px 10px',borderRadius:99,background:ec.bg,color:ec.col,fontWeight:700}}>{ec.label}</span>
+                  <div style={{display:'flex',gap:6}}>
+                    <button onClick={()=>updateVisita(leadId,vi,{estado:'confirmada',confirmado_por:me?.name||'Ops',confirmado_at:new Date().toISOString()})}
+                      style={{padding:'5px 12px',borderRadius:8,border:'none',background:'#059669',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                      ✅ Confirmar
+                    </button>
+                    <button onClick={()=>updateVisita(leadId,vi,{estado:'rechazada',confirmado_por:me?.name||'Ops',confirmado_at:new Date().toISOString()})}
+                      style={{padding:'5px 12px',borderRadius:8,border:'none',background:'#dc2626',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                      ❌ Rechazar
+                    </button>
+                  </div>
+                  <button onClick={()=>{setMsgModal({leadId,vi,v});setMsgText(v.mensaje_ops||'')}}
+                    style={{padding:'5px 12px',borderRadius:8,border:'1px solid #A8C0F0',background:B.light,color:B.primary,cursor:'pointer',fontSize:12,fontWeight:600,width:'100%'}}>
+                    💬 {v.mensaje_ops?'Editar mensaje':'Dejar mensaje al broker'}
+                  </button>
+                  {/* Reagendar */}
+                  <details style={{width:'100%'}}>
+                    <summary style={{fontSize:11,color:B.mid,cursor:'pointer',padding:'4px 0',fontWeight:600}}>✏️ Modificar fecha/hora</summary>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:6}}>
+                      <input type="date" defaultValue={v.fecha}
+                        onChange={e=>updateVisita(leadId,vi,{fecha:e.target.value})}
+                        style={{...sty.inp,padding:'5px 8px',fontSize:11}}/>
+                      <input type="time" defaultValue={v.hora}
+                        onChange={e=>updateVisita(leadId,vi,{hora:e.target.value})}
+                        style={{...sty.inp,padding:'5px 8px',fontSize:11}}/>
+                    </div>
+                    <input placeholder="Modificar proyecto/lugar" defaultValue={v.proyecto}
+                      onChange={e=>updateVisita(leadId,vi,{proyecto:e.target.value})}
+                      style={{...sty.inp,padding:'5px 8px',fontSize:11,marginTop:4}}/>
+                  </details>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Modal: mensaje al broker */}
+      {msgModal && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+          <div style={{background:'#fff',borderRadius:16,padding:24,maxWidth:440,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,0.15)'}}>
+            <div style={{fontWeight:800,fontSize:15,color:B.primary,marginBottom:4}}>💬 Mensaje al broker</div>
+            <div style={{fontSize:12,color:B.mid,marginBottom:12}}>Este mensaje lo verá el broker en su lista de visitas.</div>
+            <textarea value={msgText} onChange={e=>setMsgText(e.target.value)}
+              placeholder="Ej: La visita fue confirmada para las 11am. Por favor llegar 10 min antes..."
+              style={{...sty.inp,minHeight:80,resize:'vertical',marginBottom:12}}/>
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={async()=>{
+                await updateVisita(msgModal.leadId, msgModal.vi, {mensaje_ops:msgText})
+                setMsgModal(null); setMsgText('')
+              }} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:B.primary,color:'#fff',fontWeight:700,cursor:'pointer'}}>
+                Guardar mensaje
+              </button>
+              <button onClick={()=>{setMsgModal(null);setMsgText('')}}
+                style={{flex:1,padding:'10px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontWeight:600}}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Mis Visitas View (Broker) ────────────────────────────────────────────────
+function MisVisitasView({ leads, me, users }) {
+  const B = { primary:'#1B4FC8', light:'#EEF2FF', mid:'#6b7280' }
+  const [filter, setFilter] = React.useState('all')
+
+  const misVisitas = React.useMemo(() => {
+    const rows = []
+    for (const lead of leads) {
+      for (let vi = 0; vi < (lead.visitas||[]).length; vi++) {
+        const v = lead.visitas[vi]
+        if (v.broker_id === me.id || v.broker_name === me.name) {
+          rows.push({ lead, vi, v })
+        }
+      }
+    }
+    return rows.sort((a,b)=>(b.v.fecha+b.v.hora).localeCompare(a.v.fecha+a.v.hora))
+  }, [leads, me])
+
+  const filtered = filter==='all' ? misVisitas : misVisitas.filter(x=>x.v.estado===filter)
+
+  const ESTADO = {
+    solicitada: { bg:'#EFF6FF', col:'#1d4ed8', label:'⏳ Pendiente confirmación' },
+    confirmada:  { bg:'#DCFCE7', col:'#14532d', label:'✅ Confirmada' },
+    rechazada:   { bg:'#FEF2F2', col:'#991b1b', label:'❌ Rechazada' },
+  }
+
+  return (
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
+        <span style={{fontSize:26}}>📅</span>
+        <div style={{flex:1}}>
+          <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Mis Visitas</div>
+          <div style={{fontSize:12,color:B.mid}}>{misVisitas.length} visita(s) programada(s)</div>
+        </div>
+        <div style={{display:'flex',gap:4}}>
+          {[['all','Todas'],['solicitada','⏳ Pendientes'],['confirmada','✅ Confirmadas'],['rechazada','❌ Rechazadas']].map(([k,l])=>(
+            <button key={k} onClick={()=>setFilter(k)}
+              style={{padding:'5px 10px',borderRadius:8,border:'none',cursor:'pointer',fontSize:11,fontWeight:700,
+                background:filter===k?B.primary:'#f0f4ff',color:filter===k?'#fff':B.mid}}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length===0 && (
+        <div style={{textAlign:'center',color:B.mid,padding:'40px 20px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,fontSize:13}}>
+          {misVisitas.length===0 ? 'Aún no has solicitado visitas. Hazlo desde la ficha de un lead.' : `Sin visitas con este filtro.`}
+        </div>
+      )}
+
+      <div style={{display:'grid',gap:10}}>
+        {filtered.map(({lead,vi,v})=>{
+          const ec = ESTADO[v.estado]||ESTADO.solicitada
+          return (
+            <div key={lead.id+'-'+vi} style={{background:'#fff',border:'2px solid '+ec.bg.replace('FF','AA'),borderRadius:12,padding:14}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,flexWrap:'wrap'}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:800,fontSize:14,color:'#0F172A',marginBottom:4}}>{lead.nombre}</div>
+                  <div style={{fontSize:13,color:'#374151',marginBottom:4}}>
+                    📅 <strong>{v.fecha}</strong> a las <strong>{v.hora}</strong>
+                  </div>
+                  {v.proyecto && <div style={{fontSize:12,color:B.mid}}>🏠 {v.proyecto}</div>}
+                  {v.comentario && <div style={{fontSize:11,color:'#6b7280',marginTop:4}}>Tu nota: {v.comentario}</div>}
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <span style={{display:'block',fontSize:12,padding:'5px 12px',borderRadius:99,background:ec.bg,color:ec.col,fontWeight:700,marginBottom:6}}>
+                    {ec.label}
+                  </span>
+                  {v.confirmado_por && <div style={{fontSize:10,color:B.mid}}>Por: {v.confirmado_por}</div>}
+                </div>
+              </div>
+              {/* Mensaje de operaciones */}
+              {v.mensaje_ops && (
+                <div style={{marginTop:10,padding:'8px 12px',background:'#F0FDF4',border:'1px solid #86efac',borderRadius:8,fontSize:12,color:'#14532d'}}>
+                  <div style={{fontWeight:700,marginBottom:2}}>💬 Mensaje de Operaciones:</div>
+                  {v.mensaje_ops}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
