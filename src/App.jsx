@@ -2143,11 +2143,24 @@ export default function App() {
                 {(isAdmin||isAgent) && <button onClick={()=>setModal('newLead')} style={sty.btnP}>+ Nuevo lead</button>}
               </div>
             </div>
-            <div style={{display:'flex',gap:10,overflowX:'auto',paddingBottom:8,alignItems:'flex-start'}}>
+            {/* Scroll controls */}
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+              <button
+                onClick={()=>{ const el=document.getElementById('kanban-scroll'); if(el) el.scrollBy({left:-280,behavior:'smooth'}) }}
+                style={{padding:'4px 12px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontSize:16,color:'#1B4FC8',fontWeight:700,lineHeight:1}}>
+                ‹
+              </button>
+              <button
+                onClick={()=>{ const el=document.getElementById('kanban-scroll'); if(el) el.scrollBy({left:280,behavior:'smooth'}) }}
+                style={{padding:'4px 12px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontSize:16,color:'#1B4FC8',fontWeight:700,lineHeight:1}}>
+                ›
+              </button>
+            </div>
+            <div id="kanban-scroll" style={{display:'flex',gap:10,overflowX:'auto',overflowY:'auto',alignItems:'flex-start',WebkitOverflowScrolling:'touch',scrollbarWidth:'thin',scrollbarColor:'#A8C0F0 #f0f4ff',height:'calc(100vh - '+(isMobile?'130px':'170px')+')',paddingBottom:8}}>
               {(isOps ? stages.filter(s=>OPS_STAGES.includes(s.id)) : stages).map(st => {
                 const cols = (vL||[]).filter(l=>l.stage===st.id)
                 return (
-                  <div key={st.id} style={{minWidth:190,flexShrink:0}}>
+                  <div key={st.id} style={{minWidth:200,flexShrink:0,display:'flex',flexDirection:'column'}}>
                     <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
                       <div style={{width:8,height:8,borderRadius:'50%',background:st.dot}}/>
                       <span style={{fontSize:12,fontWeight:700,color:st.col}}>{st.label}</span>
