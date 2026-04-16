@@ -25,6 +25,7 @@ const DEFAULT_STAGES = [
   { id:'agenda',     label:'Agenda reunión',       bg:'#F5F3FF', col:'#5b21b6', dot:'#c4b5fd' },
   { id:'credito',    label:'Crédito aprobado',     bg:'#FFFBEB', col:'#92400e', dot:'#fcd34d' },
   { id:'reserva',    label:'Reserva',              bg:'#F0FDF4', col:'#166534', dot:'#86efac' },
+  { id:'solicitud_promesa', label:'Solicitud de promesa', bg:'#ECFEFF', col:'#155e75', dot:'#22d3ee', restricted:true },
   { id:'firma',      label:'Firma promesa',        bg:'#FFF7ED', col:'#9a3412', dot:'#fdba74',  restricted:true },
   { id:'escritura',  label:'Firma escritura',      bg:'#FEF9C3', col:'#713f12', dot:'#fbbf24',  restricted:true },
   { id:'ganado',     label:'Ganado',               bg:'#DCFCE7', col:'#14532d', dot:'#4ade80' },
@@ -33,9 +34,9 @@ const DEFAULT_STAGES = [
 ]
 
 // Stages only Operaciones/Admin can move leads into
-const RESTRICTED_STAGES = ['firma','escritura','desistio']
+const RESTRICTED_STAGES = ['solicitud_promesa','firma','escritura','desistio']
 // Stages that lock the lead from agent movement entirely
-const OPS_LOCKED_STAGES = ['firma','escritura','ganado','desistio']
+const OPS_LOCKED_STAGES = ['solicitud_promesa','firma','escritura','ganado','desistio']
 
 // Empty property template
 const EMPTY_PROP = {
@@ -69,6 +70,7 @@ const EMPTY_PROP = {
   notaria:'', escritura_firmada:'', inscripcion_cbr:'', entrega_propiedad:'',
   amoblamiento:'', administracion:'', tributacion:'', proxima_inversion:'',
   docs_estado:{},
+  docs_promesa:{}, solicitud_promesa_fecha:'',
   operational_log:[]
 }
 
@@ -389,7 +391,7 @@ export default function App() {
   const [gcalForm, setGcalForm] = useState({fecha:'', hora:'09:00', duracion:60, notas:''})
   const [gcalLoading, setGcalLoading] = useState(false)
   const [gcalResult, setGcalResult] = useState(null)
-  const [marketplaceConfig, setMarketplaceConfig] = useState({ url: '', enabled: false, label: 'Marketplace', allowRoles: ['admin','agent','partner','operaciones','finanzas'] })
+  const [marketplaceConfig, setMarketplaceConfig] = useState({ url: '', enabled: false, label: 'Marketplace', allowRoles: ['admin','agent','partner'] })
   // Responsive helper
   const R = (desktop, mobile) => isMobile ? mobile : desktop
   const [nav,    setNav]    = useState('kanban')
@@ -578,6 +580,27 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbReady, me?.id])
 
+
+  // ── Sincronización defensiva de leads ─────────────────────────────────────
+  // Refuerza que broker/admin/operaciones vean la misma etapa sin depender solo de realtime.
+  useEffect(() => {
+    if (!dbReady || !me) return
+    let stop = false
+    const refreshLeads = async () => {
+      try {
+        const { data } = await supabase.from('crm_leads').select('*').order('fecha', {ascending:false})
+        if (!stop && data) {
+          setLeads(data)
+          setSel(current => current ? (data.find(x=>x.id===current.id) || current) : current)
+        }
+      } catch(_) {}
+    }
+    const onFocus = () => refreshLeads()
+    window.addEventListener('focus', onFocus)
+    const timer = setInterval(refreshLeads, 15000)
+    return () => { stop = true; window.removeEventListener('focus', onFocus); clearInterval(timer) }
+  }, [dbReady, me?.id])
+
   // ── Auto-save agendaSettings to Supabase ────────────────────────────────────
   useEffect(() => {
     if (!dbReady) return
@@ -667,7 +690,7 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crm_settings' }, payload => {
         if (payload.new?.key === 'stages' && payload.new?.value) {
           const saved = payload.new.value
-          const required = DEFAULT_STAGES.filter(ds => ['firma','escritura','perdido'].includes(ds.id))
+          const required = DEFAULT_STAGES.filter(ds => ['solicitud_promesa','firma','escritura','perdido'].includes(ds.id))
           const merged = [...saved]
           for (const rs of required) {
             if (!merged.find(s => s.id === rs.id)) merged.push(rs)
@@ -684,7 +707,7 @@ export default function App() {
     try {
       const { data, error } = await supabase.from('crm_users').select('*')
       if (error) throw error
-      let us = data || []
+      let us = (data || []).map(u => { try { return {...u, ...(JSON.parse(localStorage.getItem('rcrm_profile_'+u.id)||'{}'))} } catch(_) { return u } }) // rcrm_profile_ merge
       if (!us.find(u => u.role === 'admin')) {
         const admin = {id:'u-admin',name:'Luis Burgos',rut:'',phone:'',email:'',username:'admin',pin:'1234',role:'admin'}
         await supabase.from('crm_users').insert(admin)
@@ -746,7 +769,7 @@ export default function App() {
         if (st?.value) {
           const saved = st.value
           // Only ensure truly required stages exist — don't re-add deleted ones
-          const required = DEFAULT_STAGES.filter(ds => ['firma','escritura','perdido'].includes(ds.id))
+          const required = DEFAULT_STAGES.filter(ds => ['solicitud_promesa','firma','escritura','perdido'].includes(ds.id))
           const merged = [...saved]
           for (const rs of required) {
             if (!merged.find(s => s.id === rs.id)) merged.push(rs)
@@ -757,7 +780,7 @@ export default function App() {
       setDbReady(true)
     } catch (e) {
       console.warn('Supabase not configured, using localStorage fallback')
-      let us = JSON.parse(localStorage.getItem('rcrm_users') || '[]')
+      let us = JSON.parse(localStorage.getItem('rcrm_users') || '[]').map(u => { try { return {...u, ...(JSON.parse(localStorage.getItem('rcrm_profile_'+u.id)||'{}'))} } catch(_) { return u } })
       if (!us.find(u => u.role === 'admin'))
         us = [{id:'u-admin',name:'Luis Burgos',rut:'',phone:'',email:'',username:'admin',pin:'1234',role:'admin'}, ...us]
       setUsers(us)
@@ -770,7 +793,7 @@ export default function App() {
       const savedStages = localStorage.getItem('rcrm_stages')
       if (savedStages) {
         const saved = JSON.parse(savedStages)
-        const required = DEFAULT_STAGES.filter(ds => ['firma','escritura','perdido'].includes(ds.id))
+        const required = DEFAULT_STAGES.filter(ds => ['solicitud_promesa','firma','escritura','perdido'].includes(ds.id))
         const merged = [...saved]
         for (const rs of required) {
           if (!merged.find(s => s.id === rs.id)) merged.push(rs)
@@ -1068,17 +1091,44 @@ export default function App() {
     msg('Usuario eliminado')
   }
   async function saveProfile() {
-    if (!editP.name) { setProfErr('El nombre no puede estar vacío'); return }
-    const us = users.map(u => u.id === me.id ? {...u,...editP} : u)
-    await saveUsers(us); setMe(m => ({...m,...editP}))
+    if (!editP.name?.trim()) { setProfErr('El nombre no puede estar vacío'); return }
+    const fields = {name:editP.name.trim(), phone:editP.phone||'', email:editP.email||'', avatar_url:editP.avatar_url||''}
+    const nextUsers = users.map(u => u.id === me.id ? {...u,...fields} : u)
+    setUsers(nextUsers); setMe(m => ({...m,...fields}))
+    localStorage.setItem('rcrm_profile_'+me.id, JSON.stringify(fields))
+    if (dbReady) {
+      try {
+        const { error } = await supabase.from('crm_users').update(fields).eq('id', me.id)
+        if (error) {
+          // Si la tabla no tiene avatar_url, guardamos datos básicos y mantenemos la foto localmente.
+          const basic = {name:fields.name, phone:fields.phone, email:fields.email}
+          await supabase.from('crm_users').update(basic).eq('id', me.id)
+          setProfErr('Datos guardados. Para guardar la foto en Supabase agrega la columna avatar_url.')
+          msg('Perfil actualizado parcialmente')
+          return
+        }
+      } catch(e) {
+        setProfErr('No se pudo guardar en Supabase. Quedó guardado localmente.')
+        msg('Perfil guardado localmente')
+        return
+      }
+    } else {
+      localStorage.setItem('rcrm_users', JSON.stringify(nextUsers))
+    }
     setModal(null); setProfErr(''); msg('Perfil actualizado')
   }
   async function changePin() {
     if (pinF.cur !== me.pin) { setPinErr('PIN actual incorrecto'); return }
     if (pinF.n1.length < 4)  { setPinErr('Mínimo 4 dígitos'); return }
     if (pinF.n1 !== pinF.n2) { setPinErr('Los PINs no coinciden'); return }
-    const us = users.map(u => u.id === me.id ? {...u, pin:pinF.n1} : u)
-    await saveUsers(us); setMe(m => ({...m, pin:pinF.n1}))
+    const nextUsers = users.map(u => u.id === me.id ? {...u, pin:pinF.n1} : u)
+    setUsers(nextUsers); setMe(m => ({...m, pin:pinF.n1}))
+    if (dbReady) {
+      const { error } = await supabase.from('crm_users').update({pin:pinF.n1}).eq('id', me.id)
+      if (error) { setPinErr('No se pudo guardar el PIN en Supabase'); return }
+    } else {
+      localStorage.setItem('rcrm_users', JSON.stringify(nextUsers))
+    }
     setPinF({cur:'',n1:'',n2:''}); setPinErr(''); setModal(null); msg('PIN actualizado')
   }
 
@@ -1158,18 +1208,31 @@ export default function App() {
   }
 
   function reqMove(lid, sid) {
-    // Block agents from moving leads that are already in ops-locked stages
     const lead = leads.find(l => l.id === lid)
+    // Block brokers from moving leads once Operaciones owns the workflow
     if (me?.role === 'agent' && OPS_LOCKED_STAGES.includes(lead?.stage)) {
       msg('Este lead está en gestión de Operaciones — solo ellos pueden moverlo')
       return
     }
     if (sid==='perdido') { setLossTgt(lid); setLossR(LOSS_REASONS[0]); setLossOth(''); setModal('lost'); return }
-    // Restricted stages require property form (admin or operaciones only)
+
+    // Reserva: broker debe completar la ficha de operación y cargar documentos esenciales
+    if (sid === 'reserva') {
+      const existingProps = lead?.propiedades || []
+      setEditingProps(existingProps.length > 0 ? [...existingProps] : [{...EMPTY_PROP, id:'p-'+Date.now(), fecha_reserva:new Date().toISOString().slice(0,10)}])
+      setPendingStage({leadId:lid, stageId:sid})
+      setPropModal(lid)
+      return
+    }
+
+    // Solicitud de promesa / promesa / escritura: solo Admin u Operaciones
     if (RESTRICTED_STAGES.includes(sid)) {
       if (me?.role !== 'admin' && me?.role !== 'operaciones') { msg('Solo Operaciones o el Administrador puede mover a esta etapa'); return }
-      const lead = leads.find(l => l.id === lid)
       const existingProps = lead?.propiedades || []
+      if (sid === 'solicitud_promesa') {
+        const ok = existingProps.length > 0 && existingProps.every(p => docsPromesaProgress(p).pct >= 100)
+        if (!ok) { msg('Faltan documentos esenciales para solicitar promesa'); return }
+      }
       setEditingProps(existingProps.length > 0 ? [...existingProps] : [{...EMPTY_PROP, id:'p-'+Date.now()}])
       setPendingStage({leadId:lid, stageId:sid})
       setPropModal(lid)
@@ -1415,7 +1478,22 @@ export default function App() {
   }
 
   async function savePropiedades(leadId, props, stageId) {
-    const calculatedProps = props.map(calcProp)
+    const nowIso = new Date().toISOString()
+    const today = nowIso.slice(0,10)
+    const calculatedProps = props.map(p => {
+      const base = calcProp(p)
+      const logItem = stageId ? {at:nowIso, by:me?.name||'Sistema', role:me?.role||'', action:'Movimiento a '+(stages.find(s=>s.id===stageId)?.label||stageId), fields:['stage']} : null
+      const stageFields = stageId==='reserva'
+        ? {fecha_reserva:base.fecha_reserva||today, estado_operativo:base.estado_operativo||'docs_incompletos'}
+        : stageId==='solicitud_promesa'
+          ? {solicitud_promesa_fecha:base.solicitud_promesa_fecha||today, estado_operativo:'solicitud_promesa'}
+          : stageId==='firma'
+            ? {promesa_firmada:base.promesa_firmada||today, estado_operativo:'promesa', estado_financiero:base.estado_financiero==='no_devengado'?'solicitar_oc':base.estado_financiero}
+            : stageId==='escritura'
+              ? {escritura_firmada:base.escritura_firmada||today, estado_operativo:'escritura'}
+              : {}
+      return {...base, ...stageFields, operational_log: logItem ? [...(base.operational_log||[]), logItem].slice(-60) : (base.operational_log||[])}
+    })
     // Capture UF value at the moment of closing
     const closingUF = stageId && ['firma','escritura'].includes(stageId)
       ? (indicators.uf ? parseFloat(indicators.uf.split('.').join('').replace(',','.')) : null)
@@ -1478,8 +1556,9 @@ export default function App() {
   const isAgent    = me?.role === 'agent'
   const isOps      = me?.role === 'operaciones'
   const isFinanzas = me?.role === 'finanzas'
+  const adminRightNav = isAdmin && !isMobile
 
-  const OPS_STAGES = ['reserva','firma','escritura','perdido']
+  const OPS_STAGES = ['reserva','solicitud_promesa','firma','escritura','perdido']
   const vL = !me ? [] : isAdmin
     ? leads.filter(l => (fa==='all'||(fa===''?(!l.assigned_to):l.assigned_to===fa)) && (fs==='all'||l.stage===fs) && (ft==='all'||l.tag===ft))
     : isPartner ? leads.filter(l => l.tag==='pool')
@@ -1489,13 +1568,13 @@ export default function App() {
   const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
   const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','finanzas','ia','rabito_interno','conversaciones','agenda','etapas','importar','extraer','marketplace']
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
-            : isOps      ? ['operaciones','kanban','lista','rabito_interno',                                                                              ...(mpVisible?['marketplace']:[]) ]
-            : isFinanzas ? ['dashboard_finanzas','finanzas_360','comisiones','rabito_interno',                                                            ...(mpVisible?['marketplace']:[]) ]
+            : isOps      ? ['operaciones','kanban','lista','rabito_interno']
+            : isFinanzas ? ['dashboard_finanzas','finanzas_360','comisiones','rabito_interno']
             :              ['kanban','lista','portal_broker','mis comisiones','mi agenda','nuevo lead',                                                    ...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
     dashboard:'Dashboard', kanban:'Leads', lista:'Lista', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
-    operaciones:'Operaciones 360', finanzas_360:'Finanzas 360', portal_broker:'Portal Broker', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead'
+    operaciones:'Operaciones 360', finanzas_360:'Finanzas 360', portal_broker:'Portal Broker', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones Brokers', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead'
   }
   const navLabel = n => NAV_LABELS[n] || n.charAt(0).toUpperCase()+n.slice(1).replace('_',' ')
 
@@ -1696,7 +1775,7 @@ export default function App() {
             </div>}
           </div>
           {/* Desktop nav */}
-          {!isMobile && <div style={{display:'flex',gap:2,flexWrap:'wrap'}}>
+          {!isMobile && !adminRightNav && <div style={{display:'flex',gap:2,flexWrap:'wrap'}}>
             {NAV.map(n => (
               <button key={n} onClick={()=>setNav(n)} style={{fontSize:13,padding:'5px 12px',borderRadius:8,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#6b7280',fontWeight:nav===n?700:400}}>
                 {navLabel(n)}
@@ -1851,7 +1930,19 @@ export default function App() {
         </div>
       )}
 
-      <div style={{padding:isMobile?'10px 8px':'16px',paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
+      {adminRightNav && (
+        <aside style={{position:'fixed',top:68,right:14,width:190,maxHeight:'calc(100vh - 86px)',overflowY:'auto',background:'#fff',border:'1px solid #E2E8F0',borderRadius:16,padding:10,boxShadow:'0 8px 24px rgba(27,79,200,0.10)',zIndex:80}}>
+          <div style={{fontSize:11,fontWeight:900,color:B.primary,textTransform:'uppercase',letterSpacing:.5,margin:'4px 8px 8px'}}>Menú CRM</div>
+          {NAV.map(n => {
+            const icons = {dashboard:'📊',kanban:'📋',lista:'📝',operaciones:'🧩',finanzas_360:'🏦',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',rabito_interno:'🐰',conversaciones:'💬',agenda:'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪'}
+            return <button key={n} onClick={()=>setNav(n)} style={{width:'100%',display:'flex',alignItems:'center',gap:9,textAlign:'left',fontSize:13,padding:'9px 10px',borderRadius:10,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#475569',fontWeight:nav===n?800:500,marginBottom:2}}>
+              <span>{icons[n]||'•'}</span><span>{navLabel(n)}</span>
+            </button>
+          })}
+        </aside>
+      )}
+
+      <div style={{padding:isMobile?'10px 8px':'16px',paddingRight:adminRightNav?220:(isMobile?'8px':'16px'),paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
 
         {/* KANBAN */}
         {(nav==='kanban'||nav==='pool') && !isFinanzas && (
@@ -2225,7 +2316,7 @@ export default function App() {
               total: agLeads.length,
               ganados: agGanados,
               perdidos: agPerdidos,
-              enProceso: agLeads.filter(l => !['firma','escritura','perdido'].includes(l.stage)).length,
+              enProceso: agLeads.filter(l => !['solicitud_promesa','firma','escritura','perdido'].includes(l.stage)).length,
               convRate: agLeads.length > 0 ? Math.round((agGanados/agLeads.length)*100) : 0
             }
           }).sort((a,b) => b.total - a.total)
@@ -2237,7 +2328,7 @@ export default function App() {
 
           // Leads estancados (filtrados)
           const stancados = filteredLeads.filter(l => {
-            if (['firma','escritura','perdido'].includes(l.stage)) return false
+            if (['solicitud_promesa','firma','escritura','perdido'].includes(l.stage)) return false
             return daysIn(l) > 7
           }).length
 
@@ -2372,9 +2463,9 @@ export default function App() {
                 {/* Leads estancados */}
                 <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Leads estancados {stancados>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'#FFF7ED',color:'#9a3412',fontWeight:600,marginLeft:4}}>+7 días</span>}</p>
-                  {leads.filter(l=>!['firma','escritura','perdido'].includes(l.stage)&&daysIn(l)>7).length===0
+                  {leads.filter(l=>!['solicitud_promesa','firma','escritura','perdido'].includes(l.stage)&&daysIn(l)>7).length===0
                     ? <p style={{fontSize:12,color:'#9ca3af'}}>Sin leads estancados. ¡Todo fluye bien!</p>
-                    : leads.filter(l=>!['firma','escritura','perdido'].includes(l.stage)&&daysIn(l)>7)
+                    : leads.filter(l=>!['solicitud_promesa','firma','escritura','perdido'].includes(l.stage)&&daysIn(l)>7)
                         .sort((a,b)=>daysIn(b)-daysIn(a))
                         .slice(0,6)
                         .map(l => {
@@ -2433,7 +2524,7 @@ export default function App() {
           const poolLastMonth  = allPool.filter(l => new Date(l.fecha) >= startOfLastMonth && new Date(l.fecha) <= endOfLastMonth).length
           const poolGanados    = poolLeads.filter(l => ['firma','escritura'].includes(l.stage)).length
           const poolPerdidos   = poolLeads.filter(l => l.stage === 'perdido').length
-          const poolEnProceso  = poolLeads.filter(l => !['firma','escritura','perdido'].includes(l.stage)).length
+          const poolEnProceso  = poolLeads.filter(l => !['solicitud_promesa','firma','escritura','perdido'].includes(l.stage)).length
           const convRate       = poolLeads.length > 0 ? Math.round((poolGanados / poolLeads.length) * 100) : 0
           const tendencia      = poolLastMonth > 0 ? Math.round(((poolThisMonth - poolLastMonth) / poolLastMonth)*100) : null
           const stancados      = poolLeads.filter(l => l.stage !== 'ganado' && l.stage !== 'perdido' && daysIn(l) > 7).length
@@ -2454,7 +2545,7 @@ export default function App() {
               ...ag,
               total: agLeads.length,
               ganados: agGanados,
-              enProceso: agLeads.filter(l => !['firma','escritura','perdido'].includes(l.stage)).length,
+              enProceso: agLeads.filter(l => !['solicitud_promesa','firma','escritura','perdido'].includes(l.stage)).length,
               convRate: agLeads.length > 0 ? Math.round((agGanados/agLeads.length)*100) : 0
             }
           }).filter(ag => ag.total > 0).sort((a,b) => b.total - a.total)
@@ -3215,7 +3306,7 @@ export default function App() {
         )}
 
         {/* MARKETPLACE */}
-        {nav==='marketplace' && (
+        {nav==='marketplace' && (isAdmin||isAgent||isPartner) && (
           <MarketplaceView
             config={marketplaceConfig}
             setConfig={setMarketplaceConfig}
@@ -3387,7 +3478,7 @@ export default function App() {
           </>}
           {isPartner && <div style={{padding:'10px 12px',background:B.light,borderRadius:8,fontSize:12,color:B.primary,marginBottom:12}}>Vista de solo lectura — socio comercial</div>}
 
-          {/* Properties section — visible to all, editable by admin/ops */}
+          {/* Properties section — visible to all; broker can upload docs while in Reserva */}
           {(sel.propiedades||[]).length > 0 && (
             <div style={{marginBottom:12}}>
               <div style={{fontSize:12,fontWeight:700,color:B.primary,marginBottom:8}}>Propiedades registradas ({(sel.propiedades||[]).length})</div>
@@ -3415,7 +3506,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {(isAdmin||isOps) && (RESTRICTED_STAGES.includes(sel.stage)||(sel.propiedades||[]).length>0) && (
+          {(isAdmin||isOps||(isAgent&&sel.stage==='reserva')) && (RESTRICTED_STAGES.includes(sel.stage)||sel.stage==='reserva'||(sel.propiedades||[]).length>0) && (
             <button onClick={()=>{setEditingProps((sel.propiedades||[]).length>0?[...sel.propiedades]:[{...EMPTY_PROP,id:'p-'+Date.now()}]);setPendingStage(null);setPropModal(sel.id)}} style={{...sty.btnO,fontSize:12,marginBottom:12,width:'100%'}}>
               {(sel.propiedades||[]).length>0 ? 'Editar propiedades ('+sel.propiedades.length+')' : '+ Agregar propiedades'}
             </button>
@@ -3494,6 +3585,36 @@ export default function App() {
                 <Fld label="Condiciones especiales prometidas al cliente">
                   <textarea value={p.condiciones_especiales||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,condiciones_especiales:e.target.value}:x))} placeholder="Descuentos, regalos, renta garantizada, plazos, acuerdos especiales..." style={{...sty.inp,minHeight:54,resize:'vertical'}}/>
                 </Fld>
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 12px',margin:'8px 0 10px'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:800,color:B.primary}}>Documentos esenciales para solicitar promesa</div>
+                      <div style={{fontSize:11,color:'#64748B'}}>El broker los carga en Reserva; Operaciones/Admin revisa y luego mueve a Solicitud de promesa.</div>
+                    </div>
+                    <span style={{fontSize:11,padding:'3px 8px',borderRadius:99,background:docsPromesaProgress(p).pct===100?'#DCFCE7':'#FFFBEB',color:docsPromesaProgress(p).pct===100?'#14532d':'#92400e',fontWeight:800}}>{docsPromesaProgress(p).pct}% completo</span>
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8}}>
+                    {PROMESA_DOCS.map(doc => {
+                      const item = (p.docs_promesa||{})[doc.key] || {}
+                      return <div key={doc.key} style={{border:'1px solid #E2E8F0',borderRadius:8,padding:8,background:'#F8FAFC'}}>
+                        <div style={{fontSize:11,fontWeight:800,color:'#0F172A',marginBottom:5}}>{doc.label}</div>
+                        <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={e=>{
+                            const file=e.target.files?.[0]; if(!file) return
+                            if(file.size>2*1024*1024){ alert('Archivo máximo 2MB para esta versión'); return }
+                            const reader=new FileReader()
+                            reader.onload=ev=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,docs_promesa:{...(x.docs_promesa||{}),[doc.key]:{...(x.docs_promesa||{})[doc.key],file_name:file.name,data_url:ev.target.result,uploaded_at:new Date().toISOString(),uploaded_by:me?.name||''}}}:x))
+                            reader.readAsDataURL(file)
+                          }} style={{fontSize:11,maxWidth:'100%'}}/>
+                          {item.file_name&&<span style={{fontSize:10,color:'#166534',fontWeight:700}}>✓ {item.file_name}</span>}
+                        </div>
+                        {(isAdmin||isOps) && <select value={item.estado||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,docs_promesa:{...(x.docs_promesa||{}),[doc.key]:{...((x.docs_promesa||{})[doc.key]||{}),estado:e.target.value,reviewed_at:new Date().toISOString(),reviewed_by:me?.name||''}}}:x))} style={{...sty.sel,marginTop:6,padding:'5px 8px',fontSize:11}}>
+                          <option value="">Sin revisar</option><option value="recibido">Recibido</option><option value="aprobado">Aprobado</option><option value="rechazado">Rechazado</option>
+                        </select>}
+                      </div>
+                    })}
+                  </div>
+                </div>
                 <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
                   <Fld label="Moneda">
                     <select value={p.moneda} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,moneda:e.target.value}:x))} style={sty.sel}>
@@ -3741,6 +3862,7 @@ const OP_STATUS = {
   handoff_pendiente: {l:'Handoff pendiente', bg:'#FEF2F2', col:'#991b1b'},
   docs_incompletos: {l:'Docs incompletos', bg:'#FFFBEB', col:'#92400e'},
   en_revision: {l:'En revisión', bg:'#EFF6FF', col:'#1d4ed8'},
+  solicitud_promesa: {l:'Solicitud de promesa', bg:'#ECFEFF', col:'#155e75'},
   promesa: {l:'Promesa', bg:'#FFF7ED', col:'#9a3412'},
   credito: {l:'Crédito', bg:'#F5F3FF', col:'#5b21b6'},
   escritura: {l:'Escritura', bg:'#FEF9C3', col:'#713f12'},
@@ -3755,12 +3877,21 @@ const FIN_STATUS = {
   broker_facturar: {l:'Broker debe facturar', bg:'#FFF7ED', col:'#9a3412'},
   broker_pagado: {l:'Broker pagado', bg:'#DCFCE7', col:'#14532d'},
 }
+const PROMESA_DOCS = [
+  {key:'cedula', label:'Cédula / Pasaporte'},
+  {key:'comprobante_reserva', label:'Comprobante de reserva'},
+  {key:'preaprobacion', label:'Preaprobación / evaluación hipotecaria'},
+  {key:'renta', label:'Liquidaciones / respaldo de renta'},
+  {key:'carpeta_tributaria', label:'Carpeta tributaria'},
+  {key:'condiciones_comerciales', label:'Condiciones comerciales / pie'}
+]
 const DOCS_360 = ['Cédula/Pasaporte','Comprobante reserva','Preaprobación','Liquidaciones','Carpeta tributaria','Promesa','Comprobante pie','Escritura','Factura Rabbitts','Factura broker','Administración','Tributación']
 function nnum(v){ return parseFloat(String(v||'').replace(/\./g,'').replace(',','.')) || 0 }
 function fmt360(v){ return (parseFloat(v)||0).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2}) }
 function days360(iso){ if(!iso) return 9999; return Math.floor((Date.now()-new Date(iso).getTime())/86400000) }
-function docsProgress360(d){ const states=d.docs_estado||{}; const ok=DOCS_360.filter(x=>states[x]==='aprobado'||states[x]==='recibido').length; return {ok,total:DOCS_360.length,pct:DOCS_360.length?Math.round(ok*100/DOCS_360.length):0} }
-function inferOpStatus360(p){ if(p.entrega_propiedad||p.estado_operativo==='entregado') return 'entregado'; if(p.escritura_firmada||p.inscripcion_cbr||p.estado_operativo==='escritura') return 'escritura'; if(p.aprobacion_final||p.estado_operativo==='credito') return 'credito'; if(p.promesa_firmada||p.estado_operativo==='promesa') return 'promesa'; if(docsProgress360(p).pct<45) return 'docs_incompletos'; return p.estado_operativo||'en_revision' }
+function docsPromesaProgress(d){ const docs=d.docs_promesa||{}; const ok=PROMESA_DOCS.filter(x=>docs[x.key]?.data_url||docs[x.key]?.estado==='aprobado'||docs[x.key]?.estado==='recibido').length; return {ok,total:PROMESA_DOCS.length,pct:PROMESA_DOCS.length?Math.round(ok*100/PROMESA_DOCS.length):0} }
+function docsProgress360(d){ const states=d.docs_estado||{}; const legacyOk=DOCS_360.filter(x=>states[x]==='aprobado'||states[x]==='recibido').length; const prom=docsPromesaProgress(d); const total=DOCS_360.length+prom.total; const ok=legacyOk+prom.ok; return {ok,total,pct:total?Math.round(ok*100/total):0,promesa:prom} }
+function inferOpStatus360(p){ if(p.entrega_propiedad||p.estado_operativo==='entregado') return 'entregado'; if(p.escritura_firmada||p.inscripcion_cbr||p.estado_operativo==='escritura') return 'escritura'; if(p.aprobacion_final||p.estado_operativo==='credito') return 'credito'; if(p.promesa_firmada||p.estado_operativo==='promesa') return 'promesa'; if(p.solicitud_promesa_fecha||p.estado_operativo==='solicitud_promesa') return 'solicitud_promesa'; if(docsProgress360(p).pct<45) return 'docs_incompletos'; return p.estado_operativo||'en_revision' }
 function inferFinStatus360(p){ if(p.broker_pago_fecha||p.estado_financiero==='broker_pagado'||p.oc_estado==='pagado_broker') return 'broker_pagado'; if(p.inmob_pago_fecha||p.estado_financiero==='broker_facturar'||p.oc_estado==='broker_factura') return 'broker_facturar'; if(p.factura_fecha||p.estado_financiero==='facturado'||p.oc_estado==='factura_rabbitts') return 'facturado'; if(p.oc_fecha_recepcion||p.estado_financiero==='oc_recibida'||p.oc_estado==='oc_recibida') return 'oc_recibida'; if(p.estado_financiero==='solicitar_oc'||p.oc_estado==='pendiente_oc') return 'solicitar_oc'; return p.estado_financiero||'no_devengado' }
 function slaAlerts360(d){
   const rules = [
@@ -3795,7 +3926,7 @@ function Text360({value,onChange,placeholder=''}){ return <input value={value||'
 
 function Operaciones360View({leads, users, stages, commissions, indicators, savePropField, setSel, setModal}){
   const [q,setQ]=React.useState(''); const [status,setStatus]=React.useState('all'); const [risk,setRisk]=React.useState('all'); const [expanded,setExpanded]=React.useState({})
-  const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','firma','escritura','ganado','desistio'].includes(d.leadStage)||d.fecha_reserva||d.estado_operativo!=='handoff_pendiente')
+  const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','solicitud_promesa','firma','escritura','ganado','desistio'].includes(d.leadStage)||d.fecha_reserva||d.estado_operativo!=='handoff_pendiente')
   const filtered=deals.filter(d=>{const txt=(d.leadNombre+' '+d.brokerName+' '+d.inmobiliaria+' '+d.proyecto+' '+d.depto).toLowerCase(); if(q&&!txt.includes(q.toLowerCase()))return false; if(status!=='all'&&d.estado_operativo!==status)return false; if(risk!=='all'&&d.health!==risk)return false; return true})
   const alerts=deals.flatMap(d=>d.alerts.map(a=>({a,d}))); const update=(d,fields,label='Operaciones 360')=>savePropField&&savePropField(d.leadId,d.propId,fields,label)
   return <div><div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:14}}><div><div style={{fontSize:20,fontWeight:900,color:B.primary}}>🧩 Operaciones 360</div><div style={{fontSize:12,color:B.mid}}>Control post reserva: documentos, promesa, crédito, escritura, entrega y trazabilidad.</div></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar cliente, broker, proyecto..." style={{...sty.inp,width:260}}/><Select360 value={status} onChange={setStatus}><option value="all">Todos los estados</option>{Object.entries(OP_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360><Select360 value={risk} onChange={setRisk}><option value="all">Todo riesgo</option><option value="alto">Riesgo alto</option><option value="medio">Riesgo medio</option><option value="bajo">Riesgo bajo</option></Select360></div></div>
@@ -3805,7 +3936,7 @@ function Operaciones360View({leads, users, stages, commissions, indicators, save
 }
 
 function Finanzas360View({leads, users, stages, commissions, indicators, savePropField, saveCommission, setCommissions}){
-  const [f,setF]=React.useState('all'); const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','firma','escritura','ganado'].includes(d.leadStage)||d.fecha_reserva); const filtered=f==='all'?deals:deals.filter(d=>d.estado_financiero===f); const totalComision=filtered.reduce((s,d)=>s+d.comisionTotal,0); const totalBroker=filtered.reduce((s,d)=>s+d.comisionBroker,0); const margen=totalComision-totalBroker; const update=(d,fields,label='Finanzas 360')=>savePropField&&savePropField(d.leadId,d.propId,fields,label)
+  const [f,setF]=React.useState('all'); const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','solicitud_promesa','firma','escritura','ganado'].includes(d.leadStage)||d.fecha_reserva); const filtered=f==='all'?deals:deals.filter(d=>d.estado_financiero===f); const totalComision=filtered.reduce((s,d)=>s+d.comisionTotal,0); const totalBroker=filtered.reduce((s,d)=>s+d.comisionBroker,0); const margen=totalComision-totalBroker; const update=(d,fields,label='Finanzas 360')=>savePropField&&savePropField(d.leadId,d.propId,fields,label)
   const setComm=(d,field,val)=>{const next={...(commissions[d.key]||{}),[field]:val}; setCommissions(prev=>({...prev,[d.key]:next})); saveCommission&&saveCommission(d.key,next)}
   return <div><div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:14}}><div><div style={{fontSize:20,fontWeight:900,color:B.primary}}>🏦 Finanzas 360</div><div style={{fontSize:12,color:B.mid}}>Cuentas por cobrar a inmobiliarias, cuentas por pagar a brokers y margen Rabbitts.</div></div><Select360 value={f} onChange={setF}><option value="all">Todos los estados financieros</option>{Object.entries(FIN_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:10,marginBottom:14}}><Kpi360 label="Comisión total" value={fmt360(totalComision)} sub="UF/USD según operación"/><Kpi360 label="Pago brokers" value={fmt360(totalBroker)} bg="#FFFBEB" col="#92400e"/><Kpi360 label="Margen Rabbitts" value={fmt360(margen)} bg="#DCFCE7" col="#14532d"/><Kpi360 label="Pendientes cobro" value={deals.filter(d=>!d.inmob_pago_fecha&&!d.broker_pago_fecha).length} bg="#FEF2F2" col="#991b1b"/></div><div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden'}}><table className="rcrm-table" style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{background:B.light,color:B.primary,textAlign:'left'}}>{['Cliente / operación','Broker','Estado financiero','% comisión','% broker','Por cobrar','Por pagar','Fechas clave'].map(h=><th key={h} style={{padding:10}}>{h}</th>)}</tr></thead><tbody>{filtered.map(d=><tr key={d.key} style={{borderTop:'1px solid #E2E8F0'}}><td style={{padding:10,fontWeight:700}}>{d.leadNombre}<div style={{fontWeight:500,color:'#64748B'}}>{d.inmobiliaria} · {d.proyecto} · {d.moneda} {fmt360(d.base)}</div></td><td style={{padding:10}}>{d.brokerName}</td><td style={{padding:10}}><Select360 value={d.estado_financiero} onChange={v=>update(d,{estado_financiero:v},'Cambio estado financiero')}>{Object.entries(FIN_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360></td><td style={{padding:10,width:110}}><input value={d.comm.pctComision||''} onChange={e=>setComm(d,'pctComision',e.target.value)} placeholder="4" style={{...sty.inp,padding:6,fontSize:12}}/></td><td style={{padding:10,width:110}}><input value={d.comm.pctBroker||''} onChange={e=>setComm(d,'pctBroker',e.target.value)} placeholder="60" style={{...sty.inp,padding:6,fontSize:12}}/></td><td style={{padding:10,fontWeight:800,color:B.primary}}>{d.moneda} {fmt360(d.comisionTotal)}</td><td style={{padding:10,fontWeight:800,color:'#166534'}}>{d.moneda} {fmt360(d.comisionBroker)}{d.comisionClp?<div style={{fontSize:10,color:'#64748B'}}>${d.comisionClp.toLocaleString('es-CL')} CLP</div>:null}</td><td style={{padding:10,minWidth:210}}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>{[['OC','oc_fecha_recepcion'],['Fact. R.','factura_fecha'],['Pagó Inmob.','inmob_pago_fecha'],['Pagó Broker','broker_pago_fecha']].map(([lbl,k])=><label key={k} style={{fontSize:10,color:'#64748B',fontWeight:700}}>{lbl}<input type="date" value={d[k]||''} onChange={e=>update(d,{[k]:e.target.value},'Actualiza '+lbl)} style={{...sty.inp,padding:5,fontSize:11}}/></label>)}</div></td></tr>)}</tbody></table>{filtered.length===0&&<div style={{padding:30,textAlign:'center',color:'#94a3b8'}}>Sin operaciones con este filtro.</div>}</div></div>
 }
@@ -3816,9 +3947,26 @@ function PortalBrokerView({leads, users, stages, commissions, indicators, me}){
 }
 
 function RabitoInternoView({leads, users, stages, commissions, indicators}){
-  const [ask,setAsk]=React.useState('operaciones atrasadas'); const deals=buildDeals360(leads,users,stages,commissions,indicators); const atrasadas=deals.filter(d=>d.alerts.length>0).sort((a,b)=>b.alerts.length-a.alerts.length); const brokerPend=deals.filter(d=>d.estado_financiero==='broker_facturar'); const ocPend=deals.filter(d=>['solicitar_oc','oc_recibida','facturado'].includes(d.estado_financiero)&&!d.inmob_pago_fecha)
-  const respuesta=(()=>{const q=ask.toLowerCase(); if(q.includes('broker')||q.includes('pagar')) return brokerPend.length?'Hay '+brokerPend.length+' operación(es) donde el broker debe facturar o Finanzas debe pagar. Prioridad: '+brokerPend.slice(0,5).map(d=>d.leadNombre+' / '+d.brokerName).join(', ')+'.':'No veo pagos a broker bloqueados ahora.'; if(q.includes('oc')||q.includes('cobrar')||q.includes('inmobiliaria')) return ocPend.length?'Hay '+ocPend.length+' cuenta(s) por cobrar o por gestionar con inmobiliarias. Revisa primero: '+ocPend.slice(0,5).map(d=>d.inmobiliaria+' / '+d.leadNombre).join(', ')+'.':'No veo OC/cobros críticos pendientes.'; if(q.includes('document')){const docs=deals.filter(d=>d.docProgress.pct<60); return docs.length?'Hay '+docs.length+' operación(es) con documentación bajo 60%. Primeras: '+docs.slice(0,5).map(d=>d.leadNombre+' '+d.docProgress.pct+'%').join(', ')+'.':'La documentación se ve razonablemente avanzada.'} return atrasadas.length?'Hay '+atrasadas.length+' operación(es) atrasadas. Prioridad: '+atrasadas.slice(0,6).map(d=>d.leadNombre+' ('+d.alerts[0]+')').join(', ')+'.':'No veo operaciones atrasadas según las reglas SLA configuradas.'})()
-  return <div><div style={{fontSize:20,fontWeight:900,color:B.primary,marginBottom:4}}>🐰 Rabito Interno</div><div style={{fontSize:12,color:B.mid,marginBottom:14}}>Asistente operativo basado en datos del CRM. Sirve para detectar atrasos, cobros, pagos y documentación.</div><div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16,marginBottom:14}}><Field360 label="Pregunta interna"><input value={ask} onChange={e=>setAsk(e.target.value)} placeholder="Ej: qué operaciones están atrasadas, qué brokers hay que pagar, qué OC faltan..." style={sty.inp}/></Field360><div style={{marginTop:14,padding:14,borderRadius:12,background:B.light,color:'#0F172A',lineHeight:1.55,fontSize:14}}><strong>Rabito:</strong> {respuesta}</div></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10}}><Kpi360 label="Operaciones con alerta" value={atrasadas.length} bg="#FEF2F2" col="#991b1b"/><Kpi360 label="Brokers por facturar/pagar" value={brokerPend.length} bg="#FFF7ED" col="#9a3412"/><Kpi360 label="Cobros inmobiliaria pendientes" value={ocPend.length} bg="#FFFBEB" col="#92400e"/></div></div>
+  const [ask,setAsk]=React.useState('operaciones atrasadas')
+  const deals=buildDeals360(leads,users,stages,commissions,indicators)
+  const atrasadas=deals.filter(d=>d.alerts.length>0).sort((a,b)=>b.alerts.length-a.alerts.length)
+  const brokerPend=deals.filter(d=>d.estado_financiero==='broker_facturar')
+  const ocPend=deals.filter(d=>['solicitar_oc','oc_recibida','facturado'].includes(d.estado_financiero)&&!d.inmob_pago_fecha)
+  const docsPend=deals.filter(d=>d.docProgress?.promesa?.pct < 100)
+  const opciones = [
+    {id:'operaciones atrasadas', label:'Operaciones atrasadas'},
+    {id:'documentos promesa', label:'Documentos para promesa'},
+    {id:'oc inmobiliaria', label:'OC / cobros inmobiliaria'},
+    {id:'broker pagar', label:'Brokers por pagar'}
+  ]
+  const respuesta=(()=>{
+    const q=ask.toLowerCase()
+    if(q.includes('broker')||q.includes('pagar')) return brokerPend.length?'Hay '+brokerPend.length+' operación(es) donde el broker debe facturar o Finanzas debe pagar. Prioridad: '+brokerPend.slice(0,5).map(d=>d.leadNombre+' / '+d.brokerName).join(', ')+'.':'No veo pagos a broker bloqueados ahora.'
+    if(q.includes('oc')||q.includes('cobrar')||q.includes('inmobiliaria')) return ocPend.length?'Hay '+ocPend.length+' cuenta(s) por cobrar o por gestionar con inmobiliarias. Revisa primero: '+ocPend.slice(0,5).map(d=>d.inmobiliaria+' / '+d.leadNombre).join(', ')+'.':'No veo OC/cobros críticos pendientes.'
+    if(q.includes('document')) return docsPend.length?'Hay '+docsPend.length+' operación(es) sin documentos esenciales completos para solicitud de promesa. Primeras: '+docsPend.slice(0,5).map(d=>d.leadNombre+' '+(d.docProgress.promesa?.pct||0)+'%').join(', ')+'.':'Los documentos esenciales para promesa se ven completos.'
+    return atrasadas.length?'Hay '+atrasadas.length+' operación(es) atrasadas. Prioridad: '+atrasadas.slice(0,6).map(d=>d.leadNombre+' ('+d.alerts[0]+')').join(', ')+'.':'No veo operaciones atrasadas según las reglas SLA configuradas.'
+  })()
+  return <div><div style={{fontSize:20,fontWeight:900,color:B.primary,marginBottom:4}}>🐰 Rabito Interno</div><div style={{fontSize:12,color:B.mid,marginBottom:14}}>Asistente operativo basado en datos del CRM. Usa consultas rápidas para evitar preguntas editables o ambiguas.</div><div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16,marginBottom:14}}><Field360 label="Consulta rápida"><div style={{display:'flex',gap:8,flexWrap:'wrap'}}>{opciones.map(o=><button key={o.id} onClick={()=>setAsk(o.id)} style={{fontSize:12,padding:'8px 12px',borderRadius:10,border:ask===o.id?'2px solid '+B.primary:'1px solid #E2E8F0',background:ask===o.id?B.light:'#fff',color:ask===o.id?B.primary:'#475569',fontWeight:ask===o.id?800:600,cursor:'pointer'}}>{o.label}</button>)}</div></Field360><div style={{marginTop:14,padding:14,borderRadius:12,background:B.light,color:'#0F172A',lineHeight:1.55,fontSize:14}}><strong>Rabito:</strong> {respuesta}</div></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10}}><Kpi360 label="Operaciones con alerta" value={atrasadas.length} bg="#FEF2F2" col="#991b1b"/><Kpi360 label="Docs promesa incompletos" value={docsPend.length} bg="#FFFBEB" col="#92400e"/><Kpi360 label="Brokers por facturar/pagar" value={brokerPend.length} bg="#FFF7ED" col="#9a3412"/><Kpi360 label="Cobros inmobiliaria pendientes" value={ocPend.length} bg="#FFFBEB" col="#92400e"/></div></div>
 }
 
 // ─── Lead Form ────────────────────────────────────────────────────────────────
@@ -6609,8 +6757,7 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
         <div style={{display:'flex',flexDirection:'column',gap:8}}>
           {sections.map(s => <button key={s.id} onClick={()=>setSection(s.id)} style={{textAlign:'left',padding:'12px 14px',borderRadius:14,border:section===s.id?'1.5px solid '+C.primary:'1px solid #E2E8F0',background:section===s.id?'#EFF6FF':'#fff',cursor:'pointer',boxShadow:section===s.id?'0 8px 18px rgba(37,99,235,.10)':'none'}}><div style={{fontSize:13,fontWeight:950,color:section===s.id?C.primary:C.text}}>{s.label}</div><div style={{fontSize:11,color:C.mid,marginTop:2}}>{s.sub}</div></button>)}
         </div>
-
-        <button onClick={()=>{setCfg('activo',true);setCfg('siempreActivo',true);setMsg({type:'success',text:'Rabito quedó activo y disponible 24/7. Recuerda completar base, reglas y cerebro.'})}} style={{border:'none',background:C.primary,color:'#fff',borderRadius:14,padding:'12px 14px',fontSize:12,fontWeight:950,cursor:'pointer'}}>Activar agente</button>
+        <span style={{border:'1px solid '+C.border,background:'#fff',color:C.muted,borderRadius:14,padding:'12px 14px',fontSize:12,fontWeight:800}}>Usa el interruptor IA On/Off para activar Rabito</span>
       </div>
 
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -7406,7 +7553,7 @@ function MarketplaceView({ config, setConfig, isAdmin, supabase, dbReady, me }) 
   const [iframeError, setIframeError] = React.useState(false)
   const [iframeKey, setIframeKey] = React.useState(0)
 
-  const ROLES = ['admin','agent','partner','operaciones','finanzas']
+  const ROLES = ['admin','agent','partner']
 
   const save = async () => {
     setSaving(true)
