@@ -2111,7 +2111,7 @@ export default function App() {
           <BrokerHomeView
             leads={leads} users={users} stages={stages}
             commissions={commissions} indicators={indicators}
-            me={me} setSel={setSel} setNav={setNav}
+            me={me} setSel={setSel} setNav={setNav} setModal={setModal}
             dbReady={dbReady} supabase={supabase} setLeads={setLeads}
           />
         )}
@@ -4644,7 +4644,7 @@ function PromiseDocsPanel({p, idx, setEditingProps, me, isReviewer}) {
 }
 
 // ─── Broker Home View ────────────────────────────────────────────────────────
-function BrokerHomeView({ leads, users, stages, commissions, indicators, me, setSel, setNav, dbReady, supabase, setLeads }) {
+function BrokerHomeView({ leads, users, stages, commissions, indicators, me, setSel, setNav, setModal, dbReady, supabase, setLeads }) {
   const isMob = typeof window !== 'undefined' && window.innerWidth < 768
   const [logging, setLogging] = React.useState({})
   const misLeads = (leads||[]).filter(l => l.assigned_to === me?.id)
@@ -4737,7 +4737,7 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
                 background:'#F8FAFC',color:'#475569',fontWeight:600,cursor:'pointer'}}>
               {logging[l.id]?'...':'✓ Contacté'}
             </button>
-            <button onClick={()=>setSel(l)}
+            <button onClick={()=>{setSel(l);setModal('lead')}}
               style={{fontSize:11,padding:'5px 10px',borderRadius:8,border:`1px solid ${B.primary}`,
                 background:B.light,color:B.primary,fontWeight:700,cursor:'pointer'}}>
               Abrir
@@ -4786,7 +4786,7 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
                 <span style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{v.lead.nombre}</span>
                 <span style={{fontSize:12,color:'#5b21b6',marginLeft:8}}>{v.hora} — {v.proyecto}</span>
               </div>
-              <button onClick={()=>setSel(v.lead)} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #c4b5fd',background:'#fff',cursor:'pointer',color:'#5b21b6',fontWeight:600}}>Ver</button>
+              <button onClick={()=>{setSel(v.lead);setModal('lead')}} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #c4b5fd',background:'#fff',cursor:'pointer',color:'#5b21b6',fontWeight:600}}>Ver</button>
             </div>
           ))}
         </div>
@@ -4800,7 +4800,7 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
                 <span style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{v.lead.nombre}</span>
                 <span style={{fontSize:12,color:'#166534',marginLeft:8}}>{v.hora} — {v.proyecto}</span>
               </div>
-              <button onClick={()=>setSel(v.lead)} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #86efac',background:'#fff',cursor:'pointer',color:'#166534',fontWeight:600}}>Ver</button>
+              <button onClick={()=>{setSel(v.lead);setModal('lead')}} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #86efac',background:'#fff',cursor:'pointer',color:'#166534',fontWeight:600}}>Ver</button>
             </div>
           ))}
         </div>
@@ -4851,7 +4851,7 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
                   <span style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{l.nombre}</span>
                   {stage&&<span style={{fontSize:10,marginLeft:8,padding:'2px 7px',borderRadius:99,background:stage.bg,color:stage.col,fontWeight:700}}>{stage.label}</span>}
                 </div>
-                <button onClick={()=>setSel(l)} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #d8b4fe',background:'#fff',cursor:'pointer',color:'#7e22ce',fontWeight:600}}>Ver</button>
+                <button onClick={()=>{setSel(l);setModal('lead')}} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #d8b4fe',background:'#fff',cursor:'pointer',color:'#7e22ce',fontWeight:600}}>Ver</button>
               </div>
             )
           })}
