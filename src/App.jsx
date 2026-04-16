@@ -1216,7 +1216,7 @@ export default function App() {
     }
     if (sid==='perdido') { setLossTgt(lid); setLossR(LOSS_REASONS[0]); setLossOth(''); setModal('lost'); return }
 
-    // Reserva: broker debe completar la ficha de operación y cargar documentos esenciales
+    // Reserva: se registra la operación. No se suben documentos aquí.
     if (sid === 'reserva') {
       const existingProps = lead?.propiedades || []
       setEditingProps(existingProps.length > 0 ? [...existingProps] : [{...EMPTY_PROP, id:'p-'+Date.now(), fecha_reserva:new Date().toISOString().slice(0,10)}])
@@ -1225,13 +1225,14 @@ export default function App() {
       return
     }
 
-    // Solicitud de promesa / promesa / escritura: solo Admin u Operaciones
+    // Solicitud de promesa / promesa / escritura: solo Admin u Operaciones.
+    // En Solicitud de promesa se cargan y revisan los documentos esenciales.
     if (RESTRICTED_STAGES.includes(sid)) {
       if (me?.role !== 'admin' && me?.role !== 'operaciones') { msg('Solo Operaciones o el Administrador puede mover a esta etapa'); return }
       const existingProps = lead?.propiedades || []
-      if (sid === 'solicitud_promesa') {
+      if (sid === 'firma') {
         const ok = existingProps.length > 0 && existingProps.every(p => docsPromesaProgress(p).pct >= 100)
-        if (!ok) { msg('Faltan documentos esenciales para solicitar promesa'); return }
+        if (!ok) { msg('Antes de firma de promesa deben estar cargados los documentos esenciales'); return }
       }
       setEditingProps(existingProps.length > 0 ? [...existingProps] : [{...EMPTY_PROP, id:'p-'+Date.now()}])
       setPendingStage({leadId:lid, stageId:sid})
@@ -1250,14 +1251,24 @@ export default function App() {
     const changedLead = updated.find(l => l.id === lid)
     setLeads(updated)
     if (sel?.id===lid) setSel(changedLead)
-    // Targeted update of only stage fields — avoids overwriting other data
+    // Targeted update of only stage fields — avoids overwriting other data.
+    // Fallbacks prevent the lead from returning to the previous stage if Supabase lacks optional columns.
     if (dbReady && changedLead) {
-      await supabase.from('crm_leads').update({
-        stage: changedLead.stage,
-        stage_moved_at: changedLead.stage_moved_at,
-        loss_reason: changedLead.loss_reason,
-        stage_history: changedLead.stage_history
-      }).eq('id', lid)
+      await updateCrmLeadSafe(lid, [
+        {
+          stage: changedLead.stage,
+          stage_moved_at: changedLead.stage_moved_at,
+          loss_reason: changedLead.loss_reason,
+          stage_history: changedLead.stage_history
+        },
+        {
+          stage: changedLead.stage,
+          stage_moved_at: changedLead.stage_moved_at,
+          loss_reason: changedLead.loss_reason
+        },
+        { stage: changedLead.stage, stage_moved_at: changedLead.stage_moved_at },
+        { stage: changedLead.stage }
+      ], 'stage')
     } else {
       localStorage.setItem('rcrm_leads', JSON.stringify(updated))
     }
@@ -1450,6 +1461,21 @@ export default function App() {
     return {...p, precio_sin_bono: p.bono_pie ? Math.round((precio - bono)*100)/100 : precio}
   }
 
+  async function updateCrmLeadSafe(id, payloads, label='lead') {
+    if (!dbReady) return true
+    let lastError = null
+    for (const payload of payloads) {
+      const clean = Object.fromEntries(Object.entries(payload || {}).filter(([_, v]) => v !== undefined))
+      if (!Object.keys(clean).length) continue
+      const { error } = await supabase.from('crm_leads').update(clean).eq('id', id)
+      if (!error) return true
+      lastError = error
+      console.warn('Supabase update fallback failed for '+label, error, clean)
+    }
+    if (lastError) msg('No se pudo guardar completamente en Supabase. Revisa columnas de crm_leads.')
+    return false
+  }
+
   async function savePropField(leadId, propId, fields, auditLabel='Actualización operación') {
     // Update a single property's fields without changing stage. Guarda trazabilidad por operación.
     const updated = leads.map(l => {
@@ -1484,7 +1510,7 @@ export default function App() {
       const base = calcProp(p)
       const logItem = stageId ? {at:nowIso, by:me?.name||'Sistema', role:me?.role||'', action:'Movimiento a '+(stages.find(s=>s.id===stageId)?.label||stageId), fields:['stage']} : null
       const stageFields = stageId==='reserva'
-        ? {fecha_reserva:base.fecha_reserva||today, estado_operativo:base.estado_operativo||'docs_incompletos'}
+        ? {fecha_reserva:base.fecha_reserva||today, estado_operativo:base.estado_operativo||'handoff_pendiente'}
         : stageId==='solicitud_promesa'
           ? {solicitud_promesa_fecha:base.solicitud_promesa_fecha||today, estado_operativo:'solicitud_promesa'}
           : stageId==='firma'
@@ -1511,15 +1537,27 @@ export default function App() {
     const changedLead = updated.find(l => l.id === leadId)
     setLeads(updated)
     if (sel?.id===leadId) setSel(changedLead)
-    // Targeted update
+    // Targeted update con fallbacks: si Supabase no tiene columnas opcionales, igual guarda stage + propiedades.
     if (dbReady && changedLead) {
-      await supabase.from('crm_leads').update({
+      const basePayload = stageId ? {
         propiedades: changedLead.propiedades,
         stage: changedLead.stage,
         stage_moved_at: changedLead.stage_moved_at,
         stage_history: changedLead.stage_history,
         uf_cierre: changedLead.uf_cierre || null
-      }).eq('id', leadId)
+      } : { propiedades: changedLead.propiedades }
+      await updateCrmLeadSafe(leadId, stageId ? [
+        basePayload,
+        {
+          propiedades: changedLead.propiedades,
+          stage: changedLead.stage,
+          stage_moved_at: changedLead.stage_moved_at,
+          stage_history: changedLead.stage_history
+        },
+        { propiedades: changedLead.propiedades, stage: changedLead.stage, stage_moved_at: changedLead.stage_moved_at },
+        { propiedades: changedLead.propiedades, stage: changedLead.stage },
+        { stage: changedLead.stage }
+      ] : [{ propiedades: changedLead.propiedades }], 'propiedades/stage')
     } else {
       localStorage.setItem('rcrm_leads', JSON.stringify(updated))
     }
@@ -1556,7 +1594,7 @@ export default function App() {
   const isAgent    = me?.role === 'agent'
   const isOps      = me?.role === 'operaciones'
   const isFinanzas = me?.role === 'finanzas'
-  const adminRightNav = isAdmin && !isMobile
+  const adminSideNav = isAdmin && !isMobile
 
   const OPS_STAGES = ['reserva','solicitud_promesa','firma','escritura','perdido']
   const vL = !me ? [] : isAdmin
@@ -1566,10 +1604,10 @@ export default function App() {
     : leads.filter(l => l.assigned_to===me.id)
 
   const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
-  const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','finanzas','ia','rabito_interno','conversaciones','agenda','etapas','importar','extraer','marketplace']
+  const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','ia','rabito_interno','conversaciones','agenda','etapas','importar','extraer','marketplace']
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
             : isOps      ? ['operaciones','kanban','lista','rabito_interno']
-            : isFinanzas ? ['dashboard_finanzas','finanzas_360','comisiones','rabito_interno']
+            : isFinanzas ? ['dashboard_finanzas','finanzas_360','rabito_interno']
             :              ['kanban','lista','portal_broker','mis comisiones','mi agenda','nuevo lead',                                                    ...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
@@ -1775,7 +1813,7 @@ export default function App() {
             </div>}
           </div>
           {/* Desktop nav */}
-          {!isMobile && !adminRightNav && <div style={{display:'flex',gap:2,flexWrap:'wrap'}}>
+          {!isMobile && !adminSideNav && <div style={{display:'flex',gap:2,flexWrap:'wrap'}}>
             {NAV.map(n => (
               <button key={n} onClick={()=>setNav(n)} style={{fontSize:13,padding:'5px 12px',borderRadius:8,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#6b7280',fontWeight:nav===n?700:400}}>
                 {navLabel(n)}
@@ -1930,8 +1968,8 @@ export default function App() {
         </div>
       )}
 
-      {adminRightNav && (
-        <aside style={{position:'fixed',top:68,right:14,width:190,maxHeight:'calc(100vh - 86px)',overflowY:'auto',background:'#fff',border:'1px solid #E2E8F0',borderRadius:16,padding:10,boxShadow:'0 8px 24px rgba(27,79,200,0.10)',zIndex:80}}>
+      {adminSideNav && (
+        <aside style={{position:'fixed',top:68,left:14,width:190,maxHeight:'calc(100vh - 86px)',overflowY:'auto',background:'#fff',border:'1px solid #E2E8F0',borderRadius:16,padding:10,boxShadow:'0 8px 24px rgba(27,79,200,0.10)',zIndex:80}}>
           <div style={{fontSize:11,fontWeight:900,color:B.primary,textTransform:'uppercase',letterSpacing:.5,margin:'4px 8px 8px'}}>Menú CRM</div>
           {NAV.map(n => {
             const icons = {dashboard:'📊',kanban:'📋',lista:'📝',operaciones:'🧩',finanzas_360:'🏦',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',rabito_interno:'🐰',conversaciones:'💬',agenda:'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪'}
@@ -1942,7 +1980,7 @@ export default function App() {
         </aside>
       )}
 
-      <div style={{padding:isMobile?'10px 8px':'16px',paddingRight:adminRightNav?220:(isMobile?'8px':'16px'),paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
+      <div style={{padding:isMobile?'10px 8px':'16px',paddingLeft:adminSideNav?220:(isMobile?'8px':'16px'),paddingRight:isMobile?'8px':'16px',paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
 
         {/* KANBAN */}
         {(nav==='kanban'||nav==='pool') && !isFinanzas && (
@@ -3534,9 +3572,9 @@ export default function App() {
 
       {/* PROPIEDADES MODAL */}
       {propModal && (
-        <Modal title="Propiedades del cliente" onClose={()=>{setPropModal(null);setPendingStage(null);setEditingProps([])}} wide>
-          <p style={{margin:'0 0 12px',fontSize:12,color:B.mid}}>
-            Registra hasta 15 propiedades. {pendingStage ? 'Al guardar, el lead pasará a '+stages.find(s=>s.id===pendingStage.stageId)?.label+'.' : ''}
+        <Modal title={pendingStage?.stageId==='solicitud_promesa'?'Solicitud de promesa':'Propiedades del cliente'} onClose={()=>{setPropModal(null);setPendingStage(null);setEditingProps([])}} wide>
+          <p style={{margin:'0 0 12px',fontSize:12,color:B.mid,lineHeight:1.45}}>
+            {pendingStage?.stageId==='reserva' ? 'En Reserva se registra la operación y sus condiciones comerciales. Los documentos se cargan recién en Solicitud de Promesa.' : pendingStage?.stageId==='solicitud_promesa' ? 'Carga los documentos esenciales para pedir la promesa a la inmobiliaria. Al guardar, el lead quedará en Solicitud de promesa.' : pendingStage ? 'Al guardar, el lead pasará a '+stages.find(s=>s.id===pendingStage.stageId)?.label+'.' : 'Registra o actualiza los datos de la operación.'}
           </p>
 
           {editingProps.map((p, idx) => {
@@ -3585,36 +3623,15 @@ export default function App() {
                 <Fld label="Condiciones especiales prometidas al cliente">
                   <textarea value={p.condiciones_especiales||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,condiciones_especiales:e.target.value}:x))} placeholder="Descuentos, regalos, renta garantizada, plazos, acuerdos especiales..." style={{...sty.inp,minHeight:54,resize:'vertical'}}/>
                 </Fld>
-                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 12px',margin:'8px 0 10px'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
-                    <div>
-                      <div style={{fontSize:12,fontWeight:800,color:B.primary}}>Documentos esenciales para solicitar promesa</div>
-                      <div style={{fontSize:11,color:'#64748B'}}>El broker los carga en Reserva; Operaciones/Admin revisa y luego mueve a Solicitud de promesa.</div>
-                    </div>
-                    <span style={{fontSize:11,padding:'3px 8px',borderRadius:99,background:docsPromesaProgress(p).pct===100?'#DCFCE7':'#FFFBEB',color:docsPromesaProgress(p).pct===100?'#14532d':'#92400e',fontWeight:800}}>{docsPromesaProgress(p).pct}% completo</span>
-                  </div>
-                  <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8}}>
-                    {PROMESA_DOCS.map(doc => {
-                      const item = (p.docs_promesa||{})[doc.key] || {}
-                      return <div key={doc.key} style={{border:'1px solid #E2E8F0',borderRadius:8,padding:8,background:'#F8FAFC'}}>
-                        <div style={{fontSize:11,fontWeight:800,color:'#0F172A',marginBottom:5}}>{doc.label}</div>
-                        <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
-                          <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={e=>{
-                            const file=e.target.files?.[0]; if(!file) return
-                            if(file.size>2*1024*1024){ alert('Archivo máximo 2MB para esta versión'); return }
-                            const reader=new FileReader()
-                            reader.onload=ev=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,docs_promesa:{...(x.docs_promesa||{}),[doc.key]:{...(x.docs_promesa||{})[doc.key],file_name:file.name,data_url:ev.target.result,uploaded_at:new Date().toISOString(),uploaded_by:me?.name||''}}}:x))
-                            reader.readAsDataURL(file)
-                          }} style={{fontSize:11,maxWidth:'100%'}}/>
-                          {item.file_name&&<span style={{fontSize:10,color:'#166534',fontWeight:700}}>✓ {item.file_name}</span>}
-                        </div>
-                        {(isAdmin||isOps) && <select value={item.estado||''} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,docs_promesa:{...(x.docs_promesa||{}),[doc.key]:{...((x.docs_promesa||{})[doc.key]||{}),estado:e.target.value,reviewed_at:new Date().toISOString(),reviewed_by:me?.name||''}}}:x))} style={{...sty.sel,marginTop:6,padding:'5px 8px',fontSize:11}}>
-                          <option value="">Sin revisar</option><option value="recibido">Recibido</option><option value="aprobado">Aprobado</option><option value="rechazado">Rechazado</option>
-                        </select>}
-                      </div>
-                    })}
-                  </div>
-                </div>
+                {(pendingStage?.stageId==='solicitud_promesa' || (leads.find(l=>l.id===propModal)?.stage==='solicitud_promesa')) && (
+                  <PromiseDocsPanel
+                    p={p}
+                    idx={idx}
+                    setEditingProps={setEditingProps}
+                    me={me}
+                    isReviewer={isAdmin||isOps}
+                  />
+                )}
                 <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:8,marginBottom:8}}>
                   <Fld label="Moneda">
                     <select value={p.moneda} onChange={e=>setEditingProps(prev=>prev.map((x,i)=>i===idx?{...x,moneda:e.target.value}:x))} style={sty.sel}>
@@ -3936,14 +3953,36 @@ function Operaciones360View({leads, users, stages, commissions, indicators, save
 }
 
 function Finanzas360View({leads, users, stages, commissions, indicators, savePropField, saveCommission, setCommissions}){
-  const [f,setF]=React.useState('all'); const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','solicitud_promesa','firma','escritura','ganado'].includes(d.leadStage)||d.fecha_reserva); const filtered=f==='all'?deals:deals.filter(d=>d.estado_financiero===f); const totalComision=filtered.reduce((s,d)=>s+d.comisionTotal,0); const totalBroker=filtered.reduce((s,d)=>s+d.comisionBroker,0); const margen=totalComision-totalBroker; const update=(d,fields,label='Finanzas 360')=>savePropField&&savePropField(d.leadId,d.propId,fields,label)
+  const [f,setF]=React.useState('all')
+  const [moneda,setMoneda]=React.useState('all')
+  const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>['reserva','solicitud_promesa','firma','escritura','ganado','desistio'].includes(d.leadStage)||d.fecha_reserva)
+  const filtered=deals.filter(d=>{
+    if(f!=='all' && d.estado_financiero!==f) return false
+    if(moneda!=='all' && d.moneda!==moneda) return false
+    return true
+  })
+  const byCurrency = cur => filtered.filter(d=>d.moneda===cur)
+  const sum = (arr, field) => arr.reduce((s,d)=>s+(parseFloat(d[field])||0),0)
+  const ufDeals=byCurrency('UF'), usdDeals=byCurrency('USD')
+  const totalUF=sum(ufDeals,'comisionTotal'), brokerUF=sum(ufDeals,'comisionBroker'), margenUF=totalUF-brokerUF
+  const totalUSD=sum(usdDeals,'comisionTotal'), brokerUSD=sum(usdDeals,'comisionBroker'), margenUSD=totalUSD-brokerUSD
+  const update=(d,fields,label='Finanzas 360')=>savePropField&&savePropField(d.leadId,d.propId,fields,label)
   const setComm=(d,field,val)=>{const next={...(commissions[d.key]||{}),[field]:val}; setCommissions(prev=>({...prev,[d.key]:next})); saveCommission&&saveCommission(d.key,next)}
-  return <div><div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:14}}><div><div style={{fontSize:20,fontWeight:900,color:B.primary}}>🏦 Finanzas 360</div><div style={{fontSize:12,color:B.mid}}>Cuentas por cobrar a inmobiliarias, cuentas por pagar a brokers y margen Rabbitts.</div></div><Select360 value={f} onChange={setF}><option value="all">Todos los estados financieros</option>{Object.entries(FIN_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:10,marginBottom:14}}><Kpi360 label="Comisión total" value={fmt360(totalComision)} sub="UF/USD según operación"/><Kpi360 label="Pago brokers" value={fmt360(totalBroker)} bg="#FFFBEB" col="#92400e"/><Kpi360 label="Margen Rabbitts" value={fmt360(margen)} bg="#DCFCE7" col="#14532d"/><Kpi360 label="Pendientes cobro" value={deals.filter(d=>!d.inmob_pago_fecha&&!d.broker_pago_fecha).length} bg="#FEF2F2" col="#991b1b"/></div><div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden'}}><table className="rcrm-table" style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{background:B.light,color:B.primary,textAlign:'left'}}>{['Cliente / operación','Broker','Estado financiero','% comisión','% broker','Por cobrar','Por pagar','Fechas clave'].map(h=><th key={h} style={{padding:10}}>{h}</th>)}</tr></thead><tbody>{filtered.map(d=><tr key={d.key} style={{borderTop:'1px solid #E2E8F0'}}><td style={{padding:10,fontWeight:700}}>{d.leadNombre}<div style={{fontWeight:500,color:'#64748B'}}>{d.inmobiliaria} · {d.proyecto} · {d.moneda} {fmt360(d.base)}</div></td><td style={{padding:10}}>{d.brokerName}</td><td style={{padding:10}}><Select360 value={d.estado_financiero} onChange={v=>update(d,{estado_financiero:v},'Cambio estado financiero')}>{Object.entries(FIN_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360></td><td style={{padding:10,width:110}}><input value={d.comm.pctComision||''} onChange={e=>setComm(d,'pctComision',e.target.value)} placeholder="4" style={{...sty.inp,padding:6,fontSize:12}}/></td><td style={{padding:10,width:110}}><input value={d.comm.pctBroker||''} onChange={e=>setComm(d,'pctBroker',e.target.value)} placeholder="60" style={{...sty.inp,padding:6,fontSize:12}}/></td><td style={{padding:10,fontWeight:800,color:B.primary}}>{d.moneda} {fmt360(d.comisionTotal)}</td><td style={{padding:10,fontWeight:800,color:'#166534'}}>{d.moneda} {fmt360(d.comisionBroker)}{d.comisionClp?<div style={{fontSize:10,color:'#64748B'}}>${d.comisionClp.toLocaleString('es-CL')} CLP</div>:null}</td><td style={{padding:10,minWidth:210}}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>{[['OC','oc_fecha_recepcion'],['Fact. R.','factura_fecha'],['Pagó Inmob.','inmob_pago_fecha'],['Pagó Broker','broker_pago_fecha']].map(([lbl,k])=><label key={k} style={{fontSize:10,color:'#64748B',fontWeight:700}}>{lbl}<input type="date" value={d[k]||''} onChange={e=>update(d,{[k]:e.target.value},'Actualiza '+lbl)} style={{...sty.inp,padding:5,fontSize:11}}/></label>)}</div></td></tr>)}</tbody></table>{filtered.length===0&&<div style={{padding:30,textAlign:'center',color:'#94a3b8'}}>Sin operaciones con este filtro.</div>}</div></div>
+  const MoneyKpi = ({cur,total,broker,margen,count,bg='#fff',col=B.primary}) => <div style={{background:bg,border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{fontSize:11,color:'#64748B',fontWeight:900,textTransform:'uppercase'}}>{cur} · {count} operaciones</div><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginTop:8}}><div><div style={{fontSize:10,color:'#64748B',fontWeight:800}}>Por cobrar</div><div style={{fontSize:18,fontWeight:950,color:col}}>{cur} {fmt360(total)}</div></div><div><div style={{fontSize:10,color:'#64748B',fontWeight:800}}>Broker</div><div style={{fontSize:18,fontWeight:950,color:'#166534'}}>{cur} {fmt360(broker)}</div></div><div><div style={{fontSize:10,color:'#64748B',fontWeight:800}}>Margen</div><div style={{fontSize:18,fontWeight:950,color:'#7c3aed'}}>{cur} {fmt360(margen)}</div></div></div></div>
+  const renderTable = cur => {
+    const rows = filtered.filter(d=>d.moneda===cur)
+    return <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,overflow:'hidden',marginTop:12}}><div style={{padding:'10px 12px',background:cur==='UF'?'#FFFBEB':'#F0FDF4',fontWeight:950,color:cur==='UF'?'#92400e':'#166534'}}>Operaciones en {cur}</div><table className="rcrm-table" style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{background:'#F8FAFC',color:'#334155',textAlign:'left'}}>{['Cliente / operación','Broker','Estado financiero','% comisión','% broker','Por cobrar','Por pagar broker','Fechas clave'].map(h=><th key={h} style={{padding:10}}>{h}</th>)}</tr></thead><tbody>{rows.map(d=><tr key={d.key} style={{borderTop:'1px solid #E2E8F0'}}><td style={{padding:10,fontWeight:800}}>{d.leadNombre}<div style={{fontWeight:500,color:'#64748B'}}>{d.inmobiliaria} · {d.proyecto} · {cur} {fmt360(d.base)}</div></td><td style={{padding:10}}>{d.brokerName}</td><td style={{padding:10}}><Select360 value={d.estado_financiero} onChange={v=>update(d,{estado_financiero:v},'Cambio estado financiero')}>{Object.entries(FIN_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360></td><td style={{padding:10,width:110}}><input value={d.comm.pctComision||''} onChange={e=>setComm(d,'pctComision',e.target.value)} placeholder="4" style={{...sty.inp,padding:6,fontSize:12}}/></td><td style={{padding:10,width:110}}><input value={d.comm.pctBroker||''} onChange={e=>setComm(d,'pctBroker',e.target.value)} placeholder="60" style={{...sty.inp,padding:6,fontSize:12}}/></td><td style={{padding:10,fontWeight:950,color:B.primary}}>{cur} {fmt360(d.comisionTotal)}</td><td style={{padding:10,fontWeight:950,color:'#166534'}}>{cur} {fmt360(d.comisionBroker)}{d.comisionClp?<div style={{fontSize:10,color:'#64748B'}}>${d.comisionClp.toLocaleString('es-CL')} CLP ref.</div>:null}</td><td style={{padding:10,minWidth:210}}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>{[['OC','oc_fecha_recepcion'],['Fact. R.','factura_fecha'],['Pagó Inmob.','inmob_pago_fecha'],['Pagó Broker','broker_pago_fecha']].map(([lbl,k])=><label key={k} style={{fontSize:10,color:'#64748B',fontWeight:700}}>{lbl}<input type="date" value={d[k]||''} onChange={e=>update(d,{[k]:e.target.value},'Actualiza '+lbl)} style={{...sty.inp,padding:5,fontSize:11}}/></label>)}</div></td></tr>)}</tbody></table>{rows.length===0&&<div style={{padding:22,textAlign:'center',color:'#94a3b8'}}>Sin operaciones en {cur} con este filtro.</div>}</div>
+  }
+  return <div><div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:14}}><div><div style={{fontSize:20,fontWeight:900,color:B.primary}}>🏦 Finanzas 360</div><div style={{fontSize:12,color:B.mid}}>Control único de finanzas: cobro inmobiliaria, pago broker y margen. UF y USD siempre separados.</div></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><Select360 value={f} onChange={setF}><option value="all">Todos los estados financieros</option>{Object.entries(FIN_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</Select360><Select360 value={moneda} onChange={setMoneda}><option value="all">UF + USD separados</option><option value="UF">Solo UF</option><option value="USD">Solo USD</option></Select360></div></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:10,marginBottom:12}}>{(moneda==='all'||moneda==='UF')&&<MoneyKpi cur="UF" total={totalUF} broker={brokerUF} margen={margenUF} count={ufDeals.length} bg="#FFFBEB" col="#92400e"/>}{(moneda==='all'||moneda==='USD')&&<MoneyKpi cur="USD" total={totalUSD} broker={brokerUSD} margen={margenUSD} count={usdDeals.length} bg="#F0FDF4" col="#166534"/>}</div>{(moneda==='all'||moneda==='UF')&&renderTable('UF')}{(moneda==='all'||moneda==='USD')&&renderTable('USD')}</div>
 }
 
 function PortalBrokerView({leads, users, stages, commissions, indicators, me}){
-  const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>d.brokerId===me.id); const activos=deals.filter(d=>d.estado_financiero!=='broker_pagado'); const pagados=deals.filter(d=>d.estado_financiero==='broker_pagado')
-  return <div><div style={{fontSize:20,fontWeight:900,color:B.primary,marginBottom:4}}>🧑‍💼 Portal Broker</div><div style={{fontSize:12,color:B.mid,marginBottom:14}}>Tus operaciones, pendientes post reserva, comisiones proyectadas y pagos.</div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginBottom:14}}><Kpi360 label="Operaciones activas" value={activos.length}/><Kpi360 label="Comisión proyectada" value={fmt360(deals.reduce((s,d)=>s+d.comisionBroker,0))}/><Kpi360 label="Por cobrar" value={fmt360(activos.reduce((s,d)=>s+d.comisionBroker,0))} bg="#FFFBEB" col="#92400e"/><Kpi360 label="Pagadas" value={pagados.length} bg="#DCFCE7" col="#14532d"/></div><div style={{display:'grid',gap:10}}>{deals.map(d=><div key={d.key} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><div><div style={{fontWeight:900,color:'#0F172A'}}>{d.leadNombre} · {d.proyecto}{d.depto?' · '+d.depto:''}</div><div style={{fontSize:12,color:'#64748B'}}>{d.inmobiliaria} · {d.moneda} {fmt360(d.base)} · Etapa {d.leadStageLabel}</div></div><div style={{textAlign:'right'}}><div style={{fontSize:11,color:'#64748B',fontWeight:800}}>Mi comisión</div><div style={{fontSize:20,fontWeight:900,color:'#14532d'}}>{d.moneda} {fmt360(d.comisionBroker)}</div>{d.comisionClp?<div style={{fontSize:11,color:'#64748B'}}>${d.comisionClp.toLocaleString('es-CL')} CLP</div>:null}</div></div><div style={{marginTop:10,display:'flex',gap:6,flexWrap:'wrap'}}><Chip360 styleMap={OP_STATUS} value={d.estado_operativo}/><Chip360 styleMap={FIN_STATUS} value={d.estado_financiero}/><span style={{fontSize:11,color:'#64748B',fontWeight:800,padding:'4px 10px'}}>Docs {d.docProgress.pct}%</span>{d.alerts.length>0&&<span style={{fontSize:11,padding:'4px 10px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:800}}>⚠ {d.alerts.length} pendiente(s)</span>}</div>{d.estado_financiero==='broker_facturar'&&<div style={{marginTop:10,padding:10,borderRadius:10,background:'#FFF7ED',color:'#9a3412',fontSize:12,fontWeight:700}}>La inmobiliaria ya pagó. Debes enviar tu factura/boleta a Rabbitts para liberar pago.</div>}</div>)}</div>{deals.length===0&&<div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:30,textAlign:'center',color:'#94a3b8'}}>Aún no tienes operaciones post reserva registradas.</div>}</div>
+  const deals=buildDeals360(leads,users,stages,commissions,indicators).filter(d=>d.brokerId===me.id)
+  const activos=deals.filter(d=>d.estado_financiero!=='broker_pagado')
+  const pagados=deals.filter(d=>d.estado_financiero==='broker_pagado')
+  const sumCur = (arr, cur) => arr.filter(d=>d.moneda===cur).reduce((s,d)=>s+(parseFloat(d.comisionBroker)||0),0)
+  const ufTotal=sumCur(deals,'UF'), usdTotal=sumCur(deals,'USD'), ufPend=sumCur(activos,'UF'), usdPend=sumCur(activos,'USD')
+  return <div><div style={{fontSize:20,fontWeight:900,color:B.primary,marginBottom:4}}>🧑‍💼 Portal Broker</div><div style={{fontSize:12,color:B.mid,marginBottom:14}}>Tus operaciones, pendientes post reserva, comisiones proyectadas y pagos. UF y USD se muestran separados.</div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginBottom:14}}><Kpi360 label="Operaciones activas" value={activos.length}/><Kpi360 label="Comisión UF" value={'UF '+fmt360(ufTotal)} bg="#FFFBEB" col="#92400e"/><Kpi360 label="Comisión USD" value={'USD '+fmt360(usdTotal)} bg="#F0FDF4" col="#166534"/><Kpi360 label="Pendiente UF" value={'UF '+fmt360(ufPend)} bg="#FFF7ED" col="#9a3412"/><Kpi360 label="Pendiente USD" value={'USD '+fmt360(usdPend)} bg="#ECFDF5" col="#047857"/><Kpi360 label="Pagadas" value={pagados.length} bg="#DCFCE7" col="#14532d"/></div><div style={{display:'grid',gap:10}}>{deals.map(d=><div key={d.key} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:14}}><div style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><div><div style={{fontWeight:900,color:'#0F172A'}}>{d.leadNombre} · {d.proyecto}{d.depto?' · '+d.depto:''}</div><div style={{fontSize:12,color:'#64748B'}}>{d.inmobiliaria} · {d.moneda} {fmt360(d.base)} · Etapa {d.leadStageLabel}</div></div><div style={{textAlign:'right'}}><div style={{fontSize:11,color:'#64748B',fontWeight:800}}>Mi comisión</div><div style={{fontSize:20,fontWeight:900,color:d.moneda==='UF'?'#92400e':'#166534'}}>{d.moneda} {fmt360(d.comisionBroker)}</div>{d.comisionClp?<div style={{fontSize:11,color:'#64748B'}}>${d.comisionClp.toLocaleString('es-CL')} CLP ref.</div>:null}</div></div><div style={{marginTop:10,display:'flex',gap:6,flexWrap:'wrap'}}><Chip360 styleMap={OP_STATUS} value={d.estado_operativo}/><Chip360 styleMap={FIN_STATUS} value={d.estado_financiero}/><span style={{fontSize:11,color:'#64748B',fontWeight:800,padding:'4px 10px'}}>Docs {d.docProgress.pct}%</span>{d.alerts.length>0&&<span style={{fontSize:11,padding:'4px 10px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:800}}>⚠ {d.alerts.length} pendiente(s)</span>}</div>{d.estado_financiero==='broker_facturar'&&<div style={{marginTop:10,padding:10,borderRadius:10,background:'#FFF7ED',color:'#9a3412',fontSize:12,fontWeight:700}}>La inmobiliaria ya pagó. Debes enviar tu factura/boleta a Rabbitts para liberar pago.</div>}</div>)}</div>{deals.length===0&&<div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:30,textAlign:'center',color:'#94a3b8'}}>Aún no tienes operaciones post reserva registradas.</div>}</div>
 }
 
 function RabitoInternoView({leads, users, stages, commissions, indicators}){
@@ -3967,6 +4006,87 @@ function RabitoInternoView({leads, users, stages, commissions, indicators}){
     return atrasadas.length?'Hay '+atrasadas.length+' operación(es) atrasadas. Prioridad: '+atrasadas.slice(0,6).map(d=>d.leadNombre+' ('+d.alerts[0]+')').join(', ')+'.':'No veo operaciones atrasadas según las reglas SLA configuradas.'
   })()
   return <div><div style={{fontSize:20,fontWeight:900,color:B.primary,marginBottom:4}}>🐰 Rabito Interno</div><div style={{fontSize:12,color:B.mid,marginBottom:14}}>Asistente operativo basado en datos del CRM. Usa consultas rápidas para evitar preguntas editables o ambiguas.</div><div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:16,marginBottom:14}}><Field360 label="Consulta rápida"><div style={{display:'flex',gap:8,flexWrap:'wrap'}}>{opciones.map(o=><button key={o.id} onClick={()=>setAsk(o.id)} style={{fontSize:12,padding:'8px 12px',borderRadius:10,border:ask===o.id?'2px solid '+B.primary:'1px solid #E2E8F0',background:ask===o.id?B.light:'#fff',color:ask===o.id?B.primary:'#475569',fontWeight:ask===o.id?800:600,cursor:'pointer'}}>{o.label}</button>)}</div></Field360><div style={{marginTop:14,padding:14,borderRadius:12,background:B.light,color:'#0F172A',lineHeight:1.55,fontSize:14}}><strong>Rabito:</strong> {respuesta}</div></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10}}><Kpi360 label="Operaciones con alerta" value={atrasadas.length} bg="#FEF2F2" col="#991b1b"/><Kpi360 label="Docs promesa incompletos" value={docsPend.length} bg="#FFFBEB" col="#92400e"/><Kpi360 label="Brokers por facturar/pagar" value={brokerPend.length} bg="#FFF7ED" col="#9a3412"/><Kpi360 label="Cobros inmobiliaria pendientes" value={ocPend.length} bg="#FFFBEB" col="#92400e"/></div></div>
+}
+
+
+function PromiseDocsPanel({p, idx, setEditingProps, me, isReviewer}) {
+  const progress = docsPromesaProgress(p)
+  const setDoc = (docKey, patch) => {
+    setEditingProps(prev => prev.map((x,i) => i===idx ? {
+      ...x,
+      docs_promesa: {
+        ...(x.docs_promesa || {}),
+        [docKey]: { ...(((x.docs_promesa || {})[docKey]) || {}), ...patch }
+      }
+    } : x))
+  }
+  const upload = (docKey, file) => {
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) { alert('Archivo máximo 2MB para esta versión'); return }
+    const reader = new FileReader()
+    reader.onload = ev => setDoc(docKey, {
+      file_name: file.name,
+      data_url: ev.target.result,
+      estado: 'recibido',
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: me?.name || ''
+    })
+    reader.readAsDataURL(file)
+  }
+  const statusStyle = estado => estado==='aprobado'
+    ? {bg:'#DCFCE7', col:'#14532d', label:'Aprobado'}
+    : estado==='rechazado'
+      ? {bg:'#FEF2F2', col:'#991b1b', label:'Rechazado'}
+      : estado==='recibido'
+        ? {bg:'#EFF6FF', col:'#1d4ed8', label:'Recibido'}
+        : {bg:'#F8FAFC', col:'#64748B', label:'Pendiente'}
+  return (
+    <div style={{background:'#fff',border:'1px solid #DBEAFE',borderRadius:16,padding:14,margin:'10px 0 12px',boxShadow:'0 8px 22px rgba(37,99,235,.06)'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,marginBottom:12,flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:950,color:B.primary}}>📎 Documentos para Solicitud de Promesa</div>
+          <div style={{fontSize:12,color:'#64748B',lineHeight:1.45,marginTop:3}}>Esta etapa es el control operativo: aquí se cargan los respaldos, Operaciones/Admin los revisa y luego el negocio puede avanzar a Firma Promesa.</div>
+        </div>
+        <div style={{minWidth:130}}>
+          <div style={{fontSize:11,fontWeight:900,color:progress.pct===100?'#14532d':'#92400e',marginBottom:5,textAlign:'right'}}>{progress.ok}/{progress.total} · {progress.pct}% completo</div>
+          <div style={{height:8,background:'#E2E8F0',borderRadius:99,overflow:'hidden'}}><div style={{height:'100%',width:progress.pct+'%',background:progress.pct===100?'#22c55e':'#2563EB',borderRadius:99}}/></div>
+        </div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(230px,1fr))',gap:10}}>
+        {PROMESA_DOCS.map(doc => {
+          const item = (p.docs_promesa || {})[doc.key] || {}
+          const st = statusStyle(item.estado)
+          const inputId = 'promesa-doc-'+idx+'-'+doc.key
+          return (
+            <div key={doc.key} style={{border:'1px solid #E2E8F0',borderRadius:14,padding:12,background:item.file_name?'#F8FAFC':'#FFFFFF'}}>
+              <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'flex-start',marginBottom:8}}>
+                <div style={{fontSize:13,fontWeight:900,color:'#0F172A',lineHeight:1.25}}>{doc.label}</div>
+                <span style={{fontSize:10,padding:'3px 7px',borderRadius:99,background:st.bg,color:st.col,fontWeight:900,whiteSpace:'nowrap'}}>{st.label}</span>
+              </div>
+              {item.file_name ? (
+                <div style={{fontSize:12,color:'#166534',fontWeight:800,background:'#DCFCE7',border:'1px solid #BBF7D0',borderRadius:10,padding:'8px 10px',marginBottom:8,wordBreak:'break-word'}}>✓ {item.file_name}</div>
+              ) : (
+                <div style={{fontSize:12,color:'#94A3B8',background:'#F8FAFC',border:'1px dashed #CBD5E1',borderRadius:10,padding:'8px 10px',marginBottom:8}}>Sin archivo cargado</div>
+              )}
+              <input id={inputId} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style={{display:'none'}} onChange={e=>upload(doc.key, e.target.files?.[0])}/>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                <label htmlFor={inputId} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',gap:6,padding:'8px 10px',borderRadius:10,border:'1px solid #2563EB',background:'#EFF6FF',color:'#1d4ed8',fontSize:12,fontWeight:900,cursor:'pointer'}}>{item.file_name?'Reemplazar':'Subir archivo'}</label>
+                {item.data_url && <a href={item.data_url} target="_blank" rel="noreferrer" style={{display:'inline-flex',alignItems:'center',padding:'8px 10px',borderRadius:10,border:'1px solid #E2E8F0',background:'#fff',color:'#475569',fontSize:12,fontWeight:800,textDecoration:'none'}}>Ver</a>}
+              </div>
+              {isReviewer && (
+                <select value={item.estado||''} onChange={e=>setDoc(doc.key,{estado:e.target.value,reviewed_at:new Date().toISOString(),reviewed_by:me?.name||''})} style={{...sty.sel,marginTop:8,padding:'7px 9px',fontSize:12}}>
+                  <option value="">Pendiente</option>
+                  <option value="recibido">Recibido</option>
+                  <option value="aprobado">Aprobado</option>
+                  <option value="rechazado">Rechazado</option>
+                </select>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 // ─── Lead Form ────────────────────────────────────────────────────────────────
