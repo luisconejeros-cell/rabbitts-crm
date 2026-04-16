@@ -1724,7 +1724,7 @@ export default function App() {
         const searchMatch = !brokerSearch || [l.nombre,l.telefono,l.email,l.rut].join(' ').toLowerCase().includes(brokerSearch.toLowerCase())
         return isMyLead && searchMatch
       })
-    : isFinanzas ? leads  // finanzas sees all leads (read-only)
+    : isFinanzas ? leads.filter(l => ['firma','escritura','ganado'].includes(l.stage))  // finanzas: solo firma promesa, escritura y ganado
     : leads.filter(l => l.assigned_to===me.id && (!brokerSearch || [l.nombre,l.telefono,l.email,l.rut].join(' ').toLowerCase().includes(brokerSearch.toLowerCase())))
 
   const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
