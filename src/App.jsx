@@ -804,7 +804,7 @@ export default function App() {
         const saved = us.find(u => u.id === window.__sessionUserId)
         if (saved) {
           setMe(saved)
-          setNav(saved.role === 'admin' || saved.role === 'partner' ? 'dashboard' : 'kanban')
+          setNav(saved.role === 'admin' || saved.role === 'partner' ? 'dashboard' : saved.role === 'operaciones' ? 'operaciones' : saved.role === 'finanzas' ? 'dashboard_finanzas' : 'broker_home')
         }
         window.__sessionUserId = null
       }
@@ -1131,7 +1131,7 @@ export default function App() {
     const u = (users||[]).find(x => x.username === lu.trim().toLowerCase())
     if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
-    setNav(u.role==='admin'||u.role==='partner'?'dashboard':u.role==='finanzas'?'dashboard_finanzas':'kanban')
+    setNav(u.role==='admin'||u.role==='partner'?'dashboard':u.role==='finanzas'?'dashboard_finanzas':u.role==='operaciones'?'operaciones':'broker_home')
     // Persist session for 8 hours
     localStorage.setItem('rcrm_session', JSON.stringify({id:u.id, expires: Date.now() + 8*60*60*1000}))
     // Record login for activity tracking
@@ -1732,11 +1732,11 @@ export default function App() {
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
             : isOps      ? ['operaciones','kanban','lista','visitas','rabito_interno']
             : isFinanzas ? ['dashboard_finanzas','finanzas_360','kanban','rabito_interno']
-            :              ['kanban','lista','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
+            :              ['broker_home','kanban','lista','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
-    dashboard:'Dashboard', kanban:'Leads', lista:'Lista', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
-    operaciones:'Operaciones 360', condiciones:'Condiciones Comerciales', finanzas_360:'Finanzas 360', portal_broker:'Mis Comisiones', mi_equipo:'Mi Equipo', condiciones:'📋 Condiciones', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones Brokers', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead','condiciones':'Condiciones Comerciales','team_dashboard':'Mi Equipo','visitas':'Visitas','mis_visitas':'Mis Visitas'
+    broker_home:'Inicio', dashboard:'Dashboard', kanban:'Leads', lista:'Lista', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
+    operaciones:'Operaciones 360', condiciones:'Condiciones Comerciales', finanzas_360:'Finanzas 360', portal_broker:'Mis Comisiones', mi_equipo:'Mi Equipo', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones Brokers', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead','team_dashboard':'Mi Equipo','visitas':'Visitas','mis_visitas':'Mis Visitas'
   }
   const navLabel = n => NAV_LABELS[n] || n.charAt(0).toUpperCase()+n.slice(1).replace('_',' ')
 
@@ -2038,7 +2038,7 @@ export default function App() {
               </div>
             </div>
             {NAV.map(n => {
-              const icons = {dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬',rabito_interno:'🐰',operaciones:'🧩',finanzas_360:'🏦',condiciones:'📋',visitas:'📅',mis_visitas:'📅',agenda:'📅','mi agenda':'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪',pool:'🌐',comisiones:'💰','mis comisiones':'💵','portal_broker':'💵','team_dashboard':'👥','nuevo lead':'➕',dashboard_finanzas:'📊'}
+              const icons = {broker_home:'🏠',dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬',rabito_interno:'🐰',operaciones:'🧩',finanzas_360:'🏦',condiciones:'📋',visitas:'📅',mis_visitas:'📅',agenda:'📅','mi agenda':'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪',pool:'🌐',comisiones:'💰','mis comisiones':'💵','portal_broker':'💵','team_dashboard':'👥','nuevo lead':'➕',dashboard_finanzas:'📊'}
               return (
                 <button key={n} onClick={()=>{setNav(n);setMobileMenuOpen(false)}}
                   style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:10,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#374151',fontWeight:nav===n?700:400,fontSize:14,textAlign:'left',width:'100%'}}>
@@ -2076,10 +2076,10 @@ export default function App() {
       {isMobile && isAgent && (
         <div style={{position:'fixed',bottom:0,left:0,right:0,background:'#fff',borderTop:'2px solid #dce8ff',display:'flex',zIndex:100,boxShadow:'0 -2px 12px rgba(27,79,200,0.08)'}}>
           {[
-            {n:'kanban',     icon:'📋', label:'Leads'},
-            {n:'portal_broker', icon:'💵', label:'Mis comisiones'},
-            
-            {n:'nuevo lead', icon:'➕', label:'Nuevo'},
+            {n:'broker_home', icon:'🏠', label:'Inicio'},
+            {n:'kanban',      icon:'📋', label:'Leads'},
+            {n:'portal_broker', icon:'💵', label:'Comisiones'},
+            {n:'nuevo lead',  icon:'➕', label:'Nuevo'},
           ].map(({n,icon,label})=>(
             <button key={n} onClick={()=>setNav(n)}
               style={{flex:1,padding:'8px 4px',border:'none',background:'transparent',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:2,
@@ -2105,6 +2105,16 @@ export default function App() {
       )}
 
       <div style={{padding:isMobile?'10px 8px':'16px',paddingLeft:adminSideNav?220:(isMobile?'8px':'16px'),paddingRight:isMobile?'8px':'16px',paddingBottom:isMobile&&isAgent?'80px':'16px'}}>
+
+        {/* BROKER HOME */}
+        {nav==='broker_home' && isAgent && (
+          <BrokerHomeView
+            leads={leads} users={users} stages={stages}
+            commissions={commissions} indicators={indicators}
+            me={me} setSel={setSel} setNav={setNav}
+            dbReady={dbReady} supabase={supabase} setLeads={setLeads}
+          />
+        )}
 
         {/* KANBAN */}
         {(nav==='kanban'||nav==='pool') && (
@@ -2181,7 +2191,13 @@ export default function App() {
         {/* LISTA */}
         {nav==='lista' && (
           <div style={{overflowX:isMobile?'auto':'visible'}}>
-            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,gap:8,flexWrap:'wrap'}}>
+              {isAgent && (
+                <div style={{fontSize:12,color:'#64748B'}}>
+                  <span style={{fontWeight:700,color:'#0F172A'}}>{(vL||[]).filter(l=>daysIn(l)>=3&&!OPS_LOCKED_STAGES.includes(l.stage)).length}</span> leads necesitan atención ·{' '}
+                  <span style={{fontWeight:700,color:B.primary}}>{(vL||[]).length}</span> total
+                </div>
+              )}
               {isAdmin && <button onClick={exportCSV} style={sty.btnO}>Exportar CSV</button>}
             </div>
             <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,overflow:'auto'}}>
@@ -2195,19 +2211,34 @@ export default function App() {
                 </thead>
                 <tbody>
                   {(vL||[]).length===0&&<tr><td colSpan={11} style={{padding:32,textAlign:'center',color:'#9ca3af'}}>Sin leads registrados</td></tr>}
-                  {(vL||[]).map(lead => {
+                  {(isAgent
+                    ? [...(vL||[])].sort((a,b) => {
+                        // urgentes primero (no bloqueados, >=3d), luego el resto por días desc
+                        const aUrgent = !OPS_LOCKED_STAGES.includes(a.stage) && daysIn(a)>=3 && !['ganado','perdido','desistio'].includes(a.stage)
+                        const bUrgent = !OPS_LOCKED_STAGES.includes(b.stage) && daysIn(b)>=3 && !['ganado','perdido','desistio'].includes(b.stage)
+                        if (aUrgent && !bUrgent) return -1
+                        if (!aUrgent && bUrgent) return 1
+                        return daysIn(b) - daysIn(a)
+                      })
+                    : (vL||[])
+                  ).map(lead => {
                     const st = stages.find(x=>x.id===lead.stage)||stages[0]
                     const ag = (users||[]).find(u=>u.id===lead.assigned_to)
                     const cal = CAL[lead.calificacion]
+                    const dias = daysIn(lead)
+                    const isUrgent = isAgent && !OPS_LOCKED_STAGES.includes(lead.stage) && dias>=3 && !['ganado','perdido','desistio'].includes(lead.stage)
+                    const rowBg = isUrgent ? (dias>=7?'#FFF8F8':'#FFFDF5') : 'transparent'
                     return (
-                      <tr key={lead.id} onClick={()=>{setSel(lead);setModal('lead')}} style={{borderBottom:'1px solid #f0f4ff',cursor:'pointer'}}>
+                      <tr key={lead.id} onClick={()=>{setSel(lead);setModal('lead')}}
+                        style={{borderBottom:'1px solid #f0f4ff',cursor:'pointer',background:rowBg,
+                          borderLeft: isUrgent ? `3px solid ${dias>=7?'#dc2626':'#d97706'}` : '3px solid transparent'}}>
                         <td style={{padding:'9px 10px'}}><div style={{display:'flex',alignItems:'center',gap:7}}><AV name={lead.nombre} size={26}/><span style={{fontWeight:600,color:'#0F172A',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.nombre}</span></div></td>
                         <td style={{padding:'9px 10px',whiteSpace:'nowrap'}}><WaLink phone={lead.telefono}/></td>
                         <td style={{padding:'9px 10px',color:'#6b7280',whiteSpace:'nowrap'}}>{lead.renta}</td>
                         <td style={{padding:'9px 10px'}}><Tag tag={lead.tag||'lead'} sm/></td>
                         <td style={{padding:'9px 10px'}}><span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:st.bg,color:st.col,fontWeight:600,whiteSpace:'nowrap'}}>{st.label}</span></td>
                         <td style={{padding:'9px 10px',fontSize:11,color:'#9ca3af',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.loss_reason||'—'}</td>
-                        <td style={{padding:'9px 10px'}}><Days d={daysIn(lead)}/></td>
+                        <td style={{padding:'9px 10px'}}><Days d={dias}/></td>
                         {isAdmin&&<td style={{padding:'9px 10px'}}>{ag?<div style={{display:'flex',alignItems:'center',gap:5}}><AV name={ag.name} size={18}/><span style={{fontSize:12,color:'#6b7280',whiteSpace:'nowrap'}}>{ag.name.split(' ')[0]}</span></div>:<span style={{fontSize:12,color:'#9ca3af'}}>—</span>}</td>}
                         <td style={{padding:'9px 10px'}}>{cal&&<span style={{fontSize:11,padding:'2px 7px',borderRadius:99,background:cal.bg,color:cal.col}}>{lead.calificacion}</span>}</td>
                         <td style={{padding:'9px 10px',fontSize:11,color:'#9ca3af',whiteSpace:'nowrap'}}>{fmt(lead.fecha)}</td>
@@ -2583,6 +2614,12 @@ export default function App() {
                 ))}
               </div>
 
+              {/* ── Monitor de brokers ── */}
+              <BrokerMonitorPanel
+                leads={leads} users={users} stages={stages}
+                sessions={sessions} setSel={setSel} setModal={setModal}
+              />
+
               <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:16,marginBottom:16}}>
 
                 {/* Pipeline por etapa */}
@@ -2601,30 +2638,37 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* Rendimiento por agente */}
+                {/* Rendimiento por agente — con urgencia integrada */}
                 <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
                   <p style={{margin:'0 0 12px',fontSize:13,fontWeight:700,color:B.primary}}>Rendimiento por agente</p>
                   {byAgent.length === 0 && <p style={{fontSize:12,color:'#9ca3af'}}>Sin agentes registrados</p>}
-                  {byAgent.map(ag => (
-                    <div key={ag.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
-                      <AV name={ag.name} size={34}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
-                        <div style={{display:'flex',gap:10,marginTop:3}}>
-                          <span style={{fontSize:11,color:'#6b7280'}}>{ag.total} leads</span>
-                          <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} en cierre</span>
-                          <span style={{fontSize:11,color:'#991b1b'}}>{ag.perdidos} perdidos</span>
+                  {byAgent.map(ag => {
+                    const agAllLeads = (leads||[]).filter(l => l.assigned_to === ag.id)
+                    const agActive   = agAllLeads.filter(l => !['ganado','perdido','desistio'].includes(l.stage))
+                    const agCrit     = agActive.filter(l => !OPS_LOCKED_STAGES.includes(l.stage) && daysIn(l) >= 7).length
+                    const agUrg      = agActive.filter(l => !OPS_LOCKED_STAGES.includes(l.stage) && daysIn(l) >= 3 && daysIn(l) < 7).length
+                    return (
+                      <div key={ag.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,paddingBottom:12,borderBottom:'1px solid #f0f4ff'}}>
+                        <AV name={ag.name} size={32}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ag.name}</div>
+                          <div style={{display:'flex',gap:6,marginTop:3,flexWrap:'wrap'}}>
+                            <span style={{fontSize:11,color:'#6b7280'}}>{ag.total} leads</span>
+                            <span style={{fontSize:11,color:'#166534',fontWeight:600}}>{ag.ganados} cierre</span>
+                            {agCrit > 0 && <span style={{fontSize:11,color:'#991b1b',fontWeight:700}}>🔴{agCrit}</span>}
+                            {agUrg > 0 && <span style={{fontSize:11,color:'#92400e',fontWeight:700}}>🟡{agUrg}</span>}
+                          </div>
+                          <div style={{height:4,background:'#F8FAFC',borderRadius:99,marginTop:5,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:(leads.length>0?Math.round((ag.total/leads.length)*100):0)+'%',background:B.primary,borderRadius:99}}/>
+                          </div>
                         </div>
-                        <div style={{height:4,background:'#F8FAFC',borderRadius:99,marginTop:5,overflow:'hidden'}}>
-                          <div style={{height:'100%',width:(leads.length>0?Math.round((ag.total/leads.length)*100):0)+'%',background:B.primary,borderRadius:99}}/>
+                        <div style={{textAlign:'right',flexShrink:0}}>
+                          <div style={{fontSize:16,fontWeight:800,color:ag.convRate>=30?'#166534':ag.convRate>=15?'#92400e':'#374151'}}>{ag.convRate}%</div>
+                          <div style={{fontSize:10,color:'#9ca3af'}}>conv.</div>
                         </div>
                       </div>
-                      <div style={{textAlign:'right',flexShrink:0}}>
-                        <div style={{fontSize:16,fontWeight:800,color:ag.convRate>=30?'#166534':ag.convRate>=15?'#92400e':'#374151'}}>{ag.convRate}%</div>
-                        <div style={{fontSize:10,color:'#9ca3af'}}>conv.</div>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
 
@@ -3628,6 +3672,47 @@ export default function App() {
       {/* Lead detail */}
       {modal==='lead' && sel && (
         <Modal title={sel.nombre} onClose={()=>{setModal(null);setSel(null);setComment('')}} wide>
+
+          {/* ── Barra acción rápida (solo agentes) ── */}
+          {isAgent && (() => {
+            const tel = sel.telefono&&sel.telefono!=='—' ? sel.telefono.replace(/[^0-9+]/g,'').replace(/^\+/,'') : ''
+            const dias = daysIn(sel)
+            const isLocked = OPS_LOCKED_STAGES.includes(sel.stage)
+            return (
+              <div style={{background: isLocked?'#FDF4FF':dias>=7?'#FEF2F2':dias>=3?'#FFFBEB':'#F0FDF4',
+                border:`1px solid ${isLocked?'#d8b4fe':dias>=7?'#fca5a5':dias>=3?'#fcd34d':'#86efac'}`,
+                borderRadius:10,padding:'10px 12px',marginBottom:14,
+                display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                <span style={{fontSize:12,fontWeight:700,color:isLocked?'#7e22ce':dias>=7?'#991b1b':dias>=3?'#92400e':'#166534',flex:1}}>
+                  {isLocked ? '🔒 En gestión de Operaciones' : dias>=7 ? `🔥 Sin actividad hace ${dias} días` : dias>=3 ? `⏱ ${dias} días sin actividad` : '✅ Al día'}
+                </span>
+                {!isLocked && tel && (
+                  <a href={`https://wa.me/${tel}`} target="_blank" rel="noopener noreferrer"
+                    style={{fontSize:12,padding:'6px 14px',borderRadius:8,border:'1px solid #25D366',
+                      background:'#F0FDF4',color:'#166534',fontWeight:700,textDecoration:'none',
+                      display:'flex',alignItems:'center',gap:4}}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                    WhatsApp
+                  </a>
+                )}
+                {!isLocked && (
+                  <button onClick={async()=>{
+                    const now = new Date().toISOString()
+                    const c = {id:'c-'+Date.now(),text:'📞 Contactado',author_name:me.name,date:now}
+                    const nc = [...(sel.comments||[]),c]
+                    const ls = leads.map(l=>l.id===sel.id?{...l,comments:nc,stage_moved_at:now}:l)
+                    setLeads(ls); setSel(ls.find(l=>l.id===sel.id))
+                    if(dbReady) await supabase.from('crm_leads').update({comments:nc,stage_moved_at:now}).eq('id',sel.id)
+                    msg('✓ Contacto registrado')
+                  }} style={{fontSize:12,padding:'6px 14px',borderRadius:8,border:'1px solid #E2E8F0',
+                    background:'#fff',color:'#475569',fontWeight:700,cursor:'pointer'}}>
+                    ✓ Contacté hoy
+                  </button>
+                )}
+              </div>
+            )
+          })()}
+
           <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
             {(()=>{const st=stages.find(x=>x.id===sel.stage)||stages[0];return<span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:st.bg,color:st.col,fontWeight:600}}>{st.label}</span>})()}
             <Tag tag={sel.tag||'lead'}/>
@@ -4549,6 +4634,454 @@ function PromiseDocsPanel({p, idx, setEditingProps, me, isReviewer}) {
                   <option value="aprobado">Aprobado</option>
                   <option value="rechazado">Rechazado</option>
                 </select>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── Broker Home View ────────────────────────────────────────────────────────
+function BrokerHomeView({ leads, users, stages, commissions, indicators, me, setSel, setNav, dbReady, supabase, setLeads }) {
+  const isMob = typeof window !== 'undefined' && window.innerWidth < 768
+  const [logging, setLogging] = React.useState({})
+  const misLeads = (leads||[]).filter(l => l.assigned_to === me?.id)
+
+  // Leads activos (no terminales, no bloqueados por ops)
+  const activos = misLeads.filter(l =>
+    !['ganado','perdido','desistio'].includes(l.stage)
+  )
+  // Necesitan contacto urgente
+  const sinActividad = activos
+    .filter(l => !OPS_LOCKED_STAGES.includes(l.stage) && daysIn(l) >= 3)
+    .sort((a,b) => daysIn(b) - daysIn(a))
+  // Al día
+  const alDia = activos
+    .filter(l => !OPS_LOCKED_STAGES.includes(l.stage) && daysIn(l) < 3)
+  // En gestión ops (no puede mover)
+  const enOps = activos.filter(l => OPS_LOCKED_STAGES.includes(l.stage))
+
+  // Comisiones pipeline
+  const deals = buildDeals360(leads||[], users||[], stages, commissions, indicators).filter(d => d.brokerId === me?.id)
+  const enCurso = deals.filter(d => d.estado_financiero !== 'broker_pagado')
+  const ufPend = enCurso.filter(d=>d.moneda==='UF').reduce((s,d)=>s+(parseFloat(d.comisionBroker)||0),0)
+  const ganados = misLeads.filter(l=>l.stage==='ganado').length
+
+  // Visitas hoy y mañana
+  const hoy = new Date().toISOString().slice(0,10)
+  const manana = new Date(Date.now()+86400000).toISOString().slice(0,10)
+  const visitasHoy = activos.flatMap(l =>
+    (l.visitas||[]).filter(v => v.fecha === hoy).map(v=>({...v, lead:l}))
+  )
+  const visitasManana = activos.flatMap(l =>
+    (l.visitas||[]).filter(v => v.fecha === manana).map(v=>({...v, lead:l}))
+  )
+
+  // Pipeline por etapa
+  const pipelineSummary = stages
+    .filter(s=>!['ganado','perdido','desistio'].includes(s.id))
+    .map(s=>({...s, count: misLeads.filter(l=>l.stage===s.id).length}))
+    .filter(s=>s.count>0)
+
+  // Saludo
+  const hora = new Date().getHours()
+  const saludo = hora<12?'Buenos días':hora<19?'Buenas tardes':'Buenas noches'
+  const nombre = (me?.name||'').split(' ')[0]
+
+  // Marcar contactado (registra comment + actualiza timestamp)
+  const marcarContactado = async (lead) => {
+    setLogging(p=>({...p,[lead.id]:true}))
+    const now = new Date().toISOString()
+    const c = {id:'c-'+Date.now(), text:'📞 Contactado', author_name:me.name, date:now}
+    const newComments = [...(lead.comments||[]), c]
+    if (dbReady) {
+      await supabase.from('crm_leads').update({comments:newComments, stage_moved_at:now}).eq('id',lead.id)
+      setLeads(prev=>prev.map(l=>l.id===lead.id?{...l,comments:newComments,stage_moved_at:now}:l))
+    }
+    setLogging(p=>({...p,[lead.id]:false}))
+  }
+
+  const urgBg  = d => d>=7?'#FEF2F2':d>=3?'#FFFBEB':'#F0FDF4'
+  const urgCol = d => d>=7?'#991b1b':d>=3?'#92400e':'#166534'
+
+  const LeadRow = ({l, showAction=true}) => {
+    const dias = daysIn(l)
+    const stage = stages.find(s=>s.id===l.stage)
+    const tel = l.telefono&&l.telefono!=='—'?l.telefono.replace(/[^0-9+]/g,'').replace(/^\+/,''):'';
+    return (
+      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'11px 14px',
+        display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:6}}>
+        <div style={{flex:1,minWidth:160}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:3}}>{l.nombre}</div>
+          <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center'}}>
+            {stage && <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:stage.bg,color:stage.col,fontWeight:700}}>{stage.label}</span>}
+            {dias>0 && <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:urgBg(dias),color:urgCol(dias),fontWeight:700}}>⏱ {dias}d</span>}
+            {l.renta&&l.renta!=='—'&&<span style={{fontSize:10,color:'#64748B'}}>{l.renta}</span>}
+          </div>
+        </div>
+        {showAction && (
+          <div style={{display:'flex',gap:5,flexShrink:0}}>
+            {tel && (
+              <a href={`https://wa.me/${tel}`} target="_blank" rel="noopener noreferrer"
+                style={{fontSize:11,padding:'5px 10px',borderRadius:8,border:'1px solid #25D366',
+                  background:'#F0FDF4',color:'#166534',fontWeight:700,textDecoration:'none',
+                  display:'flex',alignItems:'center',gap:3}}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                WA
+              </a>
+            )}
+            <button onClick={()=>marcarContactado(l)} disabled={logging[l.id]}
+              style={{fontSize:11,padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',
+                background:'#F8FAFC',color:'#475569',fontWeight:600,cursor:'pointer'}}>
+              {logging[l.id]?'...':'✓ Contacté'}
+            </button>
+            <button onClick={()=>setSel(l)}
+              style={{fontSize:11,padding:'5px 10px',borderRadius:8,border:`1px solid ${B.primary}`,
+                background:B.light,color:B.primary,fontWeight:700,cursor:'pointer'}}>
+              Abrir
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{maxWidth:800,margin:'0 auto'}}>
+      {/* Saludo */}
+      <div style={{marginBottom:18}}>
+        <div style={{fontSize:isMob?18:22,fontWeight:900,color:'#0F172A'}}>
+          {saludo}, {nombre} 👋
+        </div>
+        <div style={{fontSize:12,color:'#64748B',marginTop:2}}>
+          {new Date().toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'})}
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{display:'grid',gridTemplateColumns:isMob?'1fr 1fr':'repeat(4,1fr)',gap:8,marginBottom:20}}>
+        {[
+          {label:'Activos',   value:activos.length,        sub:'en pipeline',           bg:'#EFF6FF',col:B.primary},
+          {label:'Urgentes',  value:sinActividad.length,   sub:'sin actividad ≥3d',     bg:sinActividad.length>0?'#FEF2F2':'#F0FDF4', col:sinActividad.length>0?'#991b1b':'#166534'},
+          {label:'Pipeline',  value:`UF ${fmt360(ufPend)}`,sub:`${enCurso.length} op.`, bg:'#FFFBEB',col:'#92400e'},
+          {label:'Ganados',   value:ganados,               sub:'total histórico',        bg:'#DCFCE7',col:'#14532d'},
+        ].map(k=>(
+          <div key={k.label} style={{background:k.bg,border:'1px solid #E2E8F0',borderRadius:12,padding:'13px 14px'}}>
+            <div style={{fontSize:10,color:'#64748B',fontWeight:800,textTransform:'uppercase',letterSpacing:.4}}>{k.label}</div>
+            <div style={{fontSize:isMob?18:22,fontWeight:900,color:k.col,marginTop:2,lineHeight:1.1}}>{k.value}</div>
+            <div style={{fontSize:10,color:'#64748B',marginTop:2}}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Visitas hoy */}
+      {visitasHoy.length>0 && (
+        <div style={{background:'#F5F3FF',border:'1px solid #c4b5fd',borderRadius:12,padding:14,marginBottom:16}}>
+          <div style={{fontWeight:900,color:'#5b21b6',marginBottom:8,fontSize:13}}>📅 Visitas hoy ({visitasHoy.length})</div>
+          {visitasHoy.map((v,i)=>(
+            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+              <div>
+                <span style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{v.lead.nombre}</span>
+                <span style={{fontSize:12,color:'#5b21b6',marginLeft:8}}>{v.hora} — {v.proyecto}</span>
+              </div>
+              <button onClick={()=>setSel(v.lead)} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #c4b5fd',background:'#fff',cursor:'pointer',color:'#5b21b6',fontWeight:600}}>Ver</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {visitasManana.length>0 && (
+        <div style={{background:'#F0FDF4',border:'1px solid #86efac',borderRadius:12,padding:14,marginBottom:16}}>
+          <div style={{fontWeight:900,color:'#166534',marginBottom:8,fontSize:13}}>📅 Visitas mañana ({visitasManana.length})</div>
+          {visitasManana.map((v,i)=>(
+            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+              <div>
+                <span style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{v.lead.nombre}</span>
+                <span style={{fontSize:12,color:'#166534',marginLeft:8}}>{v.hora} — {v.proyecto}</span>
+              </div>
+              <button onClick={()=>setSel(v.lead)} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #86efac',background:'#fff',cursor:'pointer',color:'#166534',fontWeight:600}}>Ver</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Necesitan acción */}
+      {sinActividad.length>0 && (
+        <div style={{marginBottom:20}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+            <span style={{fontSize:14,fontWeight:900,color:'#0F172A'}}>🔥 Necesitan tu atención</span>
+            <span style={{fontSize:11,background:'#FEF2F2',color:'#991b1b',padding:'2px 9px',borderRadius:99,fontWeight:800}}>{sinActividad.length}</span>
+          </div>
+          {sinActividad.slice(0,8).map(l=><LeadRow key={l.id} l={l}/>)}
+          {sinActividad.length>8&&(
+            <button onClick={()=>setNav('kanban')} style={{fontSize:12,color:B.primary,background:'transparent',border:'none',cursor:'pointer',fontWeight:700,padding:'4px 0'}}>
+              Ver {sinActividad.length-8} más en el Kanban →
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Al día */}
+      {alDia.length>0 && (
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:10}}>
+            ✅ Al día <span style={{fontSize:12,color:'#64748B',fontWeight:500}}>({alDia.length})</span>
+          </div>
+          {alDia.slice(0,5).map(l=><LeadRow key={l.id} l={l} showAction={false}/>)}
+          {alDia.length>5&&(
+            <button onClick={()=>setNav('kanban')} style={{fontSize:12,color:B.primary,background:'transparent',border:'none',cursor:'pointer',fontWeight:700,padding:'4px 0'}}>
+              Ver todos en el Kanban →
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* En gestión Ops */}
+      {enOps.length>0 && (
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:14,fontWeight:900,color:'#0F172A',marginBottom:10}}>
+            🔒 En gestión Operaciones <span style={{fontSize:12,color:'#64748B',fontWeight:500}}>({enOps.length})</span>
+          </div>
+          {enOps.slice(0,4).map(l=>{
+            const stage = stages.find(s=>s.id===l.stage)
+            return (
+              <div key={l.id} style={{background:'#FDF4FF',border:'1px solid #d8b4fe',borderRadius:10,padding:'10px 14px',marginBottom:5,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div>
+                  <span style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{l.nombre}</span>
+                  {stage&&<span style={{fontSize:10,marginLeft:8,padding:'2px 7px',borderRadius:99,background:stage.bg,color:stage.col,fontWeight:700}}>{stage.label}</span>}
+                </div>
+                <button onClick={()=>setSel(l)} style={{fontSize:11,padding:'4px 10px',borderRadius:8,border:'1px solid #d8b4fe',background:'#fff',cursor:'pointer',color:'#7e22ce',fontWeight:600}}>Ver</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Pipeline visual */}
+      {pipelineSummary.length>0 && (
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:14,marginBottom:20}}>
+          <div style={{fontSize:13,fontWeight:900,color:'#0F172A',marginBottom:10}}>Tu pipeline</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {pipelineSummary.map(s=>(
+              <div key={s.id} onClick={()=>setNav('kanban')} title={s.label}
+                style={{padding:'7px 12px',borderRadius:10,background:s.bg,cursor:'pointer',
+                  display:'flex',alignItems:'center',gap:5,border:`1px solid ${s.dot}20`}}>
+                <span style={{width:7,height:7,borderRadius:'50%',background:s.dot,flexShrink:0,display:'inline-block'}}/>
+                <span style={{fontSize:11,fontWeight:700,color:s.col,maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.label}</span>
+                <span style={{fontSize:13,fontWeight:900,color:s.col}}>{s.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Acciones rápidas */}
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:16}}>
+        <button onClick={()=>setNav('nuevo lead')} style={{padding:'9px 18px',borderRadius:10,background:B.primary,color:'#fff',border:'none',cursor:'pointer',fontWeight:700,fontSize:13}}>+ Nuevo lead</button>
+        <button onClick={()=>setNav('kanban')} style={{padding:'9px 18px',borderRadius:10,background:'#fff',color:B.primary,border:`1px solid ${B.primary}`,cursor:'pointer',fontWeight:700,fontSize:13}}>📋 Kanban</button>
+        <button onClick={()=>setNav('portal_broker')} style={{padding:'9px 18px',borderRadius:10,background:'#fff',color:'#92400e',border:'1px solid #fcd34d',cursor:'pointer',fontWeight:700,fontSize:13}}>💰 Mis comisiones</button>
+      </div>
+
+      {/* Empty state */}
+      {misLeads.length===0 && (
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:40,textAlign:'center',marginTop:20}}>
+          <div style={{fontSize:36,marginBottom:8}}>🎯</div>
+          <div style={{fontWeight:700,color:'#0F172A',marginBottom:6}}>Aún no tienes leads asignados</div>
+          <div style={{color:'#64748B',fontSize:13,marginBottom:16}}>Cuando tengas leads asignados, aparecerán aquí ordenados por prioridad.</div>
+          <button onClick={()=>setNav('nuevo lead')} style={{padding:'10px 22px',borderRadius:10,background:B.primary,color:'#fff',border:'none',cursor:'pointer',fontWeight:700,fontSize:13}}>+ Crear mi primer lead</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Broker Monitor Panel (Admin Dashboard) ──────────────────────────────────
+function BrokerMonitorPanel({ leads, users, stages, sessions, setSel, setModal }) {
+  const [expanded, setExpanded] = React.useState({})
+
+  const agents = (users||[]).filter(u => u.role === 'agent' || u.role === 'team_leader')
+
+  const agentData = agents.map(ag => {
+    const myLeads   = (leads||[]).filter(l => l.assigned_to === ag.id)
+    const active    = myLeads.filter(l => !['ganado','perdido','desistio'].includes(l.stage))
+    const critical  = active.filter(l => !OPS_LOCKED_STAGES.includes(l.stage) && daysIn(l) >= 7)
+    const urgent    = active.filter(l => !OPS_LOCKED_STAGES.includes(l.stage) && daysIn(l) >= 3 && daysIn(l) < 7)
+    const stale     = [...critical, ...urgent].sort((a,b) => daysIn(b) - daysIn(a))
+    const ganados   = myLeads.filter(l => l.stage === 'ganado').length
+    const convRate  = myLeads.length > 0 ? Math.round((ganados / myLeads.length) * 100) : 0
+
+    const agSess   = (sessions||[]).filter(s => s.user_id === ag.id)
+    const lastLogin = agSess[0]?.logged_at ? new Date(agSess[0].logged_at) : null
+    const minsAgo   = lastLogin ? Math.floor((Date.now() - lastLogin.getTime()) / 60000) : null
+    const isOnline  = minsAgo !== null && minsAgo < 30
+    const health    = critical.length >= 2 ? 'critico' : critical.length >= 1 ? 'urgente' : urgent.length >= 3 ? 'atencion' : 'bien'
+
+    return { ...ag, myLeads, active, critical, urgent, stale, ganados, convRate, lastLogin, minsAgo, isOnline, health }
+  }).sort((a,b) => {
+    const score = x => x.critical.length * 10 + x.urgent.length
+    return score(b) - score(a)
+  })
+
+  const HEALTH = {
+    critico:  { dot:'#dc2626', border:'#fca5a5', headerBg:'#FFF5F5' },
+    urgente:  { dot:'#d97706', border:'#fcd34d', headerBg:'#FFFDF5' },
+    atencion: { dot:'#f59e0b', border:'#fde68a', headerBg:'#FFFEEF' },
+    bien:     { dot:'#16a34a', border:'#86efac', headerBg:'#F0FDF4' },
+  }
+
+  const totalCrit = agentData.reduce((s,a) => s + a.critical.length, 0)
+  const totalUrg  = agentData.reduce((s,a) => s + a.urgent.length,   0)
+  const isMob = typeof window !== 'undefined' && window.innerWidth < 768
+
+  const loginStr = ag => {
+    if (ag.isOnline) return { txt: '● En línea', col: '#16a34a' }
+    if (ag.minsAgo === null) return { txt: 'Sin sesiones', col: '#9ca3af' }
+    if (ag.minsAgo < 60)    return { txt: `Hace ${ag.minsAgo}m`, col: '#64748B' }
+    if (ag.minsAgo < 1440)  return { txt: `Hace ${Math.floor(ag.minsAgo/60)}h`, col: '#64748B' }
+    if (ag.minsAgo < 10080) return { txt: `Hace ${Math.floor(ag.minsAgo/1440)}d`, col: ag.minsAgo > 4320 ? '#d97706' : '#64748B' }
+    return { txt: ag.lastLogin.toLocaleDateString('es-CL',{day:'2-digit',month:'short'}), col: '#991b1b' }
+  }
+
+  if (agents.length === 0) return null
+
+  return (
+    <div style={{marginBottom:20}}>
+      {/* Panel header */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+        <div>
+          <span style={{fontSize:15,fontWeight:900,color:'#0F172A'}}>🎯 Monitor de brokers</span>
+          <span style={{fontSize:12,color:'#64748B',marginLeft:8}}>en tiempo real</span>
+        </div>
+        <div style={{display:'flex',gap:6,marginLeft:'auto',flexWrap:'wrap'}}>
+          {totalCrit > 0 && (
+            <span style={{fontSize:11,padding:'4px 10px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:700}}>
+              🔴 {totalCrit} críticos (+7d)
+            </span>
+          )}
+          {totalUrg > 0 && (
+            <span style={{fontSize:11,padding:'4px 10px',borderRadius:99,background:'#FFFBEB',color:'#92400e',fontWeight:700}}>
+              🟡 {totalUrg} urgentes (3-7d)
+            </span>
+          )}
+          {totalCrit === 0 && totalUrg === 0 && (
+            <span style={{fontSize:11,padding:'4px 10px',borderRadius:99,background:'#F0FDF4',color:'#166534',fontWeight:700}}>
+              🟢 Todos los brokers al día
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div style={{display:'grid',gap:8}}>
+        {agentData.map(ag => {
+          const h    = HEALTH[ag.health]
+          const open = expanded[ag.id]
+          const ls   = loginStr(ag)
+
+          return (
+            <div key={ag.id} style={{background:'#fff',borderRadius:12,overflow:'hidden',
+              border:`1px solid ${h.border}`,borderLeft:`4px solid ${h.dot}`}}>
+
+              {/* Agent row */}
+              <div style={{padding:'11px 14px',display:'flex',alignItems:'center',gap:10,
+                background: open ? h.headerBg : '#fff', flexWrap:'wrap'}}>
+
+                {/* Avatar + online dot */}
+                <div style={{position:'relative',flexShrink:0}}>
+                  <AV name={ag.name} size={36}/>
+                  <div style={{position:'absolute',bottom:0,right:0,width:10,height:10,borderRadius:'50%',border:'2px solid #fff',
+                    background: ag.isOnline ? '#22c55e' : ag.minsAgo && ag.minsAgo < 1440 ? '#f59e0b' : '#d1d5db'}}/>
+                </div>
+
+                {/* Name + last login */}
+                <div style={{flex:1,minWidth:100}}>
+                  <div style={{fontSize:13,fontWeight:700,color:'#0F172A'}}>{ag.name}</div>
+                  <div style={{fontSize:11,color:ls.col,marginTop:1,fontWeight: ag.isOnline ? 600 : 400}}>{ls.txt}</div>
+                </div>
+
+                {/* Counters */}
+                <div style={{display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
+                  <span style={{fontSize:11,padding:'3px 9px',borderRadius:99,background:'#F1F5FF',color:'#1B4FC8',fontWeight:600}}>
+                    {ag.active.length} activos
+                  </span>
+                  {ag.critical.length > 0 && (
+                    <span style={{fontSize:11,padding:'3px 9px',borderRadius:99,background:'#FEF2F2',color:'#991b1b',fontWeight:800}}>
+                      🔴 {ag.critical.length}
+                    </span>
+                  )}
+                  {ag.urgent.length > 0 && (
+                    <span style={{fontSize:11,padding:'3px 9px',borderRadius:99,background:'#FFFBEB',color:'#92400e',fontWeight:800}}>
+                      🟡 {ag.urgent.length}
+                    </span>
+                  )}
+                  {ag.critical.length === 0 && ag.urgent.length === 0 && (
+                    <span style={{fontSize:11,padding:'3px 9px',borderRadius:99,background:'#F0FDF4',color:'#166534',fontWeight:600}}>✅</span>
+                  )}
+                  <span style={{fontSize:11,padding:'3px 9px',borderRadius:99,background:'#DCFCE7',color:'#14532d',fontWeight:600}}>
+                    {ag.ganados}🏆 {ag.convRate}%
+                  </span>
+                </div>
+
+                {/* Expand */}
+                {ag.stale.length > 0 && (
+                  <button onClick={() => setExpanded(e => ({...e, [ag.id]: !open}))}
+                    style={{fontSize:11,padding:'5px 12px',borderRadius:8,border:'1px solid #E2E8F0',
+                      background:'transparent',cursor:'pointer',color:'#64748B',fontWeight:600,flexShrink:0,
+                      whiteSpace:'nowrap'}}>
+                    {open ? '▲ Cerrar' : `▼ ${ag.stale.length} leads`}
+                  </button>
+                )}
+              </div>
+
+              {/* Expanded stale leads */}
+              {open && ag.stale.length > 0 && (
+                <div style={{borderTop:'1px solid #F1F5F9',background:'#F8FAFC',padding:'10px 14px'}}>
+                  <div style={{fontSize:10,color:'#94a3b8',fontWeight:700,letterSpacing:.5,
+                    textTransform:'uppercase',marginBottom:8}}>
+                    Leads sin actividad — intervenir antes de que se pierdan
+                  </div>
+                  <div style={{display:'grid',gap:5}}>
+                    {ag.stale.map(l => {
+                      const dias  = daysIn(l)
+                      const stage = stages.find(s=>s.id===l.stage)
+                      const tel   = l.telefono && l.telefono!=='—'
+                        ? l.telefono.replace(/[^0-9+]/g,'').replace(/^\+/,'') : ''
+                      return (
+                        <div key={l.id} style={{background:'#fff',borderRadius:8,padding:'8px 12px',
+                          display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',
+                          border:`1px solid ${dias>=7?'#fca5a580':'#fcd34d80'}`}}>
+                          <div style={{flex:1,minWidth:100}}>
+                            <div style={{fontSize:12,fontWeight:700,color:'#0F172A'}}>{l.nombre}</div>
+                            <div style={{display:'flex',gap:5,marginTop:2,flexWrap:'wrap',alignItems:'center'}}>
+                              {stage && <span style={{fontSize:10,padding:'1px 6px',borderRadius:99,
+                                background:stage.bg,color:stage.col,fontWeight:600}}>{stage.label}</span>}
+                              <span style={{fontSize:10,padding:'1px 6px',borderRadius:99,fontWeight:700,
+                                background:dias>=7?'#FEF2F2':'#FFFBEB',
+                                color:dias>=7?'#991b1b':'#92400e'}}>
+                                ⏱ {dias}d
+                              </span>
+                              {l.renta&&l.renta!=='—'&&<span style={{fontSize:10,color:'#9ca3af'}}>{l.renta}</span>}
+                            </div>
+                          </div>
+                          <div style={{display:'flex',gap:5,flexShrink:0}}>
+                            {tel && (
+                              <a href={`https://wa.me/${tel}`} target="_blank" rel="noopener noreferrer"
+                                style={{fontSize:11,padding:'4px 9px',borderRadius:7,textDecoration:'none',
+                                  border:'1px solid #25D366',background:'#F0FDF4',color:'#166534',fontWeight:700}}>
+                                WA
+                              </a>
+                            )}
+                            <button onClick={() => { setSel(l); setModal('lead') }}
+                              style={{fontSize:11,padding:'4px 9px',borderRadius:7,cursor:'pointer',fontWeight:700,
+                                border:`1px solid ${B.primary}`,background:B.light,color:B.primary}}>
+                              Abrir
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               )}
             </div>
           )
@@ -8120,12 +8653,20 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
   const si = stages.findIndex(x=>x.id===lead.stage)
   const ag = (users||[]).find(u=>u.id===lead.assigned_to)
   const cal = CAL[lead.calificacion]
+  const dias = daysIn(lead)
+  const isLocked = OPS_LOCKED_STAGES.includes(lead.stage)
+  const urgColor = isLocked ? '#7e22ce' : dias>=7 ? '#dc2626' : dias>=3 ? '#d97706' : null
   return (
-    <div onClick={onOpen} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 10px',cursor:'pointer',marginBottom:8,boxShadow:'0 1px 4px rgba(27,79,200,0.05)',wordBreak:'break-word'}}>
+    <div onClick={onOpen} style={{
+      background:'#fff',borderRadius:10,padding:'10px 10px',cursor:'pointer',marginBottom:8,
+      boxShadow:'0 1px 4px rgba(27,79,200,0.05)',wordBreak:'break-word',
+      border: urgColor ? `1px solid ${urgColor}30` : '1px solid #E2E8F0',
+      borderTop: urgColor ? `3px solid ${urgColor}` : '1px solid #E2E8F0',
+    }}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
         <div style={{fontWeight:600,fontSize:13,color:'#0F172A',lineHeight:1.3,flex:1,marginRight:6}}>{lead.nombre}</div>
         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3,flexShrink:0}}>
-          <Days d={daysIn(lead)}/>
+          <Days d={dias}/>
           {cal&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:cal.bg,color:cal.col,fontWeight:600}}>{lead.calificacion}</span>}
         </div>
       </div>
@@ -8134,12 +8675,12 @@ function KCard({lead, users, isAdmin, isPartner, isOps, onOpen, onMove, stages=[
         <div style={{display:'flex',alignItems:'center',gap:5}}>
           <Tag tag={lead.tag||'lead'} sm/>
           {(lead.comments||[]).length>0&&<span style={{fontSize:10,color:'#9ca3af'}}>💬{(lead.comments||[]).length}</span>}
+          {(lead.visitas||[]).length>0&&<span style={{fontSize:10,color:'#5b21b6'}}>🏠{(lead.visitas||[]).length}</span>}
         </div>
         {isAdmin&&ag&&<div style={{display:'flex',alignItems:'center',gap:4}}><AV name={ag.name} size={16}/><span style={{fontSize:10,color:'#9ca3af'}}>{ag.name.split(' ')[0]}</span></div>}
       </div>
       {!isAdmin&&!isPartner&&(()=>{
-        const isOpsLocked = OPS_LOCKED_STAGES.includes(lead.stage)
-        if (isOpsLocked && !isOps) {
+        if (isLocked && !isOps) {
           return (
             <div style={{display:'flex',alignItems:'center',gap:4,marginTop:8}}>
               <span style={{fontSize:10,color:'#7e22ce',background:'#FDF4FF',padding:'2px 8px',borderRadius:6,border:'1px solid #d8b4fe',fontWeight:600}}>🔒 En gestión de Operaciones</span>
