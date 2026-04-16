@@ -618,6 +618,77 @@ export default function App() {
     window._iaConfigTimer = setTimeout(() => saveIaConfig(iaConfig), 1000)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iaConfig, dbReady])
+  // ── Alertas de ranking — notifica al broker cuando sube de puesto ──────────
+  useEffect(() => {
+    if (!dbReady || !leads.length || !users.length || !me) return
+    const RANK_STAGES = ['firma','escritura','ganado']
+    const agents = users.filter(u => u.role === 'agent')
+    const ranked = agents.map(ag => {
+      const total = leads.filter(l => l.assigned_to===ag.id && RANK_STAGES.includes(l.stage))
+        .reduce((s,l) => s + (l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((ss,p)=>ss+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0), 0)
+      return { id: ag.id, name: ag.name, email: ag.email, phone: ag.phone, total }
+    }).sort((a,b) => b.total - a.total)
+
+    const posMap = {}
+    ranked.forEach((r,i) => { posMap[r.id] = i+1 })
+
+    const stored = JSON.parse(localStorage.getItem('rcrm_ranking_pos') || '{}')
+    const alerts = []
+
+    for (const ag of ranked) {
+      const prev = stored[ag.id]
+      const curr = posMap[ag.id]
+      if (prev && curr < prev) {
+        // Subió de puesto
+        alerts.push({ ag, prev, curr })
+      }
+    }
+
+    // Save current positions
+    localStorage.setItem('rcrm_ranking_pos', JSON.stringify(posMap))
+
+    // Send alerts for rank improvements (only admin triggers, but notifies each broker)
+    if (isAdmin && alerts.length > 0) {
+      for (const { ag, prev, curr } of alerts) {
+        const medals = {1:'🥇',2:'🥈',3:'🥉'}
+        const medal = medals[curr] || '🏅'
+        // Email
+        if (ag.email) {
+          fetch('/api/notify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'ranking_subida',
+              to: ag.email,
+              agentName: ag.name,
+              prevPos: prev,
+              currPos: curr,
+              medal,
+              total: ranked.length
+            })
+          }).catch(() => {})
+        }
+        // WhatsApp
+        if (ag.phone) {
+          fetch('/api/notify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'ranking_subida_wa',
+              phone: ag.phone,
+              agentName: ag.name,
+              prevPos: prev,
+              currPos: curr,
+              medal,
+              total: ranked.length
+            })
+          }).catch(() => {})
+        }
+      }
+    }
+  }, [leads, users, dbReady])
+
+
 
   // ── Responsive resize handler ───────────────────────────────────────────────
   useEffect(() => {
@@ -1594,7 +1665,7 @@ export default function App() {
   const isAgent    = me?.role === 'agent'
   const isOps      = me?.role === 'operaciones'
   const isFinanzas = me?.role === 'finanzas'
-  const adminSideNav = isAdmin && !isMobile
+  const adminSideNav = !isMobile  // Sidebar izquierdo para todos los roles en desktop
 
   const OPS_STAGES = ['reserva','solicitud_promesa','firma','escritura','perdido']
   const vL = !me ? [] : isAdmin
@@ -1608,11 +1679,11 @@ export default function App() {
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
             : isOps      ? ['operaciones','kanban','lista','rabito_interno']
             : isFinanzas ? ['dashboard_finanzas','finanzas_360','rabito_interno']
-            :              ['kanban','lista','portal_broker','mis comisiones','mi agenda','nuevo lead',                                                    ...(mpVisible?['marketplace']:[]) ]
+            :              ['kanban','lista','portal_broker','mi agenda','nuevo lead',                                                    ...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
     dashboard:'Dashboard', kanban:'Leads', lista:'Lista', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
-    operaciones:'Operaciones 360', finanzas_360:'Finanzas 360', portal_broker:'Portal Broker', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones Brokers', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead'
+    operaciones:'Operaciones 360', finanzas_360:'Finanzas 360', portal_broker:'Mis Comisiones', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones Brokers', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead'
   }
   const navLabel = n => NAV_LABELS[n] || n.charAt(0).toUpperCase()+n.slice(1).replace('_',' ')
 
@@ -1953,8 +2024,8 @@ export default function App() {
         <div style={{position:'fixed',bottom:0,left:0,right:0,background:'#fff',borderTop:'2px solid #dce8ff',display:'flex',zIndex:100,boxShadow:'0 -2px 12px rgba(27,79,200,0.08)'}}>
           {[
             {n:'kanban',     icon:'📋', label:'Leads'},
-            {n:'portal_broker', icon:'🧑‍💼', label:'Operación'},
-            {n:'mis comisiones', icon:'💵', label:'Comisiones'},
+            {n:'portal_broker', icon:'💵', label:'Mis comisiones'},
+            
             {n:'nuevo lead', icon:'➕', label:'Nuevo'},
           ].map(({n,icon,label})=>(
             <button key={n} onClick={()=>setNav(n)}
@@ -1970,9 +2041,9 @@ export default function App() {
 
       {adminSideNav && (
         <aside style={{position:'fixed',top:68,left:14,width:190,maxHeight:'calc(100vh - 86px)',overflowY:'auto',background:'#fff',border:'1px solid #E2E8F0',borderRadius:16,padding:10,boxShadow:'0 8px 24px rgba(27,79,200,0.10)',zIndex:80}}>
-          <div style={{fontSize:11,fontWeight:900,color:B.primary,textTransform:'uppercase',letterSpacing:.5,margin:'4px 8px 8px'}}>Menú CRM</div>
+          <div style={{fontSize:11,fontWeight:900,color:B.primary,textTransform:'uppercase',letterSpacing:.5,margin:'4px 8px 8px'}}>{isAdmin?'Admin':isPartner?'Partner':isOps?'Operaciones':isFinanzas?'Finanzas':'Mi menú'}</div>
           {NAV.map(n => {
-            const icons = {dashboard:'📊',kanban:'📋',lista:'📝',operaciones:'🧩',finanzas_360:'🏦',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',rabito_interno:'🐰',conversaciones:'💬',agenda:'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪'}
+            const icons = {dashboard:'📊',kanban:'📋',lista:'📝',operaciones:'🧩',finanzas_360:'🏦',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',rabito_interno:'🐰',conversaciones:'💬',agenda:'📅','mi agenda':'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪',pool:'🌐','portal_broker':'💵','mis comisiones':'💵','nuevo lead':'➕','mi perfil':'👤',comisiones:'💰'}
             return <button key={n} onClick={()=>setNav(n)} style={{width:'100%',display:'flex',alignItems:'center',gap:9,textAlign:'left',fontSize:13,padding:'9px 10px',borderRadius:10,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#475569',fontWeight:nav===n?800:500,marginBottom:2}}>
               <span>{icons[n]||'•'}</span><span>{navLabel(n)}</span>
             </button>
@@ -3325,80 +3396,8 @@ export default function App() {
           />
         )}
 
-        {/* MIS COMISIONES — Agente */}
-        {nav==='mis comisiones' && isAgent && (
-          <AgentComisionesView
-            leads={leads.filter(l=>l.assigned_to===me.id)}
-            me={me}
-            users={users}
-            stages={stages}
-            indicators={indicators}
-            commissions={commissions}
-            ufHistory={ufHistory}
-          />
-        )}
 
-        {/* IA CONFIG */}
-        {nav==='ia' && isAdmin && (
-          <IAConfigView iaConfig={iaConfig} setIaConfig={setIaConfig} users={users} leads={leads} supabase={supabase} dbReady={dbReady}/>
-        )}
 
-        {/* MARKETPLACE */}
-        {nav==='marketplace' && (isAdmin||isAgent||isPartner) && (
-          <MarketplaceView
-            config={marketplaceConfig}
-            setConfig={setMarketplaceConfig}
-            isAdmin={isAdmin}
-            supabase={supabase}
-            dbReady={dbReady}
-            me={me}
-          />
-        )}
-
-        {/* CONVERSACIONES */}
-        {nav==='conversaciones' && isAdmin && (
-          <ConversacionesView
-            conversations={conversations}
-            convMessages={convMessages}
-            activeConv={activeConv}
-            setActiveConv={setActiveConv}
-            loadConvMessages={loadConvMessages}
-            upsertConversation={upsertConversation}
-            saveConvMessage={saveConvMessage}
-            iaConfig={iaConfig}
-            users={users}
-            leads={leads}
-            setLeads={setLeads}
-            supabase={supabase}
-            dbReady={dbReady}
-            me={me}
-            setConversations={setConversations}
-            deleteConversation={deleteConversation}
-            setIaConfig={setIaConfig}
-          />
-        )}
-
-        {/* AGENDA EQUIPO — admin config */}
-        {nav==='agenda' && isAdmin && (
-          <AgendaEquipoView users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady} agendaSettings={agendaSettings} setAgendaSettings={setAgendaSettings}/>
-        )}
-
-        {/* MI AGENDA — broker availability config */}
-        {nav==='mi agenda' && isAgent && (
-          <MiAgendaView me={me} users={users} setUsers={setUsers} saveUsers={saveUsers} supabase={supabase} dbReady={dbReady}/>
-        )}
-
-        {/* OPERACIONES 360 */}
-        {nav==='operaciones' && (isAdmin||isOps) && (
-          <Operaciones360View leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} savePropField={savePropField} setSel={setSel} setModal={setModal} me={me}/>
-        )}
-
-        {/* FINANZAS 360 */}
-        {nav==='finanzas_360' && (isAdmin||isFinanzas) && (
-          <Finanzas360View leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} savePropField={savePropField} saveCommission={saveCommission} setCommissions={setCommissions}/>
-        )}
-
-        {/* PORTAL BROKER */}
         {nav==='portal_broker' && isAgent && (
           <PortalBrokerView leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} me={me}/>
         )}
@@ -3931,7 +3930,7 @@ function buildDeals360(leads=[], users=[], stages=[], commissions={}, indicators
     const clp=p.moneda==='UF'&&uf?Math.round(comisionBroker*uf):p.moneda==='USD'&&usd?Math.round(comisionBroker*usd):0
     const ag=users.find(u=>u.id===l.assigned_to)||{}; const st=stages.find(s=>s.id===l.stage)||{}; const created=p.fecha_reserva||l.stage_moved_at||l.fecha
     const d={...p,key,leadId:l.id,propId:p.id,idx:pi,leadNombre:l.nombre,leadTelefono:l.telefono,leadEmail:l.email,leadStage:l.stage,leadStageLabel:st.label||l.stage,brokerId:l.assigned_to,brokerName:ag.name||'Sin broker',brokerPhone:ag.phone||'',created,days:days360(created),comm,base,comisionTotal,comisionBroker,comisionClp:clp}
-    d.estado_operativo=inferOpStatus360(d); d.estado_financiero=inferFinStatus360(d); d.docProgress=docsProgress360(d); d.alerts=slaAlerts360(d); d.health=d.riesgo_caida==='alto'||d.alerts.length>=3?'alto':d.alerts.length>=1||d.riesgo_caida==='medio'?'medio':'bajo'
+    d.estado_operativo=d.estado_operativo||inferOpStatus360(d); d.estado_financiero=d.estado_financiero||inferFinStatus360(d); d.docProgress=docsProgress360(d); d.alerts=slaAlerts360(d); d.health=d.riesgo_caida==='alto'||d.alerts.length>=3?'alto':d.alerts.length>=1||d.riesgo_caida==='medio'?'medio':'bajo'
     return d
   }))
 }
