@@ -335,11 +335,30 @@ RESPONDE SOLO CON ESTE JSON (sin ningún texto antes ni después, sin markdown):
 Valores de action: "conversando" | "calificado" | "no_califica" | "escalar_humano"
 En leadUpdate incluye datos capturados: {"renta":"X","nombre":"Y"}`
 
+  // ── Construir mensajes para API ─────────────────────────────────────────────
+  // whatsapp.js guarda el mensaje del usuario en DB ANTES de llamar al agente,
+  // por eso el historial ya incluye el mensaje actual. Lo filtramos para evitar
+  // que aparezca duplicado (Anthropic rechaza dos mensajes user consecutivos).
+  const dedupedHist = histMsgs.filter((m, i) => {
+    if (i === histMsgs.length - 1 && m.role !== 'assistant' && clean(m.content) === input) return false
+    return true
+  })
+
+  // Garantizar que la secuencia sea válida (no puede empezar con assistant)
+  const validHist = dedupedHist.filter((m, i, arr) => {
+    if (i === 0 && m.role === 'assistant') return false
+    return true
+  })
+
   const messages = []
-  for (const h of histMsgs) {
+  for (const h of validHist) {
     const role    = h.role === 'assistant' ? 'assistant' : 'user'
     const content = clean(h.content || '')
-    if (content) messages.push({ role, content })
+    if (!content) continue
+    // Evitar dos mensajes del mismo rol consecutivos
+    const last = messages[messages.length - 1]
+    if (last && last.role === role) continue
+    messages.push({ role, content })
   }
   messages.push({ role: 'user', content: input })
 
