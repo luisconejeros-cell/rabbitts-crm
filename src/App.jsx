@@ -6311,9 +6311,10 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
             <WhatsAppNumerosPanel iaConfig={iaConfig} upd={upd} supabase={supabase} dbReady={dbReady}/>
           </div>
 
-          {/* Calificacion y Calendly */}
+          {/* Calificación */}
           <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
-            <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>🎯 Criterios de calificación</p>
+            <p style={{margin:'0 0 4px',fontSize:13,fontWeight:700,color:B.primary}}>🎯 Criterios de calificación</p>
+            <p style={{margin:'0 0 12px',fontSize:11,color:B.mid}}>Rabito usa estos valores para decidir si un cliente califica o se cierra amablemente.</p>
             <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr',gap:10}}>
               <Fld label="Renta mínima individual ($)">
                 <input type="number" value={iaConfig.rentaMinima||1500000} onChange={e=>upd(['rentaMinima'],parseInt(e.target.value))} style={sty.inp}/>
@@ -6321,26 +6322,65 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
               <Fld label="Renta mínima con pareja ($)">
                 <input type="number" value={iaConfig.rentaMinimaPareja||2000000} onChange={e=>upd(['rentaMinimaPareja'],parseInt(e.target.value))} style={sty.inp}/>
               </Fld>
-              <Fld label="Link Calendly reunión">
+              <Fld label="Link de agenda (Calendly u otro)">
                 <input value={iaConfig.calendlyLink||''} onChange={e=>upd(['calendlyLink'],e.target.value)} placeholder="https://calendly.com/..." style={sty.inp}/>
+              </Fld>
+            </div>
+            <div style={{marginTop:10}}>
+              <Fld label="Criterio extra de calificación (opcional)">
+                <input value={iaConfig.criterioCalificacion||''} onChange={e=>upd(['criterioCalificacion'],e.target.value)}
+                  placeholder="Ej: Solo personas con crédito preaprobado o con pie disponible" style={sty.inp}/>
               </Fld>
             </div>
           </div>
 
-          {/* Personalidad completa */}
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
-            <p style={{margin:'0 0 6px',fontSize:13,fontWeight:700,color:B.primary}}>🧬 Personalidad del agente (system prompt)</p>
-            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Define quién es Rabito, su tono y sus reglas inamovibles.</p>
-            <textarea value={iaConfig.personalidad||''} onChange={e=>upd(['personalidad'],e.target.value)}
-              style={{...sty.inp,minHeight:100,resize:'vertical',fontSize:12,fontFamily:'monospace'}}/>
+          {/* Propuesta de valor */}
+          <div style={{background:'#fff',border:`2px solid ${B.primary}30`,borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+              <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>💡 Propuesta de valor</p>
+              <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:'#DCFCE7',color:'#14532d',fontWeight:700}}>⚡ IMPACTO DIRECTO EN VENTAS</span>
+            </div>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Qué ofrece Rabbitts Capital exactamente. Rabito usa esto para convencer al cliente de por qué Rabbitts es su mejor opción. Sé específico: proyectos, beneficios, diferenciadores.</p>
+            <textarea value={iaConfig.propuestaValor||''} onChange={e=>upd(['propuestaValor'],e.target.value)}
+              placeholder="Ej: En Rabbitts Capital te ayudamos a invertir en departamentos nuevos usando el multicrédito hipotecario, recuperar el IVA de la construcción y pagar menos impuestos con estrategias tributarias legales. Trabajamos con las mejores inmobiliarias de Chile y tenemos proyectos desde 2.500 UF en Ñuñoa, Providencia y Las Condes."
+              style={{...sty.inp,minHeight:90,resize:'vertical',fontSize:12}}/>
           </div>
 
-          {/* Guion de ventas */}
+          {/* Personalidad */}
           <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
-            <p style={{margin:'0 0 6px',fontSize:13,fontWeight:700,color:B.primary}}>📋 Guion de ventas (flujo de conversación)</p>
-            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>El paso a paso que sigue Rabito: saludo, diagnóstico, calificación y cierre.</p>
+            <p style={{margin:'0 0 4px',fontSize:13,fontWeight:700,color:B.primary}}>🧬 Personalidad del agente</p>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Cómo habla Rabito: tono, estilo, límites de carácter. No pongas proyectos ni precios aquí — eso va en Propuesta de valor y Cerebro Rabito.</p>
+            <textarea value={iaConfig.personalidad||''} onChange={e=>upd(['personalidad'],e.target.value)}
+              style={{...sty.inp,minHeight:80,resize:'vertical',fontSize:12,fontFamily:'monospace'}}/>
+          </div>
+
+          {/* Guion */}
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+              <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>📋 Guion de ventas</p>
+              <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:B.light,color:B.primary,fontWeight:600}}>complementa el embudo automático</span>
+            </div>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>El embudo Bienvenida → Calificación → Perfil → Interés → Agenda ya está incorporado al agente. Aquí puedes agregar instrucciones adicionales específicas de tu negocio.</p>
             <textarea value={iaConfig.guion||''} onChange={e=>upd(['guion'],e.target.value)}
-              style={{...sty.inp,minHeight:120,resize:'vertical',fontSize:12,fontFamily:'monospace'}}/>
+              style={{...sty.inp,minHeight:80,resize:'vertical',fontSize:12,fontFamily:'monospace'}}/>
+          </div>
+
+          {/* Reglas duras */}
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
+            <p style={{margin:'0 0 4px',fontSize:13,fontWeight:700,color:B.primary}}>🚫 Reglas inamovibles</p>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Cosas que Rabito NUNCA debe hacer o decir bajo ninguna circunstancia.</p>
+            <textarea value={iaConfig.reglasDuras||''} onChange={e=>upd(['reglasDuras'],e.target.value)}
+              placeholder="Ej: Nunca mencionar competidores. Nunca dar precios exactos sin consultar. Nunca decir que está ocupado o que llamará después."
+              style={{...sty.inp,minHeight:70,resize:'vertical',fontSize:12}}/>
+          </div>
+
+          {/* Instrucciones extra - full width */}
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',gridColumn:'1/-1'}}>
+            <p style={{margin:'0 0 4px',fontSize:13,fontWeight:700,color:B.primary}}>📌 Instrucciones extra</p>
+            <p style={{margin:'0 0 10px',fontSize:11,color:B.mid}}>Cualquier otro comportamiento específico que no encaje en los campos anteriores.</p>
+            <textarea value={iaConfig.instrucciones||''} onChange={e=>upd(['instrucciones'],e.target.value)}
+              placeholder="Ej: Si el cliente pregunta por proyectos en Antofagasta, decirle que por ahora solo tenemos en Santiago."
+              style={{...sty.inp,minHeight:60,resize:'vertical',fontSize:12}}/>
           </div>
 
           {/* Ajustes de comportamiento */}
@@ -6672,56 +6712,211 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
       {/* TAB: MONITOR */}
       {tab==='monitor' && (
         <div>
+          {/* Diagnóstico API */}
           <DiagnosticoRabito/>
 
           {/* Stats */}
           <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginBottom:16}}>
             {[
-              {l:'Leads en cierre',    v:closingLeads.length,  bg:B.light,    col:B.primary},
-              {l:'Leads inactivos',    v:inactive.length,       bg:'#FFF7ED',  col:'#92400e'},
-              {l:'Brokers activos',    v:agents.length,         bg:'#DCFCE7',  col:'#14532d'},
-              {l:'Mensajes enviados',  v:'—',                   bg:'#F5F3FF',  col:'#5b21b6'},
+              {l:'Leads en cierre',   v:closingLeads.length, bg:B.light,   col:B.primary},
+              {l:'Leads inactivos',   v:inactive.length,      bg:'#FFF7ED', col:'#92400e'},
+              {l:'Brokers activos',   v:agents.length,        bg:'#DCFCE7', col:'#14532d'},
+              {l:'Entrenamiento',     v:(iaConfig.entrenamiento||[]).length+' pares', bg:'#F5F3FF', col:'#5b21b6'},
             ].map((k,i)=>(
               <div key={i} style={{background:k.bg,borderRadius:10,padding:'10px 14px',border:'1px solid '+k.col+'33'}}>
                 <div style={{fontSize:11,color:k.col,fontWeight:600,marginBottom:4}}>{k.l}</div>
-                <div style={{fontSize:isMobile?20:22,fontWeight:800,color:k.col}}>{k.v}</div>
+                <div style={{fontSize:isMobile?18:20,fontWeight:800,color:k.col}}>{k.v}</div>
               </div>
             ))}
           </div>
 
-          {/* Inactive leads alert */}
+          {/* ── Tester de embudo por etapas ── */}
+          {(()=>{
+            const STAGE_INFO = {
+              bienvenida: {label:'Bienvenida',      bg:'#EFF6FF', col:'#1d4ed8', dot:'#93c5fd'},
+              calificacion:{label:'Calificación',   bg:'#FFF7ED', col:'#9a3412', dot:'#fdba74'},
+              perfil:     {label:'Perfil',          bg:'#F5F3FF', col:'#5b21b6', dot:'#c4b5fd'},
+              interes:    {label:'Interés',         bg:'#FFFBEB', col:'#92400e', dot:'#fcd34d'},
+              agenda:     {label:'Agenda',          bg:'#F0FDF4', col:'#166534', dot:'#86efac'},
+              calificado: {label:'✅ Calificado',   bg:'#DCFCE7', col:'#14532d', dot:'#4ade80'},
+              no_califica:{label:'❌ No califica',  bg:'#FEF2F2', col:'#991b1b', dot:'#fca5a5'},
+            }
+            const [msgs,    setMsgs]    = React.useState([])
+            const [input,   setInput]   = React.useState('')
+            const [loading, setLoading] = React.useState(false)
+            const [stage,   setStage]   = React.useState('bienvenida')
+            const [action,  setAction]  = React.useState('')
+            const endRef = React.useRef(null)
+
+            React.useEffect(()=>{ endRef.current?.scrollIntoView({behavior:'smooth'}) },[msgs])
+
+            const send = async () => {
+              const text = input.trim()
+              if (!text || loading) return
+              const userMsg = {role:'user', content:text}
+              const newMsgs = [...msgs, userMsg]
+              setMsgs(newMsgs); setInput(''); setLoading(true)
+              try {
+                const history = newMsgs.map(m=>({role:m.role,content:m.content}))
+                const r = await fetch('/api/agent',{
+                  method:'POST',
+                  headers:{'Content-Type':'application/json'},
+                  body: JSON.stringify({
+                    message: text,
+                    conversationHistory: history.slice(0,-1),
+                    iaConfig,
+                    leadData: {}
+                  })
+                })
+                const data = await r.json()
+                const reply   = data.reply   || '(sin respuesta)'
+                const stageR  = data.stage   || 'bienvenida'
+                const actionR = data.action  || 'conversando'
+                setMsgs(p=>[...p, {role:'assistant', content:reply, stage:stageR, action:actionR, leadUpdate:data.leadUpdate}])
+                setStage(stageR)
+                setAction(actionR)
+              } catch(e) {
+                setMsgs(p=>[...p, {role:'assistant', content:'⚠️ Error: '+e.message, stage:'bienvenida', action:'error'}])
+              }
+              setLoading(false)
+            }
+
+            const si = STAGE_INFO[stage] || STAGE_INFO.bienvenida
+
+            return (
+              <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginBottom:14}}>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+                  <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>🧪 Tester de conversación</p>
+                  <span style={{fontSize:11,color:'#64748B'}}>Prueba cómo responde Rabito antes de activarlo</span>
+                  <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6}}>
+                    <span style={{fontSize:10,color:'#64748B',fontWeight:700}}>ETAPA ACTUAL:</span>
+                    <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:si.bg,color:si.col,fontWeight:700,border:`1px solid ${si.dot}80`}}>
+                      {si.label}
+                    </span>
+                    {action && action !== 'conversando' && (
+                      <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,
+                        background: action==='calificado'?'#DCFCE7': action==='no_califica'?'#FEF2F2':'#F5F3FF',
+                        color: action==='calificado'?'#14532d': action==='no_califica'?'#991b1b':'#5b21b6',
+                        fontWeight:700}}>
+                        {action}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Embudo visual */}
+                <div style={{display:'flex',gap:2,marginBottom:12,alignItems:'center',overflowX:'auto',paddingBottom:4}}>
+                  {['bienvenida','calificacion','perfil','interes','agenda','calificado'].map((s,i,arr)=>{
+                    const inf = STAGE_INFO[s]
+                    const isCurrent = s === stage
+                    const isPast = ['bienvenida','calificacion','perfil','interes','agenda','calificado'].indexOf(s) <
+                                   ['bienvenida','calificacion','perfil','interes','agenda','calificado'].indexOf(stage)
+                    return (
+                      <React.Fragment key={s}>
+                        <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,flexShrink:0}}>
+                          <div style={{width:10,height:10,borderRadius:'50%',
+                            background:isCurrent?inf.col:isPast?'#22c55e':'#d1d5db',
+                            border:isCurrent?`2px solid ${inf.col}`:'none',
+                            boxShadow:isCurrent?`0 0 0 3px ${inf.dot}60`:''}}/>
+                          <span style={{fontSize:9,color:isCurrent?inf.col:isPast?'#22c55e':'#9ca3af',fontWeight:isCurrent?700:400,whiteSpace:'nowrap'}}>
+                            {inf.label}
+                          </span>
+                        </div>
+                        {i<arr.length-1 && <div style={{flex:1,height:1,background:isPast?'#22c55e':'#e5e7eb',minWidth:8,marginBottom:10}}/>}
+                      </React.Fragment>
+                    )
+                  })}
+                </div>
+
+                {/* Chat window */}
+                <div style={{background:'#F8FAFC',borderRadius:10,padding:'10px',minHeight:220,maxHeight:320,overflowY:'auto',marginBottom:10,border:'1px solid #E2E8F0'}}>
+                  {msgs.length===0 && (
+                    <div style={{textAlign:'center',color:'#94a3b8',fontSize:12,marginTop:40}}>
+                      <div style={{fontSize:28,marginBottom:6}}>💬</div>
+                      Escribe un mensaje para ver cómo responde Rabito y en qué etapa lo detecta
+                    </div>
+                  )}
+                  {msgs.map((m,i)=>(
+                    <div key={i} style={{marginBottom:8,display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
+                      {m.role==='assistant' && m.stage && (
+                        <span style={{fontSize:9,color:'#94a3b8',marginBottom:2,marginLeft:4}}>
+                          etapa: {STAGE_INFO[m.stage]?.label||m.stage} {m.action&&m.action!=='conversando'?`· ${m.action}`:''}
+                        </span>
+                      )}
+                      <div style={{
+                        maxWidth:'80%',padding:'8px 12px',borderRadius:m.role==='user'?'12px 12px 2px 12px':'12px 12px 12px 2px',
+                        background:m.role==='user'?B.primary:'#fff',
+                        color:m.role==='user'?'#fff':'#0F172A',
+                        fontSize:12,lineHeight:1.5,
+                        border:m.role==='assistant'?'1px solid #E2E8F0':'none',
+                        boxShadow:'0 1px 3px rgba(0,0,0,0.06)'
+                      }}>
+                        {m.content}
+                      </div>
+                      {m.role==='assistant' && m.leadUpdate && Object.keys(m.leadUpdate).length>0 && (
+                        <div style={{fontSize:9,color:'#166534',background:'#F0FDF4',padding:'2px 8px',borderRadius:6,marginTop:3,border:'1px solid #86efac'}}>
+                          📥 Capturado: {Object.entries(m.leadUpdate).map(([k,v])=>`${k}: ${v}`).join(' · ')}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {loading && (
+                    <div style={{display:'flex',alignItems:'flex-start',marginBottom:8}}>
+                      <div style={{padding:'8px 14px',borderRadius:'12px 12px 12px 2px',background:'#fff',border:'1px solid #E2E8F0',fontSize:12,color:'#94a3b8'}}>
+                        ✍️ Rabito está escribiendo...
+                      </div>
+                    </div>
+                  )}
+                  <div ref={endRef}/>
+                </div>
+
+                {/* Input */}
+                <div style={{display:'flex',gap:8}}>
+                  <input value={input} onChange={e=>setInput(e.target.value)}
+                    onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&send()}
+                    placeholder="Escribe como si fueras un cliente por WhatsApp..."
+                    style={{...sty.inp,flex:1,fontSize:13}}/>
+                  <button onClick={send} disabled={loading||!input.trim()}
+                    style={{padding:'8px 18px',borderRadius:8,border:'none',
+                      background:loading||!input.trim()?'#e5e7eb':B.primary,
+                      color:loading||!input.trim()?'#9ca3af':'#fff',
+                      cursor:loading||!input.trim()?'not-allowed':'pointer',
+                      fontWeight:700,fontSize:13,flexShrink:0}}>
+                    Enviar
+                  </button>
+                  {msgs.length>0 && (
+                    <button onClick={()=>{setMsgs([]);setStage('bienvenida');setAction('')}}
+                      style={{padding:'8px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontSize:12,color:'#64748B'}}>
+                      Limpiar
+                    </button>
+                  )}
+                </div>
+
+                <p style={{fontSize:10,color:'#9ca3af',margin:'8px 0 0'}}>
+                  💡 El tester usa la configuración guardada actual. Guarda los cambios antes de probar.
+                  {!iaConfig.activo && <span style={{color:'#d97706',fontWeight:600}}> · ⚠️ La IA está apagada — el tester sigue funcionando pero en producción no responderá.</span>}
+                </p>
+              </div>
+            )
+          })()}
+
+          {/* Inactive leads */}
           {inactive.length > 0 && (
             <div style={{background:'#FFF7ED',border:'1px solid #fdba74',borderRadius:12,padding:'14px 16px',marginBottom:14}}>
-              <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:'#92400e'}}>⚠️ Leads inactivos (más de {iaConfig.eventos.diasInactividad||7} días sin actividad)</p>
+              <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:'#92400e'}}>⚠️ Leads inactivos (+{iaConfig.eventos.diasInactividad||7} días)</p>
               {inactive.slice(0,5).map(l=>{
                 const ag = agents.find(u=>u.id===l.assigned_to)
                 const dias = Math.floor((Date.now()-new Date(l.fecha).getTime())/86400000)
                 return (
                   <div key={l.id} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #fcd34d',fontSize:12}}>
                     <span><strong>{l.nombre}</strong> → {ag?.name||'Sin asignar'}</span>
-                    <span style={{color:'#9a3412',fontWeight:600}}>{dias} días</span>
+                    <span style={{color:'#9a3412',fontWeight:600}}>{dias}d</span>
                   </div>
                 )
               })}
               {inactive.length>5&&<p style={{fontSize:11,color:'#9ca3af',margin:'6px 0 0'}}>...y {inactive.length-5} más</p>}
             </div>
           )}
-
-          {/* Live test chat */}
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px'}}>
-            <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:B.primary}}>💬 Probar a Rabito en vivo</p>
-            <RabitoChat iaConfig={iaConfig}/>
-          </div>
-
-          {/* Message log placeholder */}
-          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginTop:12}}>
-            <p style={{margin:'0 0 10px',fontSize:13,fontWeight:700,color:B.primary}}>📨 Log de mensajes WhatsApp</p>
-            <div style={{padding:'24px',textAlign:'center',color:'#9ca3af',fontSize:12,background:'#f9fbff',borderRadius:8}}>
-              <div style={{fontSize:28,marginBottom:6}}>📱</div>
-              Los mensajes enviados aparecerán aquí cuando actives la integración con WhatsApp.
-              
-            </div>
-          </div>
         </div>
       )}
     </div>
