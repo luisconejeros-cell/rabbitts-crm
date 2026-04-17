@@ -1,9 +1,11 @@
-// api/agent.js — Rabito v2: agente de ventas con embudo de etapas
-// Arquitectura: motor de etapas + prompt orientado a objetivo + leadUpdate estructurado
+// api/agent.js — Rabito v3: embudo de etapas + Prompt Caching Anthropic
+// El system prompt (negocio + cerebro + entrenamiento) se cachea en Anthropic.
+// Tokens cacheados NO cuentan hacia el rate limit ITPM → soporta 50+ conversaciones simultáneas.
+// Solo los tokens del mensaje actual + contexto dinámico (etapa, cliente) se cobran por request.
 
 import { createClient } from '@supabase/supabase-js'
 
-const clean = (v = '') => String(v ?? '').trim()
+const clean    = (v = '') => String(v ?? '').trim()
 const normalize = (v = '') => clean(v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 
 function makeSupa() {
@@ -30,50 +32,50 @@ function flatten(v, d = 0) {
 const STAGES = {
   bienvenida: {
     label: 'Bienvenida',
-    objetivo: 'Hacer sentir bienvenido al cliente, entender brevemente qué lo trajo, y pasar a calificación.',
-    accion: 'Preguntar qué lo trae hoy. UNA pregunta breve y cálida. No expliques todo el negocio todavía.',
-    avanzar_si: 'El cliente explicó qué busca o mostró interés en invertir/comprar.',
+    objetivo: 'Hacer sentir bienvenido al cliente y entender qué lo trae.',
+    accion: 'Preguntar qué lo trae hoy. UNA pregunta breve y cálida.',
+    avanzar_si: 'El cliente explicó qué busca o mostró interés.',
     siguiente: 'calificacion'
   },
   calificacion: {
     label: 'Calificación',
-    objetivo: 'Verificar si el cliente tiene capacidad económica para invertir. Sin renta suficiente, no avanzar a la siguiente etapa.',
-    accion: 'Preguntar por renta o presupuesto de forma natural y sin presionar. Ej: "¿Tienes renta declarada actualmente?" o "¿Tienes idea del rango de inversión que manejas?"',
-    avanzar_si: 'El cliente mencionó su renta, sueldo, presupuesto o capacidad de crédito.',
+    objetivo: 'Capturar nombre completo, renta y email del cliente. Sin estos datos no puede avanzar.',
+    accion: 'Pide los 3 datos de forma natural y uno a la vez: primero el nombre completo, luego la renta o sueldo, luego el email. Nunca pidas los tres en un mismo mensaje.',
+    avanzar_si: 'Tienes nombre completo, renta/sueldo Y email del cliente. Guárdalos en leadUpdate: {"nombre":"...","renta":"...","email":"..."}',
     siguiente: 'perfil'
   },
   perfil: {
     label: 'Perfil',
-    objetivo: 'Entender qué tipo de propiedad busca, para qué (vivir/invertir/arrendar) y cuándo.',
-    accion: 'Preguntar UNA sola cosa: para qué es la propiedad (inversión o para vivir), o en qué zona está pensando.',
-    avanzar_si: 'El cliente aclaró si es para vivir o invertir, y/o zona/tipo de propiedad.',
+    objetivo: 'Entender qué busca: vivir, invertir o arrendar. Y en qué zona.',
+    accion: 'Preguntar UNA cosa: ¿para qué es la propiedad o en qué zona piensa?',
+    avanzar_si: 'El cliente aclaró si es para vivir o invertir, y/o zona.',
     siguiente: 'interes'
   },
   interes: {
     label: 'Interés',
-    objetivo: 'Generar deseo mostrando cómo Rabbitts puede ayudarlo específicamente. Mencionar ventajas concretas: multicrédito, IVA, tributación.',
-    accion: 'Conectar lo que dijo el cliente con la propuesta de valor de Rabbitts. Luego invitar a agendar una reunión.',
-    avanzar_si: 'El cliente mostró interés explícito, hizo preguntas de detalle, o aceptó conocer más.',
+    objetivo: 'Generar deseo conectando su situación con la propuesta de Rabbitts.',
+    accion: 'Explicar brevemente cómo Rabbitts ayuda en su caso específico. Luego invitar a agendar.',
+    avanzar_si: 'El cliente mostró interés, hizo preguntas de detalle, o aceptó conocer más.',
     siguiente: 'agenda'
   },
   agenda: {
     label: 'Agenda',
-    objetivo: 'Concretar una reunión con un asesor. El cliente ya está calificado y tiene interés.',
-    accion: `Dar el link de agenda o preguntar disponibilidad directamente: "¿Cuándo tienes 30 minutos esta semana?"`,
+    objetivo: 'Concretar una reunión con un asesor.',
+    accion: 'Dar el link de agenda o preguntar disponibilidad: "¿Cuándo tienes 30 minutos esta semana?"',
     avanzar_si: 'El cliente agendó, confirmó disponibilidad, o pidió que lo contacten.',
     siguiente: 'calificado'
   },
   calificado: {
-    label: 'Calificado — Handoff',
-    objetivo: 'El cliente está listo para ser atendido por un asesor real. Confirmar y cerrar.',
-    accion: 'Confirmar que un asesor se pondrá en contacto pronto. Dar expectativa de tiempo. No seguir vendiendo.',
+    label: 'Calificado',
+    objetivo: 'Confirmar que un asesor lo contactará. Cerrar la conversación del bot.',
+    accion: 'Confirmar que un asesor real lo contactará pronto. No seguir vendiendo.',
     avanzar_si: 'N/A — etapa final.',
     siguiente: null
   },
   no_califica: {
     label: 'No califica',
-    objetivo: 'Cerrar amablemente sin generar falsas expectativas. Dejar la puerta abierta para el futuro.',
-    accion: 'Explicar que por ahora no cumple el perfil pero puede volver cuando su situación cambie.',
+    objetivo: 'Cerrar amablemente dejando la puerta abierta.',
+    accion: 'Explicar que por ahora no cumple el perfil pero puede volver.',
     avanzar_si: 'N/A — etapa final.',
     siguiente: null
   }
@@ -82,114 +84,138 @@ const STAGES = {
 // ── Inferir etapa desde historial ─────────────────────────────────────────────
 function inferStage(history = [], leadData = {}) {
   if (leadData.status === 'calificado') return 'calificado'
-
   const userMsgs = history.filter(m => m.role === 'user').map(m => normalize(m.content || '')).join(' ')
-  const allMsgs  = history.map(m => normalize(m.content || '')).join(' ')
   const count    = history.length
-
   if (count === 0) return 'bienvenida'
-
   const has = patterns => patterns.some(p => p.test(userMsgs))
-
-  const tieneRenta   = has([/\d[\d.,]*\s*(millones?|mill|uf |unidades|mil peso|sueldo|renta|ingreso|gano|presupuesto|credito)/,/renta de|gano|sueldo de|ingreso de|tengo capacidad|puedo pagar/])
+  const tieneRenta   = has([/\d[\d.,]*\s*(millones?|mill|uf |unidades|mil peso|sueldo|renta|ingreso|gano|presupuesto|credito)/, /renta de|gano|sueldo de|ingreso de|tengo capacidad|puedo pagar/])
   const tieneInteres = has([/me interesa|quiero|quisiera|busco|necesito|para (vivir|invertir|arrendar)|departamento|casa|proyecto|inversion|zona|providencia|ñuñoa|vitacura|las condes|santiago|nunoa/])
-  const tieneAgenda  = has([/agendar|agenda|reunion|reunión|disponible|esta semana|lunes|martes|miercoles|jueves|viernes|cuando|cuándo|llamen|llamar|contacten|contactar/])
+  const tieneAgenda  = has([/agendar|agenda|reunion|reunión|disponible|esta semana|lunes|martes|miercoles|jueves|viernes|cuando|cuándo|llamen|llamar|contacten/])
   const confirmado   = has([/agend[eé]|confirm|de acuerdo|perfecto|listo|gracias por|espero|quedamos/]) && tieneAgenda
-
-  if (confirmado)              return 'calificado'
-  if (tieneAgenda)             return 'agenda'
+  if (confirmado)                 return 'calificado'
+  if (tieneAgenda)                return 'agenda'
   if (tieneRenta && tieneInteres) return 'interes'
-  if (tieneRenta)              return 'perfil'
-  if (tieneInteres && count > 3) return 'calificacion'
-  if (count > 2)               return 'calificacion'
+  if (tieneRenta)                 return 'perfil'
+  if (tieneInteres && count > 3)  return 'calificacion'
+  if (count > 2)                  return 'calificacion'
   return 'bienvenida'
 }
 
-// ── Extraer datos del lead desde historial ────────────────────────────────────
+// ── Extraer datos del lead ────────────────────────────────────────────────────
 function extractLeadData(history = []) {
   const userText = history.filter(m => m.role === 'user').map(m => m.content).join(' ')
   const update = {}
 
+  // Renta / presupuesto
   const rentaMatch = userText.match(/(\$?[\d.,]+\s*(?:millones?|mill\.?|uf|unidades|pesos?|clp)?)/i)
   if (rentaMatch) update.renta = rentaMatch[0].trim()
 
-  const nombreMatch = userText.match(/(?:me llamo|soy|mi nombre es)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)/i)
+  // Nombre completo
+  const nombreMatch = userText.match(/(?:me llamo|soy|mi nombre es|llámame|llamame)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,3})/i)
   if (nombreMatch) update.nombre = nombreMatch[1].trim()
+
+  // Email
+  const emailMatch = userText.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/i)
+  if (emailMatch) update.email = emailMatch[0].toLowerCase()
 
   return update
 }
 
-// ── Cargar entrenamiento (max ~800 chars para no explotar el rate limit) ──────
+// ── Cargar entrenamiento COMPLETO (cacheable) ─────────────────────────────────
 async function loadTraining(db, iaConfig) {
-  const pairs = []
+  const lines = []
 
-  // Del Panel IA
+  // Del Panel IA — todos los pares
   const entrenamiento = iaConfig?.entrenamiento
-  if (Array.isArray(entrenamiento)) {
-    for (const item of entrenamiento.slice(0, 8)) {
-      const ctx  = clean(item.context || item.pregunta || item.original || '').slice(0, 80)
-      const resp = clean(item.improved || item.respuesta || item.correction || '').slice(0, 120)
-      if (resp) pairs.push(`"${ctx}": "${resp}"`)
+  if (Array.isArray(entrenamiento) && entrenamiento.length) {
+    lines.push('=== RESPUESTAS EXACTAS — usa estas cuando el cliente diga algo similar ===')
+    for (const item of entrenamiento) {
+      const ctx  = clean(item.context || item.pregunta || item.original || '')
+      const resp = clean(item.improved || item.respuesta || item.correction || '')
+      if (resp) lines.push(`PREGUNTA: "${ctx || 'general'}"\nRESPUESTA: "${resp}"`)
     }
   }
 
-  // De DB (solo si hay pocos del panel)
-  if (db && pairs.length < 5) {
+  if (db) {
+    // De agent_training en DB
     try {
       const { data } = await db.from('crm_settings').select('value').eq('key', 'agent_training').single()
       const items = Array.isArray(data?.value) ? data.value : Array.isArray(data?.value?.items) ? data.value.items : []
-      for (const item of items.slice(0, 4)) {
-        const ctx  = clean(item.context || item.pregunta || item.original || '').slice(0, 80)
-        const resp = clean(item.improved || item.respuesta || item.correction || '').slice(0, 120)
-        if (resp) pairs.push(`"${ctx}": "${resp}"`)
+      if (items.length) {
+        lines.push('=== REGLAS ADICIONALES ===')
+        for (const item of items) {
+          const ctx  = clean(item.context || item.pregunta || item.original || '')
+          const resp = clean(item.improved || item.respuesta || item.correction || '')
+          if (resp) lines.push(`SI: "${ctx || 'general'}"\nDI: "${resp}"`)
+        }
+      }
+    } catch {}
+
+    // Correcciones de conversaciones reales
+    try {
+      const { data } = await db.from('crm_conv_feedback')
+        .select('msg_content,correction,improved').order('created_at', { ascending: false }).limit(30)
+      const fb = (data || []).filter(x => clean(x.correction || x.improved))
+      if (fb.length) {
+        lines.push('=== CORRECCIONES APRENDIDAS ===')
+        for (const f of fb) {
+          const orig = clean(f.msg_content || '')
+          const corr = clean(f.correction || f.improved || '')
+          if (corr) lines.push(`ORIGINAL: "${orig}"\nCORREGIDO: "${corr}"`)
+        }
       }
     } catch {}
   }
 
-  if (!pairs.length) return ''
-  return `RESPUESTAS EXACTAS:\n${pairs.join('\n')}`
+  return lines.join('\n\n')
 }
 
-// ── Cargar Cerebro Rabito (max ~1500 chars para no explotar el rate limit) ────
+// ── Cargar Cerebro Rabito COMPLETO (cacheable) ────────────────────────────────
 async function loadCerebro(db, iaConfig) {
   const docs = []
-  const MAX_TOTAL = 1500
-  const MAX_PER_DOC = 500
 
-  // Del iaConfig (cerebroDocs)
-  for (const d of (iaConfig?.cerebroDocs || []).slice(0, 3)) {
-    const txt = clean(d.content || d.extract || d.text || '').slice(0, MAX_PER_DOC)
-    if (txt) docs.push(txt)
+  // Del iaConfig (cerebroDocs subidos desde el panel)
+  for (const d of (iaConfig?.cerebroDocs || [])) {
+    const txt = clean(d.content || d.extract || d.text || '')
+    if (txt) docs.push({ name: d.name || d.nombre || d.title || 'Documento', content: txt })
   }
 
-  // De DB solo si no hay docs en config
-  if (db && docs.length === 0) {
+  if (db) {
+    // rabito_knowledge
     try {
-      const { data } = await db.from('crm_knowledge_chunks').select('title,content,activo').limit(4)
-      for (const row of (data || [])) {
-        if (row.activo !== false && row.content) {
-          docs.push(clean(row.content).slice(0, MAX_PER_DOC))
-        }
+      const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge').single()
+      for (const d of (data?.value?.docs || [])) {
+        const txt = clean(d.content || d.extract || d.text || '')
+        if (txt) docs.push({ name: d.name || d.title || 'Conocimiento', content: txt })
       }
     } catch {}
 
-    if (docs.length === 0) {
-      try {
-        const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge').single()
-        for (const d of (data?.value?.docs || []).slice(0, 3)) {
-          const txt = clean(d.content || d.extract || d.text || '').slice(0, MAX_PER_DOC)
-          if (txt) docs.push(txt)
+    // rabito_knowledge_chunks
+    try {
+      const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge_chunks').single()
+      const chunks = Array.isArray(data?.value?.chunks) ? data.value.chunks : Array.isArray(data?.value) ? data.value : []
+      for (const ch of chunks) {
+        const txt = clean(ch.content || ch.contenido || '')
+        if (txt) docs.push({ name: ch.title || ch.titulo || 'Conocimiento', content: txt })
+      }
+    } catch {}
+
+    // crm_knowledge_chunks
+    try {
+      const { data } = await db.from('crm_knowledge_chunks').select('title,content,activo').limit(50)
+      for (const row of (data || [])) {
+        if (row.activo !== false && row.content) {
+          docs.push({ name: row.title || 'Conocimiento', content: row.content })
         }
-      } catch {}
-    }
+      }
+    } catch {}
   }
 
   if (!docs.length) return ''
-  const combined = docs.join('\n---\n').slice(0, MAX_TOTAL)
-  return `CONOCIMIENTO RABBITTS:\n${combined}`
+  return docs.map(d => `### ${d.name}\n${d.content.slice(0, 8000)}`).join('\n\n')
 }
 
-// ── Parsear respuesta ─────────────────────────────────────────────────────────
+// ── Parsear respuesta de Claude ───────────────────────────────────────────────
 function parseReply(raw = '') {
   const txt = clean(raw).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
   try {
@@ -199,13 +225,12 @@ function parseReply(raw = '') {
       action:       j.action || 'conversando',
       statusUpdate: j.statusUpdate || '',
       leadUpdate:   j.leadUpdate || {},
-      nextStage:    j.nextStage || ''
     }
   } catch {
     const m = txt.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-    if (m) return { reply: clean(m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')), action: 'conversando', statusUpdate: '', leadUpdate: {}, nextStage: '' }
-    if (txt && !txt.startsWith('{')) return { reply: txt.slice(0, 700), action: 'conversando', statusUpdate: '', leadUpdate: {}, nextStage: '' }
-    return { reply: '', action: 'conversando', statusUpdate: '', leadUpdate: {}, nextStage: '' }
+    if (m) return { reply: clean(m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')), action: 'conversando', statusUpdate: '', leadUpdate: {} }
+    if (txt && !txt.startsWith('{')) return { reply: txt.slice(0, 700), action: 'conversando', statusUpdate: '', leadUpdate: {} }
+    return { reply: '', action: 'conversando', statusUpdate: '', leadUpdate: {} }
   }
 }
 
@@ -215,7 +240,6 @@ export async function generateAgentResponse({
   conversationHistory = [],
   iaConfig: passedConfig = {},
   leadData = {},
-  debug = false
 } = {}, ctx = {}) {
 
   const input = clean(message)
@@ -239,61 +263,79 @@ export async function generateAgentResponse({
   )
 
   if (!ANTHROPIC_KEY) {
-    console.error('[AGENT] ❌ No Anthropic API key. Add ANTHROPIC_KEY to Vercel environment variables.')
-    const fallback = clean(iaConfig.mensajeFallback || 'Hola, soy Rabito de Rabbitts Capital. En breve un asesor te contacta.')
-    return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '' }
+    console.error('[AGENT] ❌ No Anthropic API key. Add ANTHROPIC_KEY to Vercel env vars.')
+    return { reply: clean(iaConfig.mensajeFallback || 'Soy Rabito de Rabbitts Capital. En breve un asesor te contacta.'), action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '' }
   }
 
   const agentName = clean(iaConfig.nombre || iaConfig.nombreAgente || 'Rabito')
   const agenda    = clean(iaConfig.agendaLink || iaConfig.calendlyLink || '')
 
+  // Carga paralela — estos bloques van al caché
   const [trainingText, cerebroText] = await Promise.all([
     loadTraining(db, iaConfig),
     loadCerebro(db, iaConfig)
   ])
 
-  const histMsgs      = (Array.isArray(conversationHistory) ? conversationHistory : []).slice(-8)
+  const histMsgs      = (Array.isArray(conversationHistory) ? conversationHistory : []).slice(-12)
   const stage         = inferStage(histMsgs, leadData)
   const stageInfo     = STAGES[stage] || STAGES.bienvenida
   const nextStageInfo = stageInfo.siguiente ? STAGES[stageInfo.siguiente] : null
   const extractedData = extractLeadData(histMsgs)
 
-  // ── Datos del negocio — solo los que tienen valor ────────────────────────────
-  const negocioLines = [
-    iaConfig.propuestaValor || iaConfig.oferta || iaConfig.productos || 'Inversión inmobiliaria, multicrédito, optimización tributaria en Chile.',
-    iaConfig.rentaMinima    ? `Renta mín: $${iaConfig.rentaMinima}` : '',
-    iaConfig.rentaMinimaPareja ? `Renta pareja: $${iaConfig.rentaMinimaPareja}` : '',
-    iaConfig.criterioCalificacion,
-    iaConfig.personalidad   ? `Personalidad: ${iaConfig.personalidad.slice(0, 120)}` : '',
-    iaConfig.guion          ? `Guion: ${iaConfig.guion.slice(0, 120)}` : '',
-    iaConfig.reglasDuras    ? `Nunca: ${iaConfig.reglasDuras.slice(0, 100)}` : '',
-    iaConfig.instrucciones  ? `Extra: ${iaConfig.instrucciones.slice(0, 100)}` : '',
+  // ── Bloque CACHEABLE: identidad + negocio + cerebro + entrenamiento ──────────
+  // Este texto es igual para TODOS los usuarios → Anthropic lo cachea.
+  // La primera llamada escribe el caché. Las siguientes 5 min lo leen gratis (no cuenta ITPM).
+  const negocioConfig = [
+    iaConfig.propuestaValor || iaConfig.oferta || iaConfig.productos || '',
+    iaConfig.rentaMinima      ? `Renta mínima individual: $${iaConfig.rentaMinima}` : '',
+    iaConfig.rentaMinimaPareja? `Renta mínima en pareja: $${iaConfig.rentaMinimaPareja}` : '',
+    iaConfig.criterioCalificacion || '',
+    iaConfig.personalidad || '',
+    iaConfig.guion || '',
+    iaConfig.reglasDuras      ? `REGLAS INAMOVIBLES: ${iaConfig.reglasDuras}` : '',
+    iaConfig.instrucciones    ? `INSTRUCCIONES EXTRA: ${iaConfig.instrucciones}` : '',
+    agenda                    ? `LINK PARA AGENDAR: ${agenda}` : '',
   ].filter(Boolean).join('\n')
 
-  const system = `Eres ${agentName}, asesor humano de Rabbitts Capital por WhatsApp. NUNCA digas que eres IA.
-Mensajes cortos (2-4 líneas). Una sola pregunta por mensaje. Sin markdown.
+  const cachedBlock = `Eres ${agentName}, asesor de ventas de Rabbitts Capital. Atiendes por WhatsApp como humano. NUNCA digas que eres IA o bot.
+Mensajes cortos (2-4 líneas). UNA sola pregunta por mensaje. Sin markdown, sin asteriscos.
 
-NEGOCIO:
-${negocioLines}
-${cerebroText ? '\n'+cerebroText : ''}
-${trainingText ? '\n'+trainingText : ''}
-${agenda ? `\nAGENDA: ${agenda}` : ''}
+SOBRE EL NEGOCIO:
+${negocioConfig || 'Eres asesor de inversión inmobiliaria. Ayudas a invertir en departamentos, usar multicrédito y optimizar impuestos en Chile.'}
 
-ETAPA ACTUAL: ${stageInfo.label}
-HACER AHORA: ${stageInfo.accion}
-AVANZAR cuando: ${stageInfo.avanzar_si}
-SIGUIENTE: ${nextStageInfo?.label || 'calificado'}
+${cerebroText ? `CONOCIMIENTO DE PROYECTOS Y NEGOCIO:\n${cerebroText}` : ''}
 
-REGLAS: Si no califica → action:"no_califica". Si agendó → action:"calificado". Si pide humano → action:"escalar_humano". Captura renta/nombre en leadUpdate.
-CLIENTE: ${flatten(leadData) || 'nuevo'}${Object.keys(extractedData).length ? ` | ${JSON.stringify(extractedData)}` : ''}
+${trainingText ? `ENTRENAMIENTO — SIGUE ESTO CUANDO COINCIDA:\n${trainingText}` : ''}
 
-JSON: {"reply":"mensaje natural 2-4 líneas","action":"conversando","leadUpdate":{}}`
+EMBUDO DE VENTAS:
+Bienvenida → Calificación → Perfil → Interés → Agenda → Calificado
 
-  // ── Construir mensajes — sin duplicados, sin consecutivos del mismo rol ────────
-  const dedupedHist = histMsgs.filter((m, i) => {
-    if (i === histMsgs.length - 1 && m.role !== 'assistant' && clean(m.content) === input) return false
-    return true
-  }).filter((m, i) => !(i === 0 && m.role === 'assistant'))
+REGLAS DEL EMBUDO:
+- Sigue el flujo. Una etapa a la vez.
+- Si renta no califica: cierra amablemente con action "no_califica".
+- Si agendó o confirmó reunión: action "calificado".
+- Si pide hablar con humano: action "escalar_humano".
+- Captura renta y nombre del cliente en leadUpdate cuando los mencione.
+- No inventes proyectos, precios ni condiciones que no estén en los documentos.
+
+FORMATO DE RESPUESTA — siempre JSON puro, sin texto antes ni después:
+{"reply":"tu mensaje al cliente","action":"conversando","leadUpdate":{}}`
+
+  // ── Bloque DINÁMICO: cambia por conversación (no se cachea) ─────────────────
+  // Etapa actual, info del cliente específico. Son pocos tokens.
+  const dynamicBlock = `ETAPA ACTUAL: ${stageInfo.label}
+OBJETIVO: ${stageInfo.objetivo}
+HAZ AHORA: ${stageInfo.accion}
+AVANZA A "${nextStageInfo?.label || 'calificado'}" CUANDO: ${stageInfo.avanzar_si}
+
+CLIENTE: ${flatten(leadData) || 'nuevo, sin datos'}${Object.keys(extractedData).length ? `\nDatos del chat: ${JSON.stringify(extractedData)}` : ''}
+
+action válidos: "conversando" | "calificado" | "no_califica" | "escalar_humano"`
+
+  // ── Construir mensajes — sin duplicados, alternancia correcta ────────────────
+  const dedupedHist = histMsgs
+    .filter((m, i) => !(i === histMsgs.length - 1 && m.role !== 'assistant' && clean(m.content) === input))
+    .filter((m, i) => !(i === 0 && m.role === 'assistant'))
 
   const messages = []
   for (const h of dedupedHist) {
@@ -306,54 +348,95 @@ JSON: {"reply":"mensaje natural 2-4 líneas","action":"conversando","leadUpdate"
   }
   messages.push({ role: 'user', content: input })
 
-  // Solo el modelo que funciona en la cuenta actual
-  const models = [
-    clean(process.env.ANTHROPIC_MODEL || ''),
-    'claude-haiku-4-5-20251001',
-  ].filter(Boolean)
+  const model = clean(process.env.ANTHROPIC_MODEL || '') || 'claude-haiku-4-5-20251001'
 
-  console.log('[AGENT v2]', { stage, agentName, input: input.slice(0, 60), msgs: messages.length - 1 })
-
-  for (const model of [...new Set(models)]) {
-    try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 500, temperature: 0.15, system, messages })
-      })
-      const data = await r.json().catch(() => ({}))
-      if (!r.ok || data.error) throw new Error(data?.error?.message || `HTTP ${r.status}`)
-
-      const raw    = (data.content || []).map(b => b.text || '').join('').trim()
-      const parsed = parseReply(raw)
-      let reply    = parsed.reply
-
-      const blocked = ['soy una ia', 'soy un bot', 'modelo de lenguaje', 'no estoy disponible', 'alta demanda', 'responderé después']
-      for (const b of blocked) {
-        if (normalize(reply).includes(normalize(b))) reply = `${agentName} por acá. Cuéntame más sobre lo que buscas.`
-      }
-
-      if (!reply) throw new Error('empty_reply')
-
-      const mergedLeadUpdate = { ...extractedData, ...(parsed.leadUpdate || {}) }
-
-      console.log('[AGENT v2] ok', { model, stage, action: parsed.action, chars: reply.length })
-      return {
-        reply,
-        action:       parsed.action || 'conversando',
-        statusUpdate: parsed.statusUpdate || (parsed.action === 'calificado' ? 'calificado' : ''),
-        leadUpdate:   mergedLeadUpdate,
-        nextStage:    parsed.nextStage || '',
-        stage,
-        trace:        { stage, model, derivationAllowedByHardRules: true }
-      }
-    } catch (e) {
-      console.error('[AGENT v2] error', model, e.message)
+  // ── API call con Prompt Caching ──────────────────────────────────────────────
+  // El system prompt se pasa como array de bloques.
+  // El bloque cachedBlock lleva cache_control → Anthropic lo cachea por 5 min.
+  // El bloque dynamicBlock NO lleva cache_control → se envía completo cada vez pero son pocos tokens.
+  // Header requerido: anthropic-beta: prompt-caching-2024-07-31
+  const systemBlocks = [
+    {
+      type: 'text',
+      text: cachedBlock,
+      cache_control: { type: 'ephemeral' }   // ← AQUÍ se marca el caché
+    },
+    {
+      type: 'text',
+      text: dynamicBlock
+      // Sin cache_control → no se cachea, se envía siempre
     }
-  }
+  ]
 
-  const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
-  return { reply: fallback, action: 'fallback_error', leadUpdate: {}, statusUpdate: '', stage }
+  console.log('[AGENT v3]', { stage, model, input: input.slice(0, 60), msgs: messages.length - 1, hasCerebro: !!cerebroText, hasTraining: !!trainingText })
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31'   // ← requerido para activar caching
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 500,
+        temperature: 0.15,
+        system: systemBlocks,
+        messages
+      })
+    })
+
+    const data = await r.json().catch(() => ({}))
+
+    if (!r.ok || data.error) {
+      const errMsg = data?.error?.message || `HTTP ${r.status}`
+      console.error('[AGENT v3] API error:', errMsg)
+      // Log cache stats si están disponibles
+      if (data?.usage) console.log('[AGENT v3] usage:', data.usage)
+      throw new Error(errMsg)
+    }
+
+    // Log uso de caché para diagnóstico
+    if (data.usage) {
+      const u = data.usage
+      console.log('[AGENT v3] cache stats:', {
+        input: u.input_tokens,
+        cache_creation: u.cache_creation_input_tokens || 0,
+        cache_read: u.cache_read_input_tokens || 0,       // estos NO cuentan hacia ITPM
+        output: u.output_tokens
+      })
+    }
+
+    const raw    = (data.content || []).map(b => b.text || '').join('').trim()
+    const parsed = parseReply(raw)
+    let reply    = parsed.reply
+
+    const blocked = ['soy una ia', 'soy un bot', 'modelo de lenguaje', 'no estoy disponible', 'alta demanda']
+    for (const b of blocked) {
+      if (normalize(reply).includes(normalize(b))) reply = `${agentName} por acá. Cuéntame más sobre lo que buscas.`
+    }
+
+    if (!reply) throw new Error('empty_reply')
+
+    const mergedLeadUpdate = { ...extractedData, ...(parsed.leadUpdate || {}) }
+
+    console.log('[AGENT v3] ok', { stage, action: parsed.action, chars: reply.length })
+    return {
+      reply,
+      action:       parsed.action || 'conversando',
+      statusUpdate: parsed.statusUpdate || (parsed.action === 'calificado' ? 'calificado' : ''),
+      leadUpdate:   mergedLeadUpdate,
+      stage,
+      trace:        { stage, model, derivationAllowedByHardRules: true }
+    }
+
+  } catch (e) {
+    console.error('[AGENT v3] error:', e.message)
+    const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
+    return { reply: fallback, action: 'fallback_error', leadUpdate: {}, statusUpdate: '', stage }
+  }
 }
 
 // ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -364,8 +447,9 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' })
 
-  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false, action, file, mediaType } = req.body || {}
+  const { message, conversationHistory = [], iaConfig = {}, leadData = {}, action, file, mediaType } = req.body || {}
 
+  // Extracción de PDF/Doc para Cerebro Rabito
   if (action === 'extract' && file) {
     try {
       const apiKey = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || '')
@@ -389,24 +473,26 @@ export default async function handler(req, res) {
     }
   }
 
+  // Diagnóstico
   if (action === 'diagnostico') {
     const key   = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || '')
     const sbUrl = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '')
     const sbKey = clean(process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '')
     return res.status(200).json({
-      anthropic_key: key   ? `✅ Configurada (${key.slice(0, 8)}...)` : '❌ NO ENCONTRADA — agrega ANTHROPIC_KEY en Vercel > Settings > Environment Variables',
+      anthropic_key: key   ? `✅ Configurada (${key.slice(0, 8)}...)` : '❌ NO ENCONTRADA',
       supabase_url:  sbUrl ? `✅ ${sbUrl.slice(0, 30)}...` : '❌ NO ENCONTRADA',
       supabase_key:  sbKey ? '✅ Configurada' : '❌ NO ENCONTRADA',
-      version: 'agent-v2-staged',
-      stages: Object.keys(STAGES)
+      version: 'agent-v3-cached',
+      stages: Object.keys(STAGES),
+      caching: 'prompt-caching-2024-07-31 activo — cerebro + entrenamiento cacheados'
     })
   }
 
   try {
-    const result = await generateAgentResponse({ message, conversationHistory, iaConfig, leadData, debug })
+    const result = await generateAgentResponse({ message, conversationHistory, iaConfig, leadData })
     return res.status(200).json(result)
   } catch (e) {
-    console.error('[AGENT v2] fatal', e.message)
+    console.error('[AGENT v3] fatal', e.message)
     return res.status(200).json({ reply: '', error: e.message, action: 'error', leadUpdate: {}, statusUpdate: '' })
   }
 }
