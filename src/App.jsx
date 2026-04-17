@@ -6170,6 +6170,179 @@ function DiagnosticoRabito() {
 }
 
 
+// ─── Rabito Stage Tester (Monitor tab) ───────────────────────────────────────
+const STAGE_INFO_TESTER = {
+  bienvenida:  {label:'Bienvenida',     bg:'#EFF6FF', col:'#1d4ed8', dot:'#93c5fd'},
+  calificacion:{label:'Calificación',   bg:'#FFF7ED', col:'#9a3412', dot:'#fdba74'},
+  perfil:      {label:'Perfil',         bg:'#F5F3FF', col:'#5b21b6', dot:'#c4b5fd'},
+  interes:     {label:'Interés',        bg:'#FFFBEB', col:'#92400e', dot:'#fcd34d'},
+  agenda:      {label:'Agenda',         bg:'#F0FDF4', col:'#166534', dot:'#86efac'},
+  calificado:  {label:'✅ Calificado',  bg:'#DCFCE7', col:'#14532d', dot:'#4ade80'},
+  no_califica: {label:'❌ No califica', bg:'#FEF2F2', col:'#991b1b', dot:'#fca5a5'},
+}
+const STAGE_ORDER = ['bienvenida','calificacion','perfil','interes','agenda','calificado']
+
+function RabitoStageTester({ iaConfig, sty }) {
+  const [msgs,    setMsgs]    = useState([])
+  const [input,   setInput]   = useState('')
+  const [loading, setLoading] = useState(false)
+  const [stage,   setStage]   = useState('bienvenida')
+  const [action,  setAction]  = useState('')
+  const endRef = useRef(null)
+  const BP = '#2563EB'
+
+  useEffect(() => { endRef.current?.scrollIntoView({behavior:'smooth'}) }, [msgs])
+
+  const send = async () => {
+    const text = input.trim()
+    if (!text || loading) return
+    const newMsgs = [...msgs, {role:'user', content:text}]
+    setMsgs(newMsgs); setInput(''); setLoading(true)
+    try {
+      const r = await fetch('/api/agent', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          message: text,
+          conversationHistory: newMsgs.slice(0,-1).map(m=>({role:m.role,content:m.content})),
+          iaConfig, leadData: {}
+        })
+      })
+      const data = await r.json()
+      const stageR  = data.stage  || 'bienvenida'
+      const actionR = data.action || 'conversando'
+      setMsgs(p => [...p, {
+        role:'assistant', content: data.reply || '(sin respuesta)',
+        stage: stageR, action: actionR, leadUpdate: data.leadUpdate
+      }])
+      setStage(stageR); setAction(actionR)
+    } catch(e) {
+      setMsgs(p => [...p, {role:'assistant', content:'⚠️ Error: '+e.message, stage:'bienvenida', action:'error'}])
+    }
+    setLoading(false)
+  }
+
+  const si = STAGE_INFO_TESTER[stage] || STAGE_INFO_TESTER.bienvenida
+
+  return (
+    <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginBottom:14}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+        <p style={{margin:0,fontSize:13,fontWeight:700,color:BP}}>🧪 Tester de conversación</p>
+        <span style={{fontSize:11,color:'#64748B'}}>Prueba cómo responde Rabito antes de activarlo en producción</span>
+        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+          <span style={{fontSize:10,color:'#64748B',fontWeight:700}}>ETAPA:</span>
+          <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:si.bg,color:si.col,fontWeight:700,border:`1px solid ${si.dot}80`}}>
+            {si.label}
+          </span>
+          {action && action !== 'conversando' && (
+            <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,fontWeight:700,
+              background: action==='calificado'?'#DCFCE7':action==='no_califica'?'#FEF2F2':'#F5F3FF',
+              color: action==='calificado'?'#14532d':action==='no_califica'?'#991b1b':'#5b21b6'}}>
+              {action}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Embudo visual */}
+      <div style={{display:'flex',gap:2,marginBottom:12,alignItems:'center',overflowX:'auto',paddingBottom:4}}>
+        {STAGE_ORDER.map((s, i, arr) => {
+          const inf      = STAGE_INFO_TESTER[s]
+          const isCur    = s === stage
+          const idx      = arr.indexOf(stage)
+          const isPast   = i < idx
+          return (
+            <React.Fragment key={s}>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,flexShrink:0}}>
+                <div style={{width:10,height:10,borderRadius:'50%',
+                  background: isCur?inf.col : isPast?'#22c55e':'#d1d5db',
+                  border: isCur?`2px solid ${inf.col}`:'none',
+                  boxShadow: isCur?`0 0 0 3px ${inf.dot}60`:''}}/>
+                <span style={{fontSize:9,whiteSpace:'nowrap',fontWeight:isCur?700:400,
+                  color: isCur?inf.col : isPast?'#22c55e':'#9ca3af'}}>
+                  {inf.label}
+                </span>
+              </div>
+              {i < arr.length-1 && (
+                <div style={{flex:1,height:1,background:isPast?'#22c55e':'#e5e7eb',minWidth:8,marginBottom:10}}/>
+              )}
+            </React.Fragment>
+          )
+        })}
+      </div>
+
+      {/* Chat */}
+      <div style={{background:'#F8FAFC',borderRadius:10,padding:'10px',minHeight:200,maxHeight:300,overflowY:'auto',marginBottom:10,border:'1px solid #E2E8F0'}}>
+        {msgs.length===0 && (
+          <div style={{textAlign:'center',color:'#94a3b8',fontSize:12,paddingTop:40}}>
+            <div style={{fontSize:28,marginBottom:6}}>💬</div>
+            Escribe un mensaje para ver cómo responde Rabito y en qué etapa lo detecta
+          </div>
+        )}
+        {msgs.map((m,i) => (
+          <div key={i} style={{marginBottom:8,display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
+            {m.role==='assistant' && m.stage && (
+              <span style={{fontSize:9,color:'#94a3b8',marginBottom:2,marginLeft:4}}>
+                etapa: {STAGE_INFO_TESTER[m.stage]?.label||m.stage}
+                {m.action&&m.action!=='conversando' ? ` · ${m.action}` : ''}
+              </span>
+            )}
+            <div style={{
+              maxWidth:'80%',padding:'8px 12px',fontSize:12,lineHeight:1.5,
+              borderRadius: m.role==='user'?'12px 12px 2px 12px':'12px 12px 12px 2px',
+              background: m.role==='user'?BP:'#fff',
+              color: m.role==='user'?'#fff':'#0F172A',
+              border: m.role==='assistant'?'1px solid #E2E8F0':'none',
+              boxShadow:'0 1px 3px rgba(0,0,0,0.06)'
+            }}>
+              {m.content}
+            </div>
+            {m.role==='assistant' && m.leadUpdate && Object.keys(m.leadUpdate).length>0 && (
+              <div style={{fontSize:9,color:'#166534',background:'#F0FDF4',padding:'2px 8px',borderRadius:6,marginTop:3,border:'1px solid #86efac'}}>
+                📥 Capturado: {Object.entries(m.leadUpdate).map(([k,v])=>`${k}: ${v}`).join(' · ')}
+              </div>
+            )}
+          </div>
+        ))}
+        {loading && (
+          <div style={{display:'flex',marginBottom:8}}>
+            <div style={{padding:'8px 14px',borderRadius:'12px 12px 12px 2px',background:'#fff',border:'1px solid #E2E8F0',fontSize:12,color:'#94a3b8'}}>
+              ✍️ Rabito está escribiendo...
+            </div>
+          </div>
+        )}
+        <div ref={endRef}/>
+      </div>
+
+      {/* Input */}
+      <div style={{display:'flex',gap:8}}>
+        <input value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}
+          placeholder="Escribe como si fueras un cliente por WhatsApp..."
+          style={{...sty.inp, flex:1, fontSize:13}}/>
+        <button onClick={send} disabled={loading||!input.trim()}
+          style={{padding:'8px 18px',borderRadius:8,border:'none',fontWeight:700,fontSize:13,flexShrink:0,
+            background: loading||!input.trim()?'#e5e7eb':BP,
+            color: loading||!input.trim()?'#9ca3af':'#fff',
+            cursor: loading||!input.trim()?'not-allowed':'pointer'}}>
+          Enviar
+        </button>
+        {msgs.length>0 && (
+          <button onClick={()=>{setMsgs([]);setStage('bienvenida');setAction('')}}
+            style={{padding:'8px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontSize:12,color:'#64748B'}}>
+            Limpiar
+          </button>
+        )}
+      </div>
+
+      <p style={{fontSize:10,color:'#9ca3af',margin:'8px 0 0'}}>
+        💡 El tester usa la configuración guardada actualmente. Guarda antes de probar.
+        {iaConfig && !iaConfig.activo && <span style={{color:'#d97706',fontWeight:600}}> · ⚠️ IA apagada — en producción no responderá.</span>}
+      </p>
+    </div>
+  )
+}
+
 function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const [tab, setTab] = useState('config')
@@ -6731,174 +6904,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
           </div>
 
           {/* ── Tester de embudo por etapas ── */}
-          {(()=>{
-            const STAGE_INFO = {
-              bienvenida: {label:'Bienvenida',      bg:'#EFF6FF', col:'#1d4ed8', dot:'#93c5fd'},
-              calificacion:{label:'Calificación',   bg:'#FFF7ED', col:'#9a3412', dot:'#fdba74'},
-              perfil:     {label:'Perfil',          bg:'#F5F3FF', col:'#5b21b6', dot:'#c4b5fd'},
-              interes:    {label:'Interés',         bg:'#FFFBEB', col:'#92400e', dot:'#fcd34d'},
-              agenda:     {label:'Agenda',          bg:'#F0FDF4', col:'#166534', dot:'#86efac'},
-              calificado: {label:'✅ Calificado',   bg:'#DCFCE7', col:'#14532d', dot:'#4ade80'},
-              no_califica:{label:'❌ No califica',  bg:'#FEF2F2', col:'#991b1b', dot:'#fca5a5'},
-            }
-            const [msgs,    setMsgs]    = React.useState([])
-            const [input,   setInput]   = React.useState('')
-            const [loading, setLoading] = React.useState(false)
-            const [stage,   setStage]   = React.useState('bienvenida')
-            const [action,  setAction]  = React.useState('')
-            const endRef = React.useRef(null)
-
-            React.useEffect(()=>{ endRef.current?.scrollIntoView({behavior:'smooth'}) },[msgs])
-
-            const send = async () => {
-              const text = input.trim()
-              if (!text || loading) return
-              const userMsg = {role:'user', content:text}
-              const newMsgs = [...msgs, userMsg]
-              setMsgs(newMsgs); setInput(''); setLoading(true)
-              try {
-                const history = newMsgs.map(m=>({role:m.role,content:m.content}))
-                const r = await fetch('/api/agent',{
-                  method:'POST',
-                  headers:{'Content-Type':'application/json'},
-                  body: JSON.stringify({
-                    message: text,
-                    conversationHistory: history.slice(0,-1),
-                    iaConfig,
-                    leadData: {}
-                  })
-                })
-                const data = await r.json()
-                const reply   = data.reply   || '(sin respuesta)'
-                const stageR  = data.stage   || 'bienvenida'
-                const actionR = data.action  || 'conversando'
-                setMsgs(p=>[...p, {role:'assistant', content:reply, stage:stageR, action:actionR, leadUpdate:data.leadUpdate}])
-                setStage(stageR)
-                setAction(actionR)
-              } catch(e) {
-                setMsgs(p=>[...p, {role:'assistant', content:'⚠️ Error: '+e.message, stage:'bienvenida', action:'error'}])
-              }
-              setLoading(false)
-            }
-
-            const si = STAGE_INFO[stage] || STAGE_INFO.bienvenida
-
-            return (
-              <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'16px',marginBottom:14}}>
-                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
-                  <p style={{margin:0,fontSize:13,fontWeight:700,color:B.primary}}>🧪 Tester de conversación</p>
-                  <span style={{fontSize:11,color:'#64748B'}}>Prueba cómo responde Rabito antes de activarlo</span>
-                  <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6}}>
-                    <span style={{fontSize:10,color:'#64748B',fontWeight:700}}>ETAPA ACTUAL:</span>
-                    <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,background:si.bg,color:si.col,fontWeight:700,border:`1px solid ${si.dot}80`}}>
-                      {si.label}
-                    </span>
-                    {action && action !== 'conversando' && (
-                      <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,
-                        background: action==='calificado'?'#DCFCE7': action==='no_califica'?'#FEF2F2':'#F5F3FF',
-                        color: action==='calificado'?'#14532d': action==='no_califica'?'#991b1b':'#5b21b6',
-                        fontWeight:700}}>
-                        {action}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Embudo visual */}
-                <div style={{display:'flex',gap:2,marginBottom:12,alignItems:'center',overflowX:'auto',paddingBottom:4}}>
-                  {['bienvenida','calificacion','perfil','interes','agenda','calificado'].map((s,i,arr)=>{
-                    const inf = STAGE_INFO[s]
-                    const isCurrent = s === stage
-                    const isPast = ['bienvenida','calificacion','perfil','interes','agenda','calificado'].indexOf(s) <
-                                   ['bienvenida','calificacion','perfil','interes','agenda','calificado'].indexOf(stage)
-                    return (
-                      <React.Fragment key={s}>
-                        <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,flexShrink:0}}>
-                          <div style={{width:10,height:10,borderRadius:'50%',
-                            background:isCurrent?inf.col:isPast?'#22c55e':'#d1d5db',
-                            border:isCurrent?`2px solid ${inf.col}`:'none',
-                            boxShadow:isCurrent?`0 0 0 3px ${inf.dot}60`:''}}/>
-                          <span style={{fontSize:9,color:isCurrent?inf.col:isPast?'#22c55e':'#9ca3af',fontWeight:isCurrent?700:400,whiteSpace:'nowrap'}}>
-                            {inf.label}
-                          </span>
-                        </div>
-                        {i<arr.length-1 && <div style={{flex:1,height:1,background:isPast?'#22c55e':'#e5e7eb',minWidth:8,marginBottom:10}}/>}
-                      </React.Fragment>
-                    )
-                  })}
-                </div>
-
-                {/* Chat window */}
-                <div style={{background:'#F8FAFC',borderRadius:10,padding:'10px',minHeight:220,maxHeight:320,overflowY:'auto',marginBottom:10,border:'1px solid #E2E8F0'}}>
-                  {msgs.length===0 && (
-                    <div style={{textAlign:'center',color:'#94a3b8',fontSize:12,marginTop:40}}>
-                      <div style={{fontSize:28,marginBottom:6}}>💬</div>
-                      Escribe un mensaje para ver cómo responde Rabito y en qué etapa lo detecta
-                    </div>
-                  )}
-                  {msgs.map((m,i)=>(
-                    <div key={i} style={{marginBottom:8,display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
-                      {m.role==='assistant' && m.stage && (
-                        <span style={{fontSize:9,color:'#94a3b8',marginBottom:2,marginLeft:4}}>
-                          etapa: {STAGE_INFO[m.stage]?.label||m.stage} {m.action&&m.action!=='conversando'?`· ${m.action}`:''}
-                        </span>
-                      )}
-                      <div style={{
-                        maxWidth:'80%',padding:'8px 12px',borderRadius:m.role==='user'?'12px 12px 2px 12px':'12px 12px 12px 2px',
-                        background:m.role==='user'?B.primary:'#fff',
-                        color:m.role==='user'?'#fff':'#0F172A',
-                        fontSize:12,lineHeight:1.5,
-                        border:m.role==='assistant'?'1px solid #E2E8F0':'none',
-                        boxShadow:'0 1px 3px rgba(0,0,0,0.06)'
-                      }}>
-                        {m.content}
-                      </div>
-                      {m.role==='assistant' && m.leadUpdate && Object.keys(m.leadUpdate).length>0 && (
-                        <div style={{fontSize:9,color:'#166534',background:'#F0FDF4',padding:'2px 8px',borderRadius:6,marginTop:3,border:'1px solid #86efac'}}>
-                          📥 Capturado: {Object.entries(m.leadUpdate).map(([k,v])=>`${k}: ${v}`).join(' · ')}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {loading && (
-                    <div style={{display:'flex',alignItems:'flex-start',marginBottom:8}}>
-                      <div style={{padding:'8px 14px',borderRadius:'12px 12px 12px 2px',background:'#fff',border:'1px solid #E2E8F0',fontSize:12,color:'#94a3b8'}}>
-                        ✍️ Rabito está escribiendo...
-                      </div>
-                    </div>
-                  )}
-                  <div ref={endRef}/>
-                </div>
-
-                {/* Input */}
-                <div style={{display:'flex',gap:8}}>
-                  <input value={input} onChange={e=>setInput(e.target.value)}
-                    onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&send()}
-                    placeholder="Escribe como si fueras un cliente por WhatsApp..."
-                    style={{...sty.inp,flex:1,fontSize:13}}/>
-                  <button onClick={send} disabled={loading||!input.trim()}
-                    style={{padding:'8px 18px',borderRadius:8,border:'none',
-                      background:loading||!input.trim()?'#e5e7eb':B.primary,
-                      color:loading||!input.trim()?'#9ca3af':'#fff',
-                      cursor:loading||!input.trim()?'not-allowed':'pointer',
-                      fontWeight:700,fontSize:13,flexShrink:0}}>
-                    Enviar
-                  </button>
-                  {msgs.length>0 && (
-                    <button onClick={()=>{setMsgs([]);setStage('bienvenida');setAction('')}}
-                      style={{padding:'8px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontSize:12,color:'#64748B'}}>
-                      Limpiar
-                    </button>
-                  )}
-                </div>
-
-                <p style={{fontSize:10,color:'#9ca3af',margin:'8px 0 0'}}>
-                  💡 El tester usa la configuración guardada actual. Guarda los cambios antes de probar.
-                  {!iaConfig.activo && <span style={{color:'#d97706',fontWeight:600}}> · ⚠️ La IA está apagada — el tester sigue funcionando pero en producción no responderá.</span>}
-                </p>
-              </div>
-            )
-          })()}
+          <RabitoStageTester iaConfig={iaConfig} sty={sty}/>
 
           {/* Inactive leads */}
           {inactive.length > 0 && (
