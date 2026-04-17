@@ -1768,7 +1768,7 @@ export default function App() {
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
             : isOps      ? ['operaciones','kanban','lista','visitas','rabito_interno']
             : isFinanzas ? ['dashboard_finanzas','finanzas_360','kanban','rabito_interno']
-            :              ['broker_home','kanban','lista','mis_notas','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
+            :              ['broker_home','kanban','lista','mis_notas','condiciones','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
     broker_home:'Inicio', dashboard:'Dashboard', kanban:'Leads', lista:'Lista', mis_notas:'Mis Notas', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
@@ -3688,7 +3688,7 @@ export default function App() {
           <MisVisitasView leads={leads} me={me} users={users}/>
         )}
 
-        {nav==='condiciones' && (isAdmin||isOps) && (
+        {nav==='condiciones' && (isAdmin||isOps||isAgent) && (
           <CondicionesComView
             condiciones={condiciones}
             setCondiciones={setCondiciones}
@@ -7361,14 +7361,39 @@ function CerebroRabito({ supabase, dbReady, iaConfig, upd }) {
 function CondicionesComView({ condiciones=[], setCondiciones, supabase, dbReady, isAdmin, isOps }) {
   const B = {primary:'#1B4FC8',light:'#EEF2FF',mid:'#6b7280'}
   const sty = { inp:{padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,width:'100%',boxSizing:'border-box'} }
-  const [mes, setMes] = React.useState(new Date().toISOString().slice(0,7))
+
+  const canEdit = isAdmin || isOps
+
+  const [mes, setMes]           = React.useState(new Date().toISOString().slice(0,7))
   const [uploading, setUploading] = React.useState(false)
-  const [notif, setNotif] = React.useState(null)
+  const [notif, setNotif]       = React.useState(null)
+  const [search, setSearch]     = React.useState('')
+  const [colFilters, setColFilters] = React.useState({})  // {col: value}
+  const [page, setPage]         = React.useState(1)
+  const [visible, setVisible]   = React.useState(true)    // admin toggle
+  const [savingVis, setSavingVis] = React.useState(false)
   const fileRef = React.useRef()
+  const PAGE_SIZE = 50
 
   const lista = Array.isArray(condiciones) ? condiciones : []
   const meses = [...new Set(lista.map(x=>x.mes))].sort().reverse()
   const actuales = lista.filter(x=>x.mes===mes)
+
+  // Load visibility setting from Supabase on mount
+  React.useEffect(() => {
+    if (!dbReady || !supabase) return
+    supabase.from('crm_settings').select('value').eq('key','condiciones_visible').single()
+      .then(({data}) => { if (data?.value !== undefined) setVisible(data.value !== false) })
+      .catch(()=>{})
+  }, [dbReady])
+
+  const toggleVisible = async () => {
+    const next = !visible
+    setVisible(next)
+    setSavingVis(true)
+    if (dbReady && supabase) await supabase.from('crm_settings').upsert({key:'condiciones_visible', value:next})
+    setSavingVis(false)
+  }
 
   const uploadExcel = async (file) => {
     if (!file) return
@@ -7396,6 +7421,7 @@ function CondicionesComView({ condiciones=[], setCondiciones, supabase, dbReady,
       setCondiciones(updated)
       if (dbReady && supabase) await supabase.from('crm_settings').upsert({key:'condiciones_comerciales',value:updated})
       setNotif({ok:true, txt:`✅ ${rows.length} filas cargadas para ${mes}`})
+      setSearch(''); setColFilters({}); setPage(1)
     } catch(e) {
       setNotif({ok:false, txt:'Error: '+e.message})
     }
@@ -7403,46 +7429,81 @@ function CondicionesComView({ condiciones=[], setCondiciones, supabase, dbReady,
     if (fileRef.current) fileRef.current.value = ''
   }
 
+  // Si no está visible y no es admin/ops → pantalla de actualización
+  if (!visible && !canEdit) {
+    return (
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+        minHeight:340,textAlign:'center',padding:40}}>
+        <div style={{fontSize:48,marginBottom:16}}>🔄</div>
+        <div style={{fontSize:20,fontWeight:800,color:'#0F172A',marginBottom:8}}>
+          Actualizando condiciones comerciales
+        </div>
+        <div style={{fontSize:14,color:'#64748B',maxWidth:340}}>
+          Estamos actualizando las condiciones y proyectos disponibles. Vuelve a revisar en unos minutos.
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div style={{maxWidth:1100}}>
+    <div style={{maxWidth:1200}}>
       {/* Header */}
-      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,paddingBottom:12,
+        borderBottom:'2px solid #E8EFFE',flexWrap:'wrap'}}>
         <span style={{fontSize:26}}>📋</span>
         <div style={{flex:1}}>
           <div style={{fontSize:16,fontWeight:800,color:B.primary}}>Condiciones Comerciales</div>
-          <div style={{fontSize:12,color:B.mid}}>Sube el Excel con condiciones por mes — se muestra como tabla en pantalla</div>
+          <div style={{fontSize:12,color:B.mid}}>
+            {actuales[0] ? `${(actuales[0].rows||[]).length} proyectos · mes ${mes}` : 'Sube el Excel con condiciones por mes'}
+          </div>
         </div>
-        <input type="month" value={mes} onChange={e=>setMes(e.target.value)}
-          style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13}}/>
-        {meses.length>0 && (
-          <select value={mes} onChange={e=>setMes(e.target.value)}
+
+        {/* Toggle visibilidad — solo admin/ops */}
+        {canEdit && (
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:12,color:B.mid,fontWeight:600}}>
+              {visible ? '👁️ Visible para todos' : '🚫 Oculto para brokers'}
+            </span>
+            <button onClick={toggleVisible} disabled={savingVis}
+              style={{width:44,height:24,borderRadius:99,border:'none',cursor:'pointer',
+                background:visible?B.primary:'#e5e7eb',position:'relative',transition:'background .2s',
+                flexShrink:0}}>
+              <div style={{position:'absolute',top:2,left:visible?22:2,width:20,height:20,
+                borderRadius:'50%',background:'#fff',transition:'left .2s',
+                boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+            </button>
+          </div>
+        )}
+
+        {/* Selector mes */}
+        {meses.length > 0 && (
+          <select value={mes} onChange={e=>{setMes(e.target.value);setSearch('');setColFilters({});setPage(1)}}
             style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13}}>
             {meses.map(m=><option key={m} value={m}>{m}</option>)}
           </select>
         )}
+        <input type="month" value={mes} onChange={e=>{setMes(e.target.value);setPage(1)}}
+          style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13}}/>
       </div>
 
-      {/* Upload zone */}
-      {(isAdmin||isOps) && (
-        <div
-          onClick={()=>fileRef.current?.click()}
-          onDragOver={e=>e.preventDefault()}
+      {/* Upload — solo admin/ops */}
+      {canEdit && (
+        <div onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()}
           onDrop={e=>{e.preventDefault(); e.dataTransfer.files[0] && uploadExcel(e.dataTransfer.files[0])}}
-          style={{background:B.light,border:'2px dashed #A8C0F0',borderRadius:12,padding:'24px',
-            textAlign:'center',marginBottom:16,cursor:'pointer'}}>
-          <div style={{fontSize:28,marginBottom:6}}>📊</div>
-          <div style={{fontWeight:700,color:B.primary,marginBottom:3}}>
+          style={{background:B.light,border:'2px dashed #A8C0F0',borderRadius:12,padding:'20px',
+            textAlign:'center',marginBottom:14,cursor:'pointer'}}>
+          <div style={{fontSize:26,marginBottom:4}}>📊</div>
+          <div style={{fontWeight:700,color:B.primary,marginBottom:2}}>
             {uploading ? '⏳ Procesando...' : 'Arrastra o haz clic para subir Excel'}
           </div>
           <div style={{fontSize:12,color:B.mid}}>
-            Mes seleccionado: <strong>{mes}</strong> · Formatos: .xlsx, .xls
+            Mes: <strong>{mes}</strong> · Formatos: .xlsx, .xls · Soporta 300+ filas
           </div>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{display:'none'}}
             onChange={e=>e.target.files[0] && uploadExcel(e.target.files[0])}/>
         </div>
       )}
 
-      {/* Notification */}
       {notif && (
         <div style={{padding:'10px 14px',borderRadius:8,fontSize:13,fontWeight:600,marginBottom:12,
           background:notif.ok?'#DCFCE7':'#FEF2F2', color:notif.ok?'#14532d':'#991b1b'}}>
@@ -7452,68 +7513,194 @@ function CondicionesComView({ condiciones=[], setCondiciones, supabase, dbReady,
         </div>
       )}
 
-      {/* Empty state */}
-      {actuales.length === 0 && (
+      {actuales.length === 0 ? (
         <div style={{textAlign:'center',color:B.mid,padding:'40px 20px',fontSize:13,
           background:'#fff',border:'1px solid #E2E8F0',borderRadius:12}}>
           {lista.length === 0
             ? 'Aún no hay condiciones cargadas. Sube un archivo Excel arriba.'
             : `Sin condiciones para ${mes}. Selecciona otro mes o sube un archivo.`}
         </div>
-      )}
+      ) : actuales.map(entry => {
+        const cols = entry.columnas || []
+        const rows = entry.rows || []
 
-      {/* Tables */}
-      {actuales.map(entry => (
-        <div key={entry.id} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,marginBottom:16,overflow:'hidden'}}>
-          <div style={{padding:'12px 16px',background:B.light,display:'flex',alignItems:'center',
-            gap:10,borderBottom:'1px solid #E2E8F0'}}>
-            <span style={{fontSize:18}}>📊</span>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:700,color:B.primary,fontSize:14}}>{entry.nombre}</div>
-              <div style={{fontSize:11,color:B.mid}}>
-                Mes: <strong>{entry.mes}</strong> · {(entry.rows||[]).length} filas · {new Date(entry.fecha).toLocaleDateString('es-CL')}
+        // Aplicar filtros
+        const filtered = rows.filter(row => {
+          const matchSearch = !search || cols.some(c =>
+            String(row[c]??'').toLowerCase().includes(search.toLowerCase())
+          )
+          const matchCols = Object.entries(colFilters).every(([c,v]) =>
+            !v || String(row[c]??'').toLowerCase().includes(v.toLowerCase())
+          )
+          return matchSearch && matchCols
+        })
+
+        const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+        const pageRows   = filtered.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE)
+        const hasFilters = search || Object.values(colFilters).some(Boolean)
+
+        return (
+          <div key={entry.id} style={{background:'#fff',border:'1px solid #E2E8F0',
+            borderRadius:12,marginBottom:16,overflow:'hidden'}}>
+
+            {/* Entry header */}
+            <div style={{padding:'12px 16px',background:B.light,display:'flex',
+              alignItems:'center',gap:10,borderBottom:'1px solid #E2E8F0',flexWrap:'wrap'}}>
+              <span style={{fontSize:18}}>📊</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:B.primary,fontSize:14}}>{entry.nombre}</div>
+                <div style={{fontSize:11,color:B.mid}}>
+                  Mes: <strong>{entry.mes}</strong> · {rows.length} proyectos · {new Date(entry.fecha).toLocaleDateString('es-CL')}
+                  {hasFilters && <span style={{color:B.primary,fontWeight:700}}> · {filtered.length} resultados</span>}
+                </div>
               </div>
-            </div>
-            {(isAdmin||isOps) && (
-              <button
-                onClick={async()=>{
+              {canEdit && (
+                <button onClick={async()=>{
                   const updated = lista.filter(x=>x.id!==entry.id)
                   setCondiciones(updated)
                   if (dbReady&&supabase) await supabase.from('crm_settings').upsert({key:'condiciones_comerciales',value:updated})
                 }}
-                style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #fca5a5',
-                  background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontWeight:600}}>
-                🗑️ Eliminar
-              </button>
-            )}
-          </div>
-          <div style={{overflowX:'auto'}}>
-            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-              <thead>
-                <tr style={{background:'#F8FAFC'}}>
-                  {(entry.columnas||[]).map(col=>(
-                    <th key={col} style={{padding:'8px 10px',textAlign:'left',fontWeight:700,
-                      color:'#334155',borderBottom:'1px solid #E2E8F0',whiteSpace:'nowrap'}}>
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(entry.rows||[]).map((row,ri)=>(
-                  <tr key={ri} style={{borderBottom:'1px solid #f0f4ff',background:ri%2===0?'#fff':'#fafbff'}}>
-                    {(entry.columnas||[]).map(col=>(
-                      <td key={col} style={{padding:'7px 10px',color:'#0F172A',whiteSpace:'nowrap'}}>
-                        {String(row[col]??'')}
-                      </td>
+                  style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid #fca5a5',
+                    background:'#FEF2F2',color:'#991b1b',cursor:'pointer',fontWeight:600}}>
+                  🗑️ Eliminar
+                </button>
+              )}
+            </div>
+
+            {/* Barra de filtros */}
+            <div style={{padding:'10px 14px',borderBottom:'1px solid #f0f4ff',
+              background:'#FAFBFF',display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+              {/* Búsqueda global */}
+              <div style={{position:'relative',flex:'0 0 220px'}}>
+                <span style={{position:'absolute',left:8,top:'50%',transform:'translateY(-50%)',
+                  fontSize:13,color:'#94a3b8'}}>🔍</span>
+                <input
+                  value={search}
+                  onChange={e=>{setSearch(e.target.value);setPage(1)}}
+                  placeholder="Buscar en todos los campos..."
+                  style={{...sty.inp,paddingLeft:28,fontSize:12}}
+                />
+              </div>
+
+              {/* Filtros por columna — solo las primeras 5 columnas más útiles */}
+              {cols.slice(0,5).map(col=>(
+                <div key={col} style={{flex:'0 0 150px'}}>
+                  <input
+                    value={colFilters[col]||''}
+                    onChange={e=>{setColFilters(p=>({...p,[col]:e.target.value}));setPage(1)}}
+                    placeholder={col.length>14?col.slice(0,14)+'…':col}
+                    title={col}
+                    style={{...sty.inp,fontSize:11,padding:'5px 8px'}}
+                  />
+                </div>
+              ))}
+
+              {/* Limpiar filtros */}
+              {hasFilters && (
+                <button onClick={()=>{setSearch('');setColFilters({});setPage(1)}}
+                  style={{fontSize:11,padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',
+                    background:'#fff',color:'#64748B',cursor:'pointer',fontWeight:600,flexShrink:0}}>
+                  ✕ Limpiar
+                </button>
+              )}
+            </div>
+
+            {/* Tabla */}
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{background:'#F8FAFC',position:'sticky',top:0,zIndex:2}}>
+                    {cols.map(col=>(
+                      <th key={col} style={{padding:'8px 10px',textAlign:'left',fontWeight:700,
+                        color:'#334155',borderBottom:'1px solid #E2E8F0',whiteSpace:'nowrap',
+                        fontSize:11}}>
+                        {col}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pageRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={cols.length} style={{padding:32,textAlign:'center',color:'#94a3b8',fontSize:13}}>
+                        Sin resultados para los filtros aplicados
+                      </td>
+                    </tr>
+                  ) : pageRows.map((row,ri)=>(
+                    <tr key={ri} style={{borderBottom:'1px solid #f0f4ff',
+                      background:ri%2===0?'#fff':'#fafbff'}}>
+                      {cols.map(col=>{
+                        const val = String(row[col]??'')
+                        // Resaltar término buscado
+                        if (search && val.toLowerCase().includes(search.toLowerCase())) {
+                          const idx = val.toLowerCase().indexOf(search.toLowerCase())
+                          return (
+                            <td key={col} style={{padding:'7px 10px',color:'#0F172A',whiteSpace:'nowrap'}}>
+                              {val.slice(0,idx)}
+                              <mark style={{background:'#fef08a',borderRadius:2,padding:0}}>{val.slice(idx,idx+search.length)}</mark>
+                              {val.slice(idx+search.length)}
+                            </td>
+                          )
+                        }
+                        return (
+                          <td key={col} style={{padding:'7px 10px',color:'#0F172A',whiteSpace:'nowrap'}}>
+                            {val}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Paginación */}
+            {totalPages > 1 && (
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+                padding:'10px 16px',borderTop:'1px solid #f0f4ff',background:'#FAFBFF',flexWrap:'wrap',gap:8}}>
+                <span style={{fontSize:12,color:B.mid}}>
+                  Mostrando {(page-1)*PAGE_SIZE+1}–{Math.min(page*PAGE_SIZE,filtered.length)} de {filtered.length}
+                </span>
+                <div style={{display:'flex',gap:4}}>
+                  <button onClick={()=>setPage(1)} disabled={page===1}
+                    style={{padding:'3px 8px',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,
+                      background:page===1?'#f9f9f9':'#fff',cursor:page===1?'default':'pointer',color:'#475569'}}>
+                    «
+                  </button>
+                  <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}
+                    style={{padding:'3px 8px',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,
+                      background:page===1?'#f9f9f9':'#fff',cursor:page===1?'default':'pointer',color:'#475569'}}>
+                    ‹
+                  </button>
+                  {Array.from({length:Math.min(5,totalPages)},(_,i)=>{
+                    let p = page <= 3 ? i+1 : page >= totalPages-2 ? totalPages-4+i : page-2+i
+                    if (p<1||p>totalPages) return null
+                    return (
+                      <button key={p} onClick={()=>setPage(p)}
+                        style={{padding:'3px 9px',borderRadius:6,fontSize:12,fontWeight:page===p?700:400,
+                          border:`1px solid ${page===p?B.primary:'#E2E8F0'}`,
+                          background:page===p?B.primary:'#fff',
+                          color:page===p?'#fff':'#475569',cursor:'pointer'}}>
+                        {p}
+                      </button>
+                    )
+                  })}
+                  <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages}
+                    style={{padding:'3px 8px',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,
+                      background:page===totalPages?'#f9f9f9':'#fff',cursor:page===totalPages?'default':'pointer',color:'#475569'}}>
+                    ›
+                  </button>
+                  <button onClick={()=>setPage(totalPages)} disabled={page===totalPages}
+                    style={{padding:'3px 8px',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,
+                      background:page===totalPages?'#f9f9f9':'#fff',cursor:page===totalPages?'default':'pointer',color:'#475569'}}>
+                    »
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
