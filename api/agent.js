@@ -302,8 +302,9 @@ export async function generateAgentResponse({
 FORMATO WHATSAPP — CRÍTICO:
 - NUNCA uses asteriscos dobles (**texto**), nunca uses guiones de lista (- item), nunca uses # títulos.
 - WhatsApp solo acepta: *negrita* (un asterisco), _cursiva_, y texto plano.
-- Respuestas cortas: 3-5 líneas máximo por mensaje. Si debes explicar algo largo, divídelo en partes y termina con una pregunta.
-- UNA sola pregunta por mensaje. Sin listas. Sin bullets. Texto natural como hablaría un asesor humano por chat.
+- Máximo 4-5 líneas por mensaje. Si el tema es largo, da lo esencial y termina con una pregunta. No lo expliques todo de una vez.
+- UNA sola pregunta por mensaje. Sin listas numeradas. Sin bullets. Texto natural conversacional.
+- Si sientes que necesitas más de 5 líneas para responder, para, da un resumen de 3 líneas y di "¿quieres que te cuente más sobre algún punto específico?"
 
 SOBRE EL NEGOCIO:
 ${negocioConfig || 'Eres asesor de inversión inmobiliaria. Ayudas a invertir en departamentos, usar multicrédito y optimizar impuestos en Chile.'}
@@ -386,7 +387,7 @@ action válidos: "conversando" | "calificado" | "no_califica" | "escalar_humano"
         headers,
         body: JSON.stringify({
           model,
-          max_tokens: 900,
+          max_tokens: 1500,
           temperature: 0.15,
           system: systemPayload,
           messages
