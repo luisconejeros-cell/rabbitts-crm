@@ -380,6 +380,42 @@ function AgendaPublicaView({settings={}, brokerSlug=''}) {
 const EU = {name:'',rut:'',phone:'',email:'',username:'',pin:'',role:'agent'}
 const EL = {nombre:'',telefono:'',email:'',renta:'',tag:'lead'}
 
+// Componente para el campo de contacto en el modal del lead
+// (debe ser componente propio para poder usar useState — no puede ser IIFE)
+function ModalContactInput({ sel, leads, setLeads, setSel, me, dbReady, supabase, msg, B }) {
+  const [note, setNote] = React.useState('')
+  const save = async () => {
+    if (!note.trim()) return
+    const now = new Date().toISOString()
+    const c = {id:'c-'+Date.now(), text:'📞 '+note.trim(), author_name:me.name, date:now}
+    const nc = [...(sel.comments||[]), c]
+    const ls = leads.map(l=>l.id===sel.id?{...l,comments:nc,stage_moved_at:now}:l)
+    setLeads(ls); setSel(ls.find(l=>l.id===sel.id))
+    if (dbReady) await supabase.from('crm_leads').update({comments:nc,stage_moved_at:now}).eq('id',sel.id)
+    setNote('')
+    msg('✓ Contacto registrado')
+  }
+  return (
+    <div style={{display:'flex',gap:6,flex:1,alignItems:'center'}}>
+      <input
+        value={note}
+        onChange={e=>setNote(e.target.value)}
+        onKeyDown={e=>{if(e.key==='Enter')save()}}
+        placeholder="¿Qué pasó? Escribe y presiona Enter..."
+        style={{flex:1,padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',
+          fontSize:12,background:'#fff',outline:'none',minWidth:120}}
+      />
+      <button onClick={save} disabled={!note.trim()}
+        style={{fontSize:12,padding:'6px 12px',borderRadius:8,fontWeight:700,
+          border:'none',cursor:note.trim()?'pointer':'not-allowed',flexShrink:0,
+          background:note.trim()?B.primary:'#e5e7eb',
+          color:note.trim()?'#fff':'#9ca3af'}}>
+        Guardar
+      </button>
+    </div>
+  )
+}
+
 export default function App() {
   const [users,  setUsers]  = useState(null)
   const [leads,  setLeads]  = useState(null)
@@ -3695,49 +3731,12 @@ export default function App() {
                     WhatsApp
                   </a>
                 )}
-                {!isLocked && (() => {
-                  const [modalNote, setModalNote] = React.useState('')
-                  return (
-                    <div style={{display:'flex',gap:6,flex:1,alignItems:'center'}}>
-                      <input
-                        value={modalNote}
-                        onChange={e=>setModalNote(e.target.value)}
-                        onKeyDown={async e=>{
-                          if(e.key==='Enter'&&modalNote.trim()){
-                            const now=new Date().toISOString()
-                            const c={id:'c-'+Date.now(),text:'📞 '+modalNote.trim(),author_name:me.name,date:now}
-                            const nc=[...(sel.comments||[]),c]
-                            const ls=leads.map(l=>l.id===sel.id?{...l,comments:nc,stage_moved_at:now}:l)
-                            setLeads(ls);setSel(ls.find(l=>l.id===sel.id))
-                            if(dbReady)await supabase.from('crm_leads').update({comments:nc,stage_moved_at:now}).eq('id',sel.id)
-                            setModalNote('')
-                            msg('✓ Contacto registrado')
-                          }
-                        }}
-                        placeholder="¿Qué pasó? Escribe y presiona Enter..."
-                        style={{flex:1,padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',
-                          fontSize:12,background:'#fff',outline:'none',minWidth:120}}
-                      />
-                      <button onClick={async()=>{
-                        if(!modalNote.trim())return
-                        const now=new Date().toISOString()
-                        const c={id:'c-'+Date.now(),text:'📞 '+modalNote.trim(),author_name:me.name,date:now}
-                        const nc=[...(sel.comments||[]),c]
-                        const ls=leads.map(l=>l.id===sel.id?{...l,comments:nc,stage_moved_at:now}:l)
-                        setLeads(ls);setSel(ls.find(l=>l.id===sel.id))
-                        if(dbReady)await supabase.from('crm_leads').update({comments:nc,stage_moved_at:now}).eq('id',sel.id)
-                        setModalNote('')
-                        msg('✓ Contacto registrado')
-                      }} disabled={!modalNote.trim()}
-                        style={{fontSize:12,padding:'6px 12px',borderRadius:8,fontWeight:700,
-                          border:'none',cursor:modalNote.trim()?'pointer':'not-allowed',flexShrink:0,
-                          background:modalNote.trim()?B.primary:'#e5e7eb',
-                          color:modalNote.trim()?'#fff':'#9ca3af'}}>
-                        Guardar
-                      </button>
-                    </div>
-                  )
-                })()}
+                {!isLocked && (
+                  <ModalContactInput
+                    sel={sel} leads={leads} setLeads={setLeads} setSel={setSel}
+                    me={me} dbReady={dbReady} supabase={supabase} msg={msg} B={B}
+                  />
+                )}
               </div>
             )
           })()}
