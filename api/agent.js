@@ -1,12 +1,11 @@
-// api/agent.js — Rabito: agente de ventas Rabbitts Capital
-// FLUJO: cliente escribe → agente lee entrenamiento completo → analiza contexto → responde
+// api/agent.js — Rabito v2: agente de ventas con embudo de etapas
+// Arquitectura: motor de etapas + prompt orientado a objetivo + leadUpdate estructurado
 
 import { createClient } from '@supabase/supabase-js'
 
 const clean = (v = '') => String(v ?? '').trim()
 const normalize = (v = '') => clean(v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 
-// ── Supabase ──────────────────────────────────────────────────────────────────
 function makeSupa() {
   const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
   const key = clean(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
@@ -14,7 +13,6 @@ function makeSupa() {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 }
 
-// ── Flatten any value to readable text ───────────────────────────────────────
 function flatten(v, d = 0) {
   if (v == null || d > 4) return ''
   if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return clean(String(v))
@@ -28,54 +26,136 @@ function flatten(v, d = 0) {
   return ''
 }
 
-// ── Read all training from DB ─────────────────────────────────────────────────
-// Returns a single string with ALL training content the admin configured
+// ── EMBUDO DE ETAPAS ─────────────────────────────────────────────────────────
+const STAGES = {
+  bienvenida: {
+    label: 'Bienvenida',
+    objetivo: 'Hacer sentir bienvenido al cliente, entender brevemente qué lo trajo, y pasar a calificación.',
+    accion: 'Preguntar qué lo trae hoy. UNA pregunta breve y cálida. No expliques todo el negocio todavía.',
+    avanzar_si: 'El cliente explicó qué busca o mostró interés en invertir/comprar.',
+    siguiente: 'calificacion'
+  },
+  calificacion: {
+    label: 'Calificación',
+    objetivo: 'Verificar si el cliente tiene capacidad económica para invertir. Sin renta suficiente, no avanzar a la siguiente etapa.',
+    accion: 'Preguntar por renta o presupuesto de forma natural y sin presionar. Ej: "¿Tienes renta declarada actualmente?" o "¿Tienes idea del rango de inversión que manejas?"',
+    avanzar_si: 'El cliente mencionó su renta, sueldo, presupuesto o capacidad de crédito.',
+    siguiente: 'perfil'
+  },
+  perfil: {
+    label: 'Perfil',
+    objetivo: 'Entender qué tipo de propiedad busca, para qué (vivir/invertir/arrendar) y cuándo.',
+    accion: 'Preguntar UNA sola cosa: para qué es la propiedad (inversión o para vivir), o en qué zona está pensando.',
+    avanzar_si: 'El cliente aclaró si es para vivir o invertir, y/o zona/tipo de propiedad.',
+    siguiente: 'interes'
+  },
+  interes: {
+    label: 'Interés',
+    objetivo: 'Generar deseo mostrando cómo Rabbitts puede ayudarlo específicamente. Mencionar ventajas concretas: multicrédito, IVA, tributación.',
+    accion: 'Conectar lo que dijo el cliente con la propuesta de valor de Rabbitts. Luego invitar a agendar una reunión.',
+    avanzar_si: 'El cliente mostró interés explícito, hizo preguntas de detalle, o aceptó conocer más.',
+    siguiente: 'agenda'
+  },
+  agenda: {
+    label: 'Agenda',
+    objetivo: 'Concretar una reunión con un asesor. El cliente ya está calificado y tiene interés.',
+    accion: `Dar el link de agenda o preguntar disponibilidad directamente: "¿Cuándo tienes 30 minutos esta semana?"`,
+    avanzar_si: 'El cliente agendó, confirmó disponibilidad, o pidió que lo contacten.',
+    siguiente: 'calificado'
+  },
+  calificado: {
+    label: 'Calificado — Handoff',
+    objetivo: 'El cliente está listo para ser atendido por un asesor real. Confirmar y cerrar.',
+    accion: 'Confirmar que un asesor se pondrá en contacto pronto. Dar expectativa de tiempo. No seguir vendiendo.',
+    avanzar_si: 'N/A — etapa final.',
+    siguiente: null
+  },
+  no_califica: {
+    label: 'No califica',
+    objetivo: 'Cerrar amablemente sin generar falsas expectativas. Dejar la puerta abierta para el futuro.',
+    accion: 'Explicar que por ahora no cumple el perfil pero puede volver cuando su situación cambie.',
+    avanzar_si: 'N/A — etapa final.',
+    siguiente: null
+  }
+}
+
+// ── Inferir etapa desde historial ─────────────────────────────────────────────
+function inferStage(history = [], leadData = {}) {
+  if (leadData.status === 'calificado') return 'calificado'
+
+  const userMsgs = history.filter(m => m.role === 'user').map(m => normalize(m.content || '')).join(' ')
+  const allMsgs  = history.map(m => normalize(m.content || '')).join(' ')
+  const count    = history.length
+
+  if (count === 0) return 'bienvenida'
+
+  const has = patterns => patterns.some(p => p.test(userMsgs))
+
+  const tieneRenta   = has([/\d[\d.,]*\s*(millones?|mill|uf |unidades|mil peso|sueldo|renta|ingreso|gano|presupuesto|credito)/,/renta de|gano|sueldo de|ingreso de|tengo capacidad|puedo pagar/])
+  const tieneInteres = has([/me interesa|quiero|quisiera|busco|necesito|para (vivir|invertir|arrendar)|departamento|casa|proyecto|inversion|zona|providencia|ñuñoa|vitacura|las condes|santiago|nunoa/])
+  const tieneAgenda  = has([/agendar|agenda|reunion|reunión|disponible|esta semana|lunes|martes|miercoles|jueves|viernes|cuando|cuándo|llamen|llamar|contacten|contactar/])
+  const confirmado   = has([/agend[eé]|confirm|de acuerdo|perfecto|listo|gracias por|espero|quedamos/]) && tieneAgenda
+
+  if (confirmado)              return 'calificado'
+  if (tieneAgenda)             return 'agenda'
+  if (tieneRenta && tieneInteres) return 'interes'
+  if (tieneRenta)              return 'perfil'
+  if (tieneInteres && count > 3) return 'calificacion'
+  if (count > 2)               return 'calificacion'
+  return 'bienvenida'
+}
+
+// ── Extraer datos del lead desde historial ────────────────────────────────────
+function extractLeadData(history = []) {
+  const userText = history.filter(m => m.role === 'user').map(m => m.content).join(' ')
+  const update = {}
+
+  const rentaMatch = userText.match(/(\$?[\d.,]+\s*(?:millones?|mill\.?|uf|unidades|pesos?|clp)?)/i)
+  if (rentaMatch) update.renta = rentaMatch[0].trim()
+
+  const nombreMatch = userText.match(/(?:me llamo|soy|mi nombre es)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)/i)
+  if (nombreMatch) update.nombre = nombreMatch[1].trim()
+
+  return update
+}
+
+// ── Cargar entrenamiento ──────────────────────────────────────────────────────
 async function loadTraining(db, iaConfig) {
   const lines = []
 
-  // 1. Training pairs saved in Panel IA (entrenamiento tab)
   const entrenamiento = iaConfig?.entrenamiento
   if (Array.isArray(entrenamiento) && entrenamiento.length) {
-    lines.push('=== PARES PREGUNTA-RESPUESTA (sigue estos exactamente) ===')
+    lines.push('=== RESPUESTAS EXACTAS (usa estas cuando el cliente diga algo similar) ===')
     for (const item of entrenamiento) {
-      const ctx  = clean(item.context  || item.pregunta  || item.original || '')
+      const ctx  = clean(item.context || item.pregunta || item.original || '')
       const resp = clean(item.improved || item.respuesta || item.correction || '')
-      const rule = clean(item.reason   || item.regla     || '')
-      if (resp) lines.push(`CLIENTE DICE: ${ctx || '(cualquier mensaje)'}\nRABITO RESPONDE: ${resp}${rule ? '\nPOR QUÉ: ' + rule : ''}`)
+      if (resp) lines.push(`CUANDO: "${ctx || 'cualquier'}"\nDI: "${resp}"`)
     }
   }
 
-  // 2. agent_training table in crm_settings
   if (db) {
     try {
       const { data } = await db.from('crm_settings').select('value').eq('key', 'agent_training').single()
       const items = Array.isArray(data?.value) ? data.value : Array.isArray(data?.value?.items) ? data.value.items : []
       if (items.length) {
-        lines.push('=== REGLAS Y CORRECCIONES ADICIONALES ===')
+        lines.push('=== REGLAS ADICIONALES ===')
         for (const item of items) {
-          const ctx  = clean(item.context  || item.pregunta  || item.original || '')
+          const ctx  = clean(item.context || item.pregunta || item.original || '')
           const resp = clean(item.improved || item.respuesta || item.correction || '')
-          const rule = clean(item.reason   || item.regla     || '')
-          if (resp) lines.push(`SI: ${ctx || '(general)'}\nDI: ${resp}${rule ? '\nREGLA: ' + rule : ''}`)
+          if (resp) lines.push(`SI: ${ctx || '(general)'}\nDI: ${resp}`)
         }
       }
     } catch {}
-  }
 
-  // 3. Feedback from real conversations (crm_conv_feedback)
-  if (db) {
     try {
       const { data } = await db.from('crm_conv_feedback')
-        .select('msg_content,correction,improved,feedback')
-        .order('created_at', { ascending: false })
-        .limit(50)
-      const feedback = (data || []).filter(x => clean(x.correction || x.improved))
-      if (feedback.length) {
-        lines.push('=== CORRECCIONES DE CONVERSACIONES REALES ===')
-        for (const fb of feedback) {
-          const original = clean(fb.msg_content || '')
-          const corrected = clean(fb.correction || fb.improved || '')
-          if (corrected) lines.push(`CUANDO DIGAN: "${original}"\nDI: "${corrected}"`)
+        .select('msg_content,correction,improved').order('created_at', { ascending: false }).limit(40)
+      const fb = (data || []).filter(x => clean(x.correction || x.improved))
+      if (fb.length) {
+        lines.push('=== CORRECCIONES APRENDIDAS DE CONVERSACIONES REALES ===')
+        for (const f of fb) {
+          const corr = clean(f.correction || f.improved || '')
+          if (corr) lines.push(`CORRECCIÓN: "${corr}"`)
         }
       }
     } catch {}
@@ -84,27 +164,24 @@ async function loadTraining(db, iaConfig) {
   return lines.join('\n\n')
 }
 
-// ── Load knowledge docs (Cerebro Rabito) ─────────────────────────────────────
+// ── Cargar Cerebro Rabito ─────────────────────────────────────────────────────
 async function loadCerebro(db, iaConfig) {
   const docs = []
 
-  // From iaConfig.cerebroDocs
   for (const d of (iaConfig?.cerebroDocs || [])) {
     const txt = clean(d.content || d.extract || d.text || '')
     if (txt) docs.push({ name: d.name || d.title || 'Documento', content: txt })
   }
 
-  // From rabito_knowledge in crm_settings
   if (db) {
     try {
       const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge').single()
       for (const d of (data?.value?.docs || [])) {
         const txt = clean(d.content || d.extract || d.text || '')
-        if (txt) docs.push({ name: d.name || d.title || 'Conocimiento', content: txt })
+        if (txt) docs.push({ name: d.name || 'Conocimiento', content: txt })
       }
     } catch {}
 
-    // From rabito_knowledge_chunks
     try {
       const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge_chunks').single()
       const chunks = Array.isArray(data?.value?.chunks) ? data.value.chunks : Array.isArray(data?.value) ? data.value : []
@@ -114,7 +191,6 @@ async function loadCerebro(db, iaConfig) {
       }
     } catch {}
 
-    // From crm_knowledge_chunks table
     try {
       const { data } = await db.from('crm_knowledge_chunks').select('title,content,activo').limit(50)
       for (const row of (data || [])) {
@@ -124,25 +200,30 @@ async function loadCerebro(db, iaConfig) {
   }
 
   if (!docs.length) return ''
-  return docs.map((d, i) => `### Documento ${i + 1}: ${d.name}\n${d.content.slice(0, 3000)}`).join('\n\n')
+  return docs.map(d => `### ${d.name}\n${d.content.slice(0, 3000)}`).join('\n\n')
 }
 
-// ── Parse Claude's JSON response ──────────────────────────────────────────────
+// ── Parsear respuesta ─────────────────────────────────────────────────────────
 function parseReply(raw = '') {
   const txt = clean(raw).replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
   try {
     const j = JSON.parse(txt)
-    return { reply: clean(j.reply || j.message || j.text || ''), action: j.action || 'conversando', statusUpdate: j.statusUpdate || '' }
+    return {
+      reply:        clean(j.reply || j.message || j.text || ''),
+      action:       j.action || 'conversando',
+      statusUpdate: j.statusUpdate || '',
+      leadUpdate:   j.leadUpdate || {},
+      nextStage:    j.nextStage || ''
+    }
   } catch {
     const m = txt.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-    if (m) return { reply: clean(m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')), action: 'conversando', statusUpdate: '' }
-    // If Claude didn't follow JSON format, use raw text directly
-    if (txt && !txt.startsWith('{')) return { reply: txt.slice(0, 700), action: 'conversando', statusUpdate: '' }
-    return { reply: '', action: 'conversando', statusUpdate: '' }
+    if (m) return { reply: clean(m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')), action: 'conversando', statusUpdate: '', leadUpdate: {}, nextStage: '' }
+    if (txt && !txt.startsWith('{')) return { reply: txt.slice(0, 700), action: 'conversando', statusUpdate: '', leadUpdate: {}, nextStage: '' }
+    return { reply: '', action: 'conversando', statusUpdate: '', leadUpdate: {}, nextStage: '' }
   }
 }
 
-// ── Main: generate Rabito's response ─────────────────────────────────────────
+// ── MAIN ──────────────────────────────────────────────────────────────────────
 export async function generateAgentResponse({
   message,
   conversationHistory = [],
@@ -154,158 +235,164 @@ export async function generateAgentResponse({
   const input = clean(message)
   if (!input) return { reply: '', action: 'sin_mensaje', leadUpdate: {}, statusUpdate: '' }
 
-  // Use db from context (passed by whatsapp.js) or create new one
   const db = ctx?.db || makeSupa()
 
-  // Load iaConfig from DB and merge with what was passed
   let iaConfig = { ...passedConfig }
   if (db) {
     try {
       const { data } = await db.from('crm_settings').select('value').eq('key', 'ia_config').single()
-      if (data?.value && typeof data.value === 'object') {
-        // DB config is base, passed config overrides
-        iaConfig = { ...data.value, ...passedConfig }
-      }
+      if (data?.value && typeof data.value === 'object') iaConfig = { ...data.value, ...passedConfig }
     } catch {}
   }
 
-  // Check if IA is active
   if (iaConfig.activo === false) return { reply: '', action: 'ia_off', leadUpdate: {}, statusUpdate: '' }
 
   const ANTHROPIC_KEY = clean(
-    process.env.ANTHROPIC_KEY ||
-    process.env.VITE_ANTHROPIC_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
-    process.env.CLAUDE_API_KEY ||
-    ''
+    process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY ||
+    process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || ''
   )
-  const agentName = clean(iaConfig.nombreAgente || iaConfig.agentName || iaConfig.nombre || 'Rabito')
-  const agenda = clean(iaConfig.agendaLink || iaConfig.linkAgenda || iaConfig.calendlyLink || '')
 
-  // ── Load training (ALL sources) ──────────────────────────────────────────
-  const trainingText = await loadTraining(db, iaConfig)
-  const cerebroText  = await loadCerebro(db, iaConfig)
+  if (!ANTHROPIC_KEY) {
+    console.error('[AGENT] ❌ No Anthropic API key. Add ANTHROPIC_KEY to Vercel environment variables.')
+    const fallback = clean(iaConfig.mensajeFallback || 'Hola, soy Rabito de Rabbitts Capital. En breve un asesor te contacta.')
+    return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '' }
+  }
 
-  // ── Build panel from iaConfig fields ────────────────────────────────────
+  const agentName = clean(iaConfig.nombre || iaConfig.nombreAgente || 'Rabito')
+  const agenda    = clean(iaConfig.agendaLink || iaConfig.calendlyLink || '')
+
+  const [trainingText, cerebroText] = await Promise.all([
+    loadTraining(db, iaConfig),
+    loadCerebro(db, iaConfig)
+  ])
+
+  const histMsgs      = (Array.isArray(conversationHistory) ? conversationHistory : []).slice(-20)
+  const stage         = inferStage(histMsgs, leadData)
+  const stageInfo     = STAGES[stage] || STAGES.bienvenida
+  const nextStageInfo = stageInfo.siguiente ? STAGES[stageInfo.siguiente] : null
+  const extractedData = extractLeadData(histMsgs)
+
   const panelFields = [
-    ['PERSONALIDAD', iaConfig.personalidad || iaConfig.identidad],
-    ['GUION DE VENTAS', iaConfig.guion || iaConfig.flujo || iaConfig.procesoVenta],
-    ['OFERTA / PRODUCTOS', iaConfig.oferta || iaConfig.productos || iaConfig.propuestaValor],
-    ['RENTA MÍNIMA', iaConfig.rentaMinima ? `$${iaConfig.rentaMinima}` : ''],
-    ['RENTA MÍNIMA EN PAREJA', iaConfig.rentaMinimaPareja ? `$${iaConfig.rentaMinimaPareja}` : ''],
-    ['REGLAS DURAS', iaConfig.reglasDuras],
-    ['INSTRUCCIONES EXTRA', iaConfig.instrucciones],
-    ['FRASES PROHIBIDAS', iaConfig.frasesProhibidas || iaConfig.noDecir],
+    ['EMPRESA',              iaConfig.empresa || 'Rabbitts Capital'],
+    ['PERSONALIDAD',         iaConfig.personalidad || iaConfig.identidad],
+    ['OFERTA / PROPUESTA',   iaConfig.oferta || iaConfig.productos || iaConfig.propuestaValor],
+    ['GUION DE VENTAS',      iaConfig.guion || iaConfig.flujo || iaConfig.procesoVenta],
+    ['RENTA MÍNIMA',         iaConfig.rentaMinima ? `$${iaConfig.rentaMinima}` : ''],
+    ['RENTA MÍNIMA PAREJA',  iaConfig.rentaMinimaPareja ? `$${iaConfig.rentaMinimaPareja}` : ''],
+    ['CRITERIO CALIFICACIÓN',iaConfig.criterioCalificacion],
+    ['REGLAS DURAS',         iaConfig.reglasDuras],
+    ['FRASES PROHIBIDAS',    iaConfig.frasesProhibidas || iaConfig.noDecir],
+    ['INSTRUCCIONES EXTRA',  iaConfig.instrucciones],
   ]
-  const panelText = panelFields
-    .map(([k, v]) => { const t = flatten(v); return t ? `${k}:\n${t}` : '' })
-    .filter(Boolean).join('\n\n')
+  const panelText = panelFields.map(([k, v]) => { const t = flatten(v); return t ? `${k}: ${t}` : '' }).filter(Boolean).join('\n')
 
-  // ── Conversation history ─────────────────────────────────────────────────
-  const histMsgs = (Array.isArray(conversationHistory) ? conversationHistory : []).slice(-12)
-
-  // ── System prompt ────────────────────────────────────────────────────────
-  const system = `Eres ${agentName}, asesor de ventas de Rabbitts Capital. Hablas por WhatsApp.
+  const system = `Eres ${agentName}, asesor de ventas de Rabbitts Capital. Atiendes por WhatsApp.
 
 IDENTIDAD:
-- Tu nombre es ${agentName}. NUNCA digas que eres IA, bot o asistente.
-- Eres humano, cercano, directo. Mensajes cortos (2-4 líneas max).
-- NUNCA digas que estás ocupado, que hay alta demanda, ni que responderás después.
+- Tu nombre es ${agentName}. NUNCA digas que eres IA, bot, chatbot o asistente virtual.
+- Tono: cercano, directo, profesional. Como un asesor humano experto.
+- Mensajes cortos: 2-4 líneas máximo por respuesta.
+- UNA sola pregunta por mensaje, nunca dos preguntas al mismo tiempo.
+- Sin markdown: no uses asteriscos, guiones de lista, negritas ni emojis en exceso.
 
-${panelText ? `CONFIGURACIÓN DEL NEGOCIO:\n${panelText}` : 'Eres asesor de inversión inmobiliaria de Rabbitts Capital.'}
+${panelText ? `NEGOCIO Y CONFIGURACIÓN:\n${panelText}` : 'Eres asesor de inversión inmobiliaria de Rabbitts Capital. Ayudas a personas a invertir en departamentos, usar el multicrédito y optimizar sus impuestos.'}
 
-${trainingText ? `ENTRENAMIENTO — SIGUE ESTO SIEMPRE:\n${trainingText}` : ''}
+${cerebroText ? `\nCONOCIMIENTO DE PROYECTOS Y NEGOCIO:\n${cerebroText}` : ''}
 
-${cerebroText ? `DOCUMENTOS Y CONOCIMIENTO:\n${cerebroText}` : ''}
+${trainingText ? `\nENTRENAMIENTO (respuestas exactas a usar cuando coincidan):\n${trainingText}` : ''}
 
-DATOS DEL CONTACTO:
+${agenda ? `\nLINK PARA AGENDAR REUNIÓN: ${agenda}` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+POSICIÓN EN EL EMBUDO: ${stageInfo.label.toUpperCase()}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OBJETIVO DE ESTA ETAPA:
+${stageInfo.objetivo}
+
+LO QUE DEBES HACER EN ESTE MENSAJE:
+${stageInfo.accion}
+
+CUÁNDO AVANZAR A "${nextStageInfo?.label || 'etapa final'}":
+${stageInfo.avanzar_si}
+
+FLUJO COMPLETO: Bienvenida → Calificación → Perfil → Interés → Agenda → Calificado
+
+REGLAS DEL EMBUDO:
+- Sigue el flujo. No saltes ni retrocedas etapas innecesariamente.
+- Si la renta del cliente NO califica: cierra con amabilidad y usa action:"no_califica".
+- Si ya agendó o confirmó reunión: usa action:"calificado".
+- Si pide hablar con humano: usa action:"escalar_humano".
+- Si menciona su renta u otro dato, captúralo en leadUpdate.
+- No inventes proyectos, precios ni condiciones que no estén en los documentos.
+
+DATOS CONOCIDOS DEL CLIENTE:
 ${flatten(leadData) || 'Cliente nuevo sin datos previos.'}
+${Object.keys(extractedData).length ? `Del chat actual: ${JSON.stringify(extractedData)}` : ''}
 
-${agenda ? `LINK PARA AGENDAR: ${agenda}\nCuando el cliente muestra interés real, invítalo a agendar.` : ''}
+RESPONDE SOLO CON ESTE JSON (sin ningún texto antes ni después, sin markdown):
+{"reply":"tu mensaje (texto natural, sin markdown, 2-4 líneas)","action":"conversando","statusUpdate":"","leadUpdate":{},"nextStage":""}
 
-REGLAS DE RESPUESTA:
-1. Lee TODO el entrenamiento antes de responder.
-2. Si hay un par pregunta-respuesta que coincida con lo que pregunta el cliente, úsalo EXACTAMENTE.
-3. Si no hay match exacto, responde según la personalidad y guion configurados.
-4. Una sola pregunta por mensaje. Avanza el guion.
-5. No inventes precios ni condiciones que no estén en los documentos.
-6. Si no sabes algo, di "te averiguo" y haz una pregunta útil.
+Valores de action: "conversando" | "calificado" | "no_califica" | "escalar_humano"
+En leadUpdate incluye datos capturados: {"renta":"X","nombre":"Y"}`
 
-Responde con JSON:
-{"reply":"tu mensaje WhatsApp para el cliente (texto natural, sin markdown)","action":"conversando","statusUpdate":""}
-Si el cliente califica pon action:"calificado". Si quieres fijarlo como frío pon statusUpdate:"frio".`
-
-  // ── Build messages array ─────────────────────────────────────────────────
   const messages = []
   for (const h of histMsgs) {
-    const role = h.role === 'assistant' ? 'assistant' : 'user'
+    const role    = h.role === 'assistant' ? 'assistant' : 'user'
     const content = clean(h.content || '')
     if (content) messages.push({ role, content })
   }
   messages.push({ role: 'user', content: input })
 
-  // ── No API key: fallback ─────────────────────────────────────────────────
-  if (!ANTHROPIC_KEY) {
-    console.error('[AGENT] CRITICAL: No Anthropic API key found. Check env vars: ANTHROPIC_KEY, VITE_ANTHROPIC_KEY, ANTHROPIC_API_KEY')
-    console.error('[AGENT] Available env keys:', Object.keys(process.env).filter(k => k.includes('ANTHROP') || k.includes('CLAUDE')).join(', ') || 'none found')
-    const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
-    return { reply: fallback, action: 'fallback_sin_key', leadUpdate: {}, statusUpdate: '' }
-  }
-
-  // ── Call Claude ──────────────────────────────────────────────────────────
   const models = [
     clean(process.env.ANTHROPIC_MODEL || ''),
     'claude-haiku-4-5-20251001',
     'claude-haiku-4-5',
     'claude-3-5-haiku-20241022',
-    'claude-3-5-sonnet-20241022',
     'claude-3-haiku-20240307',
   ].filter(Boolean)
 
-  console.log('[AGENT] start', {
-    agentName,
-    input: input.slice(0, 60),
-    hasTraining: trainingText.length > 0,
-    trainingChars: trainingText.length,
-    hasCerebro: cerebroText.length > 0,
-    hasPanel: panelText.length > 0,
-    historyMsgs: histMsgs.length
-  })
+  console.log('[AGENT v2]', { stage, agentName, input: input.slice(0, 60), msgs: histMsgs.length })
 
   for (const model of [...new Set(models)]) {
     try {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model, max_tokens: 600, temperature: 0.2, system, messages })
+        body: JSON.stringify({ model, max_tokens: 500, temperature: 0.15, system, messages })
       })
       const data = await r.json().catch(() => ({}))
-
       if (!r.ok || data.error) throw new Error(data?.error?.message || `HTTP ${r.status}`)
 
-      const raw = (data.content || []).map(b => b.text || '').join('').trim()
+      const raw    = (data.content || []).map(b => b.text || '').join('').trim()
       const parsed = parseReply(raw)
+      let reply    = parsed.reply
 
-      // Block forbidden phrases
-      let reply = parsed.reply
-      const blocked = ['alta demanda', 'soy una ia', 'soy un bot', 'modelo de lenguaje', 'no estoy disponible', 'responderé después']
+      const blocked = ['soy una ia', 'soy un bot', 'modelo de lenguaje', 'no estoy disponible', 'alta demanda', 'responderé después']
       for (const b of blocked) {
-        if (normalize(reply).includes(normalize(b))) reply = `${agentName} por acá. ${clean(iaConfig.mensajeFallback || 'Cuéntame qué necesitas.')}`
+        if (normalize(reply).includes(normalize(b))) reply = `${agentName} por acá. Cuéntame más sobre lo que buscas.`
       }
 
       if (!reply) throw new Error('empty_reply')
 
-      console.log('[AGENT] ok', { model, replyChars: reply.length })
-      return { reply, action: parsed.action || 'conversando', statusUpdate: parsed.statusUpdate || '', leadUpdate: {} }
+      const mergedLeadUpdate = { ...extractedData, ...(parsed.leadUpdate || {}) }
 
+      console.log('[AGENT v2] ok', { model, stage, action: parsed.action, chars: reply.length })
+      return {
+        reply,
+        action:       parsed.action || 'conversando',
+        statusUpdate: parsed.statusUpdate || (parsed.action === 'calificado' ? 'calificado' : ''),
+        leadUpdate:   mergedLeadUpdate,
+        nextStage:    parsed.nextStage || '',
+        stage,
+        trace:        { stage, model, derivationAllowedByHardRules: true }
+      }
     } catch (e) {
-      console.error('[AGENT] error', model, e.message)
+      console.error('[AGENT v2] error', model, e.message)
     }
   }
 
-  // All models failed
   const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
-  return { reply: fallback, action: 'fallback_error', leadUpdate: {}, statusUpdate: '' }
+  return { reply: fallback, action: 'fallback_error', leadUpdate: {}, statusUpdate: '', stage }
 }
 
 // ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -318,7 +405,6 @@ export default async function handler(req, res) {
 
   const { message, conversationHistory = [], iaConfig = {}, leadData = {}, debug = false, action, file, mediaType } = req.body || {}
 
-  // PDF/Word extraction for Cerebro Rabito
   if (action === 'extract' && file) {
     try {
       const apiKey = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || '')
@@ -342,16 +428,16 @@ export default async function handler(req, res) {
     }
   }
 
-  // Diagnostic endpoint
   if (action === 'diagnostico') {
-    const key = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || '')
+    const key   = clean(process.env.ANTHROPIC_KEY || process.env.VITE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || '')
     const sbUrl = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '')
     const sbKey = clean(process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '')
     return res.status(200).json({
-      anthropic_key: key ? `✅ Configurada (${key.slice(0,8)}...)` : '❌ NO ENCONTRADA',
-      supabase_url: sbUrl ? `✅ ${sbUrl.slice(0,30)}...` : '❌ NO ENCONTRADA',
-      supabase_key: sbKey ? '✅ Configurada' : '❌ NO ENCONTRADA',
-      env_with_anthrop: Object.keys(process.env).filter(k => k.toLowerCase().includes('anthrop')),
+      anthropic_key: key   ? `✅ Configurada (${key.slice(0, 8)}...)` : '❌ NO ENCONTRADA — agrega ANTHROPIC_KEY en Vercel > Settings > Environment Variables',
+      supabase_url:  sbUrl ? `✅ ${sbUrl.slice(0, 30)}...` : '❌ NO ENCONTRADA',
+      supabase_key:  sbKey ? '✅ Configurada' : '❌ NO ENCONTRADA',
+      version: 'agent-v2-staged',
+      stages: Object.keys(STAGES)
     })
   }
 
@@ -359,7 +445,7 @@ export default async function handler(req, res) {
     const result = await generateAgentResponse({ message, conversationHistory, iaConfig, leadData, debug })
     return res.status(200).json(result)
   } catch (e) {
-    console.error('[AGENT] fatal', e.message)
+    console.error('[AGENT v2] fatal', e.message)
     return res.status(200).json({ reply: '', error: e.message, action: 'error', leadUpdate: {}, statusUpdate: '' })
   }
 }
