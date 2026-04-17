@@ -119,88 +119,74 @@ function extractLeadData(history = []) {
   return update
 }
 
-// ── Cargar entrenamiento ──────────────────────────────────────────────────────
+// ── Cargar entrenamiento (max ~800 chars para no explotar el rate limit) ──────
 async function loadTraining(db, iaConfig) {
-  const lines = []
+  const pairs = []
 
+  // Del Panel IA
   const entrenamiento = iaConfig?.entrenamiento
-  if (Array.isArray(entrenamiento) && entrenamiento.length) {
-    lines.push('=== RESPUESTAS EXACTAS (usa estas cuando el cliente diga algo similar) ===')
-    for (const item of entrenamiento) {
-      const ctx  = clean(item.context || item.pregunta || item.original || '')
-      const resp = clean(item.improved || item.respuesta || item.correction || '')
-      if (resp) lines.push(`CUANDO: "${ctx || 'cualquier'}"\nDI: "${resp}"`)
+  if (Array.isArray(entrenamiento)) {
+    for (const item of entrenamiento.slice(0, 8)) {
+      const ctx  = clean(item.context || item.pregunta || item.original || '').slice(0, 80)
+      const resp = clean(item.improved || item.respuesta || item.correction || '').slice(0, 120)
+      if (resp) pairs.push(`"${ctx}": "${resp}"`)
     }
   }
 
-  if (db) {
+  // De DB (solo si hay pocos del panel)
+  if (db && pairs.length < 5) {
     try {
       const { data } = await db.from('crm_settings').select('value').eq('key', 'agent_training').single()
       const items = Array.isArray(data?.value) ? data.value : Array.isArray(data?.value?.items) ? data.value.items : []
-      if (items.length) {
-        lines.push('=== REGLAS ADICIONALES ===')
-        for (const item of items) {
-          const ctx  = clean(item.context || item.pregunta || item.original || '')
-          const resp = clean(item.improved || item.respuesta || item.correction || '')
-          if (resp) lines.push(`SI: ${ctx || '(general)'}\nDI: ${resp}`)
-        }
-      }
-    } catch {}
-
-    try {
-      const { data } = await db.from('crm_conv_feedback')
-        .select('msg_content,correction,improved').order('created_at', { ascending: false }).limit(40)
-      const fb = (data || []).filter(x => clean(x.correction || x.improved))
-      if (fb.length) {
-        lines.push('=== CORRECCIONES APRENDIDAS DE CONVERSACIONES REALES ===')
-        for (const f of fb) {
-          const corr = clean(f.correction || f.improved || '')
-          if (corr) lines.push(`CORRECCIÓN: "${corr}"`)
-        }
+      for (const item of items.slice(0, 4)) {
+        const ctx  = clean(item.context || item.pregunta || item.original || '').slice(0, 80)
+        const resp = clean(item.improved || item.respuesta || item.correction || '').slice(0, 120)
+        if (resp) pairs.push(`"${ctx}": "${resp}"`)
       }
     } catch {}
   }
 
-  return lines.join('\n\n')
+  if (!pairs.length) return ''
+  return `RESPUESTAS EXACTAS:\n${pairs.join('\n')}`
 }
 
-// ── Cargar Cerebro Rabito ─────────────────────────────────────────────────────
+// ── Cargar Cerebro Rabito (max ~1500 chars para no explotar el rate limit) ────
 async function loadCerebro(db, iaConfig) {
   const docs = []
+  const MAX_TOTAL = 1500
+  const MAX_PER_DOC = 500
 
-  for (const d of (iaConfig?.cerebroDocs || [])) {
-    const txt = clean(d.content || d.extract || d.text || '')
-    if (txt) docs.push({ name: d.name || d.title || 'Documento', content: txt })
+  // Del iaConfig (cerebroDocs)
+  for (const d of (iaConfig?.cerebroDocs || []).slice(0, 3)) {
+    const txt = clean(d.content || d.extract || d.text || '').slice(0, MAX_PER_DOC)
+    if (txt) docs.push(txt)
   }
 
-  if (db) {
+  // De DB solo si no hay docs en config
+  if (db && docs.length === 0) {
     try {
-      const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge').single()
-      for (const d of (data?.value?.docs || [])) {
-        const txt = clean(d.content || d.extract || d.text || '')
-        if (txt) docs.push({ name: d.name || 'Conocimiento', content: txt })
-      }
-    } catch {}
-
-    try {
-      const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge_chunks').single()
-      const chunks = Array.isArray(data?.value?.chunks) ? data.value.chunks : Array.isArray(data?.value) ? data.value : []
-      for (const ch of chunks) {
-        const txt = clean(ch.content || ch.contenido || '')
-        if (txt) docs.push({ name: ch.title || ch.titulo || 'Conocimiento', content: txt })
-      }
-    } catch {}
-
-    try {
-      const { data } = await db.from('crm_knowledge_chunks').select('title,content,activo').limit(50)
+      const { data } = await db.from('crm_knowledge_chunks').select('title,content,activo').limit(4)
       for (const row of (data || [])) {
-        if (row.activo !== false && row.content) docs.push({ name: row.title || 'Conocimiento', content: row.content })
+        if (row.activo !== false && row.content) {
+          docs.push(clean(row.content).slice(0, MAX_PER_DOC))
+        }
       }
     } catch {}
+
+    if (docs.length === 0) {
+      try {
+        const { data } = await db.from('crm_settings').select('value').eq('key', 'rabito_knowledge').single()
+        for (const d of (data?.value?.docs || []).slice(0, 3)) {
+          const txt = clean(d.content || d.extract || d.text || '').slice(0, MAX_PER_DOC)
+          if (txt) docs.push(txt)
+        }
+      } catch {}
+    }
   }
 
   if (!docs.length) return ''
-  return docs.map(d => `### ${d.name}\n${d.content.slice(0, 3000)}`).join('\n\n')
+  const combined = docs.join('\n---\n').slice(0, MAX_TOTAL)
+  return `CONOCIMIENTO RABBITTS:\n${combined}`
 }
 
 // ── Parsear respuesta ─────────────────────────────────────────────────────────
@@ -266,111 +252,67 @@ export async function generateAgentResponse({
     loadCerebro(db, iaConfig)
   ])
 
-  const histMsgs      = (Array.isArray(conversationHistory) ? conversationHistory : []).slice(-20)
+  const histMsgs      = (Array.isArray(conversationHistory) ? conversationHistory : []).slice(-8)
   const stage         = inferStage(histMsgs, leadData)
   const stageInfo     = STAGES[stage] || STAGES.bienvenida
   const nextStageInfo = stageInfo.siguiente ? STAGES[stageInfo.siguiente] : null
   const extractedData = extractLeadData(histMsgs)
 
-  const panelFields = [
-    ['EMPRESA',              iaConfig.empresa || 'Rabbitts Capital'],
-    ['PERSONALIDAD',         iaConfig.personalidad || iaConfig.identidad],
-    ['OFERTA / PROPUESTA',   iaConfig.oferta || iaConfig.productos || iaConfig.propuestaValor],
-    ['GUION DE VENTAS',      iaConfig.guion || iaConfig.flujo || iaConfig.procesoVenta],
-    ['RENTA MÍNIMA',         iaConfig.rentaMinima ? `$${iaConfig.rentaMinima}` : ''],
-    ['RENTA MÍNIMA PAREJA',  iaConfig.rentaMinimaPareja ? `$${iaConfig.rentaMinimaPareja}` : ''],
-    ['CRITERIO CALIFICACIÓN',iaConfig.criterioCalificacion],
-    ['REGLAS DURAS',         iaConfig.reglasDuras],
-    ['FRASES PROHIBIDAS',    iaConfig.frasesProhibidas || iaConfig.noDecir],
-    ['INSTRUCCIONES EXTRA',  iaConfig.instrucciones],
-  ]
-  const panelText = panelFields.map(([k, v]) => { const t = flatten(v); return t ? `${k}: ${t}` : '' }).filter(Boolean).join('\n')
+  // ── Datos del negocio — solo los que tienen valor ────────────────────────────
+  const negocioLines = [
+    iaConfig.propuestaValor || iaConfig.oferta || iaConfig.productos || 'Inversión inmobiliaria, multicrédito, optimización tributaria en Chile.',
+    iaConfig.rentaMinima    ? `Renta mín: $${iaConfig.rentaMinima}` : '',
+    iaConfig.rentaMinimaPareja ? `Renta pareja: $${iaConfig.rentaMinimaPareja}` : '',
+    iaConfig.criterioCalificacion,
+    iaConfig.personalidad   ? `Personalidad: ${iaConfig.personalidad.slice(0, 120)}` : '',
+    iaConfig.guion          ? `Guion: ${iaConfig.guion.slice(0, 120)}` : '',
+    iaConfig.reglasDuras    ? `Nunca: ${iaConfig.reglasDuras.slice(0, 100)}` : '',
+    iaConfig.instrucciones  ? `Extra: ${iaConfig.instrucciones.slice(0, 100)}` : '',
+  ].filter(Boolean).join('\n')
 
-  const system = `Eres ${agentName}, asesor de ventas de Rabbitts Capital. Atiendes por WhatsApp.
+  const system = `Eres ${agentName}, asesor humano de Rabbitts Capital por WhatsApp. NUNCA digas que eres IA.
+Mensajes cortos (2-4 líneas). Una sola pregunta por mensaje. Sin markdown.
 
-IDENTIDAD:
-- Tu nombre es ${agentName}. NUNCA digas que eres IA, bot, chatbot o asistente virtual.
-- Tono: cercano, directo, profesional. Como un asesor humano experto.
-- Mensajes cortos: 2-4 líneas máximo por respuesta.
-- UNA sola pregunta por mensaje, nunca dos preguntas al mismo tiempo.
-- Sin markdown: no uses asteriscos, guiones de lista, negritas ni emojis en exceso.
+NEGOCIO:
+${negocioLines}
+${cerebroText ? '\n'+cerebroText : ''}
+${trainingText ? '\n'+trainingText : ''}
+${agenda ? `\nAGENDA: ${agenda}` : ''}
 
-${panelText ? `NEGOCIO Y CONFIGURACIÓN:\n${panelText}` : 'Eres asesor de inversión inmobiliaria de Rabbitts Capital. Ayudas a personas a invertir en departamentos, usar el multicrédito y optimizar sus impuestos.'}
+ETAPA ACTUAL: ${stageInfo.label}
+HACER AHORA: ${stageInfo.accion}
+AVANZAR cuando: ${stageInfo.avanzar_si}
+SIGUIENTE: ${nextStageInfo?.label || 'calificado'}
 
-${cerebroText ? `\nCONOCIMIENTO DE PROYECTOS Y NEGOCIO:\n${cerebroText}` : ''}
+REGLAS: Si no califica → action:"no_califica". Si agendó → action:"calificado". Si pide humano → action:"escalar_humano". Captura renta/nombre en leadUpdate.
+CLIENTE: ${flatten(leadData) || 'nuevo'}${Object.keys(extractedData).length ? ` | ${JSON.stringify(extractedData)}` : ''}
 
-${trainingText ? `\nENTRENAMIENTO (respuestas exactas a usar cuando coincidan):\n${trainingText}` : ''}
+JSON: {"reply":"mensaje natural 2-4 líneas","action":"conversando","leadUpdate":{}}`
 
-${agenda ? `\nLINK PARA AGENDAR REUNIÓN: ${agenda}` : ''}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-POSICIÓN EN EL EMBUDO: ${stageInfo.label.toUpperCase()}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OBJETIVO DE ESTA ETAPA:
-${stageInfo.objetivo}
-
-LO QUE DEBES HACER EN ESTE MENSAJE:
-${stageInfo.accion}
-
-CUÁNDO AVANZAR A "${nextStageInfo?.label || 'etapa final'}":
-${stageInfo.avanzar_si}
-
-FLUJO COMPLETO: Bienvenida → Calificación → Perfil → Interés → Agenda → Calificado
-
-REGLAS DEL EMBUDO:
-- Sigue el flujo. No saltes ni retrocedas etapas innecesariamente.
-- Si la renta del cliente NO califica: cierra con amabilidad y usa action:"no_califica".
-- Si ya agendó o confirmó reunión: usa action:"calificado".
-- Si pide hablar con humano: usa action:"escalar_humano".
-- Si menciona su renta u otro dato, captúralo en leadUpdate.
-- No inventes proyectos, precios ni condiciones que no estén en los documentos.
-
-DATOS CONOCIDOS DEL CLIENTE:
-${flatten(leadData) || 'Cliente nuevo sin datos previos.'}
-${Object.keys(extractedData).length ? `Del chat actual: ${JSON.stringify(extractedData)}` : ''}
-
-RESPONDE SOLO CON ESTE JSON (sin ningún texto antes ni después, sin markdown):
-{"reply":"tu mensaje (texto natural, sin markdown, 2-4 líneas)","action":"conversando","statusUpdate":"","leadUpdate":{},"nextStage":""}
-
-Valores de action: "conversando" | "calificado" | "no_califica" | "escalar_humano"
-En leadUpdate incluye datos capturados: {"renta":"X","nombre":"Y"}`
-
-  // ── Construir mensajes para API ─────────────────────────────────────────────
-  // whatsapp.js guarda el mensaje del usuario en DB ANTES de llamar al agente,
-  // por eso el historial ya incluye el mensaje actual. Lo filtramos para evitar
-  // que aparezca duplicado (Anthropic rechaza dos mensajes user consecutivos).
+  // ── Construir mensajes — sin duplicados, sin consecutivos del mismo rol ────────
   const dedupedHist = histMsgs.filter((m, i) => {
     if (i === histMsgs.length - 1 && m.role !== 'assistant' && clean(m.content) === input) return false
     return true
-  })
-
-  // Garantizar que la secuencia sea válida (no puede empezar con assistant)
-  const validHist = dedupedHist.filter((m, i, arr) => {
-    if (i === 0 && m.role === 'assistant') return false
-    return true
-  })
+  }).filter((m, i) => !(i === 0 && m.role === 'assistant'))
 
   const messages = []
-  for (const h of validHist) {
+  for (const h of dedupedHist) {
     const role    = h.role === 'assistant' ? 'assistant' : 'user'
     const content = clean(h.content || '')
     if (!content) continue
-    // Evitar dos mensajes del mismo rol consecutivos
     const last = messages[messages.length - 1]
     if (last && last.role === role) continue
     messages.push({ role, content })
   }
   messages.push({ role: 'user', content: input })
 
+  // Solo el modelo que funciona en la cuenta actual
   const models = [
     clean(process.env.ANTHROPIC_MODEL || ''),
     'claude-haiku-4-5-20251001',
-    'claude-haiku-4-5',
-    'claude-3-5-haiku-20241022',
-    'claude-3-haiku-20240307',
   ].filter(Boolean)
 
-  console.log('[AGENT v2]', { stage, agentName, input: input.slice(0, 60), msgs: histMsgs.length })
+  console.log('[AGENT v2]', { stage, agentName, input: input.slice(0, 60), msgs: messages.length - 1 })
 
   for (const model of [...new Set(models)]) {
     try {
