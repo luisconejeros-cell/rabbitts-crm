@@ -348,95 +348,101 @@ action válidos: "conversando" | "calificado" | "no_califica" | "escalar_humano"
   }
   messages.push({ role: 'user', content: input })
 
+  // ── Armar system prompt ───────────────────────────────────────────────────────
+  // El caching requiere mínimo 1024 tokens en el bloque cacheable.
+  // Si el contenido es corto, usamos system simple (string) sin caching.
+  const cachedBlockTokens = Math.ceil(cachedBlock.length / 4) // estimación rough
+  const useCaching = cachedBlockTokens >= 1024
+
+  const systemPayload = useCaching
+    ? [
+        { type: 'text', text: cachedBlock, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: dynamicBlock }
+      ]
+    : `${cachedBlock}\n\n${dynamicBlock}`
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-api-key': ANTHROPIC_KEY,
+    'anthropic-version': '2023-06-01',
+  }
+  if (useCaching) headers['anthropic-beta'] = 'prompt-caching-2024-07-31'
+
   const model = clean(process.env.ANTHROPIC_MODEL || '') || 'claude-haiku-4-5-20251001'
 
-  // ── API call con Prompt Caching ──────────────────────────────────────────────
-  // El system prompt se pasa como array de bloques.
-  // El bloque cachedBlock lleva cache_control → Anthropic lo cachea por 5 min.
-  // El bloque dynamicBlock NO lleva cache_control → se envía completo cada vez pero son pocos tokens.
-  // Header requerido: anthropic-beta: prompt-caching-2024-07-31
-  const systemBlocks = [
-    {
-      type: 'text',
-      text: cachedBlock,
-      cache_control: { type: 'ephemeral' }   // ← AQUÍ se marca el caché
-    },
-    {
-      type: 'text',
-      text: dynamicBlock
-      // Sin cache_control → no se cachea, se envía siempre
-    }
-  ]
+  console.log('[AGENT v3]', { stage, model, input: input.slice(0, 60), msgs: messages.length - 1, caching: useCaching, cachedTokensEst: cachedBlockTokens })
 
-  console.log('[AGENT v3]', { stage, model, input: input.slice(0, 60), msgs: messages.length - 1, hasCerebro: !!cerebroText, hasTraining: !!trainingText })
-
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'prompt-caching-2024-07-31'   // ← requerido para activar caching
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 500,
-        temperature: 0.15,
-        system: systemBlocks,
-        messages
+  // Reintentos con espera en rate limit
+  const MAX_RETRIES = 3
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model,
+          max_tokens: 500,
+          temperature: 0.15,
+          system: systemPayload,
+          messages
+        })
       })
-    })
 
-    const data = await r.json().catch(() => ({}))
+      const data = await r.json().catch(() => ({}))
 
-    if (!r.ok || data.error) {
-      const errMsg = data?.error?.message || `HTTP ${r.status}`
-      console.error('[AGENT v3] API error:', errMsg)
-      // Log cache stats si están disponibles
-      if (data?.usage) console.log('[AGENT v3] usage:', data.usage)
-      throw new Error(errMsg)
+      // Rate limit → esperar y reintentar
+      if (r.status === 429) {
+        const waitSecs = attempt === 0 ? 3 : attempt === 1 ? 8 : 15
+        console.warn(`[AGENT v3] rate limit, esperando ${waitSecs}s (intento ${attempt+1}/${MAX_RETRIES})`)
+        await new Promise(res => setTimeout(res, waitSecs * 1000))
+        continue
+      }
+
+      if (!r.ok || data.error) throw new Error(data?.error?.message || `HTTP ${r.status}`)
+
+      // Log cache stats
+      if (data.usage) {
+        const u = data.usage
+        console.log('[AGENT v3] tokens:', {
+          input: u.input_tokens,
+          cache_write: u.cache_creation_input_tokens || 0,
+          cache_read: u.cache_read_input_tokens || 0,
+          output: u.output_tokens
+        })
+      }
+
+      const raw    = (data.content || []).map(b => b.text || '').join('').trim()
+      const parsed = parseReply(raw)
+      let reply    = parsed.reply
+
+      const blocked = ['soy una ia', 'soy un bot', 'modelo de lenguaje', 'no estoy disponible', 'alta demanda']
+      for (const b of blocked) {
+        if (normalize(reply).includes(normalize(b))) reply = `${agentName} por acá. Cuéntame más sobre lo que buscas.`
+      }
+
+      if (!reply) throw new Error('empty_reply')
+
+      const mergedLeadUpdate = { ...extractedData, ...(parsed.leadUpdate || {}) }
+
+      console.log('[AGENT v3] ok', { stage, action: parsed.action, chars: reply.length, attempt })
+      return {
+        reply,
+        action:       parsed.action || 'conversando',
+        statusUpdate: parsed.statusUpdate || (parsed.action === 'calificado' ? 'calificado' : ''),
+        leadUpdate:   mergedLeadUpdate,
+        stage,
+        trace:        { stage, model, derivationAllowedByHardRules: true }
+      }
+
+    } catch (e) {
+      console.error(`[AGENT v3] error intento ${attempt+1}:`, e.message)
+      if (attempt === MAX_RETRIES - 1) break
+      await new Promise(res => setTimeout(res, 2000)) // 2s entre reintentos por otros errores
     }
-
-    // Log uso de caché para diagnóstico
-    if (data.usage) {
-      const u = data.usage
-      console.log('[AGENT v3] cache stats:', {
-        input: u.input_tokens,
-        cache_creation: u.cache_creation_input_tokens || 0,
-        cache_read: u.cache_read_input_tokens || 0,       // estos NO cuentan hacia ITPM
-        output: u.output_tokens
-      })
-    }
-
-    const raw    = (data.content || []).map(b => b.text || '').join('').trim()
-    const parsed = parseReply(raw)
-    let reply    = parsed.reply
-
-    const blocked = ['soy una ia', 'soy un bot', 'modelo de lenguaje', 'no estoy disponible', 'alta demanda']
-    for (const b of blocked) {
-      if (normalize(reply).includes(normalize(b))) reply = `${agentName} por acá. Cuéntame más sobre lo que buscas.`
-    }
-
-    if (!reply) throw new Error('empty_reply')
-
-    const mergedLeadUpdate = { ...extractedData, ...(parsed.leadUpdate || {}) }
-
-    console.log('[AGENT v3] ok', { stage, action: parsed.action, chars: reply.length })
-    return {
-      reply,
-      action:       parsed.action || 'conversando',
-      statusUpdate: parsed.statusUpdate || (parsed.action === 'calificado' ? 'calificado' : ''),
-      leadUpdate:   mergedLeadUpdate,
-      stage,
-      trace:        { stage, model, derivationAllowedByHardRules: true }
-    }
-
-  } catch (e) {
-    console.error('[AGENT v3] error:', e.message)
-    const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
-    return { reply: fallback, action: 'fallback_error', leadUpdate: {}, statusUpdate: '', stage }
   }
+
+  const fallback = clean(iaConfig.mensajeFallback || `${agentName} por acá. Cuéntame qué necesitas.`)
+  return { reply: fallback, action: 'fallback_error', leadUpdate: {}, statusUpdate: '', stage }
 }
 
 // ── HTTP handler ──────────────────────────────────────────────────────────────
