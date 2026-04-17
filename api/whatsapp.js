@@ -434,39 +434,111 @@ async function answer(db, { conv, tel, phone, lid, instance, text }) {
   if (result.action === 'calificado') upd.status = 'calificado'
   if (allowedByHardRules && result.escalateToHuman === true) upd.mode = 'humano'
 
+  // ── Guardar datos capturados (nombre/email/renta) en el lead ─────────────────
+  const leadUpd = result.leadUpdate || {}
+  const hasNewData = leadUpd.nombre || leadUpd.email || leadUpd.renta
+
+  if (hasNewData) {
+    // Actualizar nombre en la conversación
+    if (leadUpd.nombre) upd.nombre = leadUpd.nombre
+
+    // Actualizar el lead vinculado si existe
+    if (conv.lead_id) {
+      const patch = {}
+      if (leadUpd.nombre) patch.nombre = leadUpd.nombre
+      if (leadUpd.email)  patch.email  = leadUpd.email
+      if (leadUpd.renta)  patch.renta  = leadUpd.renta
+      if (Object.keys(patch).length) {
+        try { await db.from('crm_leads').update(patch).eq('id', conv.lead_id) } catch {}
+      }
+    }
+  }
+
   try { await db.from('crm_conversations').update(upd).eq('id', conv.id) } catch (e) { console.error('[WA] update after reply:', e.message) }
-  // Auto-crear leads para calificados sin agendar
+
+  // ── Si agendó reunión: crear/mover lead a etapa 'agenda' inmediatamente ──────
+  if (result.action === 'calificado') {
+    createOrUpdateLeadFromConv(db, conv, leadUpd, 'agenda').catch(() => {})
+  }
+
+  // ── Auto-crear leads calificados sin agendar (30 min después) ────────────────
   autoCreateLeads(db).catch(() => {})
   return { ok: true, replied: true, sendStatus: sent.status || 0 }
 }
 
 
-// Auto-crear leads para convs calificadas hace 2+ horas sin lead_id
+// ── Crear o actualizar lead desde conversación ────────────────────────────────
+async function createOrUpdateLeadFromConv(db, conv, collectedData = {}, targetStage = 'nuevo') {
+  try {
+    const tel = conv.telefono || ''
+    if (!tel) return null
+
+    // Buscar lead existente
+    const { data: existing } = await db.from('crm_leads').select('*').eq('telefono', tel).limit(1)
+
+    const nombre = collectedData.nombre || conv.nombre || tel
+    const email  = collectedData.email  || ''
+    const renta  = collectedData.renta  || ''
+    const now    = nowIso()
+
+    if (existing?.length) {
+      const lead = existing[0]
+      // Actualizar con datos capturados y mover a etapa si no está en etapa avanzada
+      const etapasAvanzadas = ['solicitud_promesa','firma','escritura','ganado','desistio']
+      const patch = {}
+      if (nombre && nombre !== tel) patch.nombre = nombre
+      if (email)  patch.email  = email
+      if (renta)  patch.renta  = renta
+      if (!etapasAvanzadas.includes(lead.stage)) {
+        patch.stage          = targetStage
+        patch.stage_moved_at = now
+        patch.stage_history  = [...(lead.stage_history||[]), { stage: targetStage, date: now }]
+      }
+      if (Object.keys(patch).length) {
+        await db.from('crm_leads').update(patch).eq('id', lead.id)
+      }
+      if (conv?.id) await db.from('crm_conversations').update({ lead_id: lead.id }).eq('id', conv.id)
+      console.log('[WA] Lead actualizado:', lead.id, 'etapa:', targetStage, 'datos:', { nombre: !!nombre, email: !!email, renta: !!renta })
+      return lead
+    }
+
+    // Crear nuevo lead
+    const newLead = {
+      id:              'l-auto-' + Date.now() + '-' + (conv.id||'').slice(-4),
+      nombre:          nombre,
+      telefono:        tel,
+      email:           email || '—',
+      renta:           renta || '—',
+      calificacion:    '—',
+      resumen:         `Calificado por Rabito vía WhatsApp.${email?' Email: '+email:''}${renta?' Renta: '+renta:''}`,
+      tag:             'lead',
+      stage:           targetStage,
+      origen:          'whatsapp_rabito',
+      fecha:           now,
+      stage_moved_at:  now,
+      creado_por:      'rabito',
+      comments:        [],
+      stage_history:   [{ stage: targetStage, date: now }]
+    }
+    const { data: lead, error } = await db.from('crm_leads').upsert(newLead).select().single()
+    if (!error && lead) {
+      if (conv?.id) await db.from('crm_conversations').update({ lead_id: lead.id }).eq('id', conv.id)
+      console.log('[WA] Lead creado:', lead.id, 'etapa:', targetStage)
+      return lead
+    }
+  } catch(e) { console.warn('[WA] createOrUpdateLeadFromConv error:', e.message) }
+  return null
+}
+
+// ── Auto-crear leads calificados sin agendar (30 min después → etapa 'nuevo') ─
 async function autoCreateLeads(db) {
   try {
-    const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString() // 30 minutos
     const { data: pending } = await db.from('crm_conversations')
-      .select('*').eq('status', 'calificado').is('lead_id', null).lt('updated_at', cutoff).limit(5)
+      .select('*').eq('status', 'calificado').is('lead_id', null).lt('updated_at', cutoff).limit(10)
     if (!pending?.length) return
     for (const conv of pending) {
-      const { data: existing } = await db.from('crm_leads').select('id').eq('telefono', conv.telefono).limit(1)
-      if (existing?.length) {
-        await db.from('crm_conversations').update({ lead_id: existing[0].id }).eq('id', conv.id)
-        continue
-      }
-      const now = new Date().toISOString()
-      const newLead = {
-        id: 'l-auto-' + Date.now() + '-' + conv.id.slice(-4),
-        nombre: conv.nombre || conv.telefono, telefono: conv.telefono || '', email: '—', renta: '—',
-        calificacion: '—', resumen: `Auto-creado desde WhatsApp. Último mensaje: ${(conv.last_message||'').slice(0,100)}`,
-        tag: 'lead', stage: 'nuevo', origen: 'whatsapp_auto', fecha: now, stage_moved_at: now,
-        creado_por: 'rabito', comments: [], stage_history: [{ stage: 'nuevo', date: now }]
-      }
-      const { data: lead, error } = await db.from('crm_leads').upsert(newLead).select().single()
-      if (!error && lead) {
-        await db.from('crm_conversations').update({ lead_id: lead.id }).eq('id', conv.id)
-        console.log('[WA] Auto-lead:', conv.telefono, lead.id)
-      }
+      await createOrUpdateLeadFromConv(db, conv, {}, 'nuevo')
     }
   } catch(e) { console.warn('[WA] autoCreateLeads error:', e.message) }
 }
