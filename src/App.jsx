@@ -7605,54 +7605,117 @@ function CondicionesComView({ condiciones=[], setCondiciones, supabase, dbReady,
               )}
             </div>
 
-            {/* Tabla */}
-            <div style={{overflowX:'auto'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                <thead>
-                  <tr style={{background:'#F8FAFC',position:'sticky',top:0,zIndex:2}}>
-                    {cols.map(col=>(
-                      <th key={col} style={{padding:'8px 10px',textAlign:'left',fontWeight:700,
-                        color:'#334155',borderBottom:'1px solid #E2E8F0',whiteSpace:'nowrap',
-                        fontSize:11}}>
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={cols.length} style={{padding:32,textAlign:'center',color:'#94a3b8',fontSize:13}}>
-                        Sin resultados para los filtros aplicados
-                      </td>
-                    </tr>
-                  ) : pageRows.map((row,ri)=>(
-                    <tr key={ri} style={{borderBottom:'1px solid #f0f4ff',
-                      background:ri%2===0?'#fff':'#fafbff'}}>
-                      {cols.map(col=>{
-                        const val = String(row[col]??'')
-                        // Resaltar término buscado
-                        if (search && val.toLowerCase().includes(search.toLowerCase())) {
-                          const idx = val.toLowerCase().indexOf(search.toLowerCase())
+            {/* Tabla con columnas fijas */}
+            {(()=>{
+              // Las primeras 2 columnas quedan fijas al hacer scroll horizontal
+              const FROZEN = 2
+              // Ancho estimado por columna según contenido típico
+              const colWidth = (col) => {
+                const c = col.toLowerCase()
+                if (c.includes('condicion') || c.includes('financiamiento') || c.includes('nota')) return 320
+                if (c.includes('proyecto') || c.includes('nombre')) return 160
+                if (c.includes('inmob') || c.includes('empresa')) return 120
+                if (c.includes('comuna') || c.includes('ciudad') || c.includes('sector')) return 110
+                if (c.includes('entrega') || c.includes('plazo') || c.includes('fecha')) return 130
+                if (c.includes('precio') || c.includes('valor') || c.includes('uf') || c.includes('monto')) return 100
+                if (c.includes('comision') || c.includes('%')) return 90
+                return 110
+              }
+              // Calcular offsets para columnas fijas
+              const frozenOffsets = cols.slice(0, FROZEN).reduce((acc, col, i) => {
+                acc.push(i === 0 ? 0 : acc[i-1] + colWidth(cols[i-1]))
+                return acc
+              }, [])
+
+              return (
+                <div style={{overflowX:'auto', maxHeight:'65vh', overflowY:'auto',
+                  borderTop:'1px solid #E2E8F0'}}>
+                  <table style={{borderCollapse:'collapse', fontSize:12, tableLayout:'fixed',
+                    width: cols.reduce((s,c)=>s+colWidth(c),0)+'px'}}>
+                    <colgroup>
+                      {cols.map(col=><col key={col} style={{width:colWidth(col)+'px'}}/>)}
+                    </colgroup>
+                    <thead>
+                      <tr style={{background:'#F0F4FF'}}>
+                        {cols.map((col,ci)=>{
+                          const frozen = ci < FROZEN
                           return (
-                            <td key={col} style={{padding:'7px 10px',color:'#0F172A',whiteSpace:'nowrap'}}>
-                              {val.slice(0,idx)}
-                              <mark style={{background:'#fef08a',borderRadius:2,padding:0}}>{val.slice(idx,idx+search.length)}</mark>
-                              {val.slice(idx+search.length)}
-                            </td>
+                            <th key={col} style={{
+                              padding:'8px 10px', textAlign:'left', fontWeight:700,
+                              color:'#1B4FC8', fontSize:11, whiteSpace:'nowrap',
+                              borderBottom:'2px solid #dce8ff',
+                              borderRight: frozen && ci === FROZEN-1 ? '2px solid #A8C0F0' : '1px solid #E2E8F0',
+                              position: frozen ? 'sticky' : 'static',
+                              left: frozen ? frozenOffsets[ci]+'px' : 'auto',
+                              zIndex: frozen ? 3 : 1,
+                              background: frozen ? '#E8EFFE' : '#F0F4FF',
+                              boxShadow: frozen && ci === FROZEN-1 ? '3px 0 6px rgba(27,79,200,0.1)' : 'none',
+                            }}>
+                              {col}
+                            </th>
                           )
-                        }
-                        return (
-                          <td key={col} style={{padding:'7px 10px',color:'#0F172A',whiteSpace:'nowrap'}}>
-                            {val}
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={cols.length} style={{padding:32,textAlign:'center',
+                            color:'#94a3b8',fontSize:13}}>
+                            Sin resultados para los filtros aplicados
                           </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        </tr>
+                      ) : pageRows.map((row,ri)=>(
+                        <tr key={ri} style={{borderBottom:'1px solid #f0f4ff',
+                          background:ri%2===0?'#fff':'#fafbff'}}>
+                          {cols.map((col,ci)=>{
+                            const val   = String(row[col]??'')
+                            const frozen = ci < FROZEN
+                            const wide  = colWidth(col) >= 200
+                            // Resaltar búsqueda
+                            let content
+                            if (search && val.toLowerCase().includes(search.toLowerCase())) {
+                              const idx = val.toLowerCase().indexOf(search.toLowerCase())
+                              content = (
+                                <span title={val}>
+                                  {val.slice(0,idx)}
+                                  <mark style={{background:'#fef08a',borderRadius:2,padding:0}}>
+                                    {val.slice(idx,idx+search.length)}
+                                  </mark>
+                                  {val.slice(idx+search.length)}
+                                </span>
+                              )
+                            } else {
+                              content = <span title={val}>{val}</span>
+                            }
+                            return (
+                              <td key={col} style={{
+                                padding:'6px 10px', color:'#0F172A',
+                                maxWidth: colWidth(col)+'px',
+                                overflow:'hidden', textOverflow:'ellipsis',
+                                whiteSpace: wide ? 'normal' : 'nowrap',
+                                lineHeight: wide ? 1.4 : 'inherit',
+                                borderRight: frozen && ci === FROZEN-1 ? '2px solid #A8C0F0' : '1px solid #f0f4ff',
+                                position: frozen ? 'sticky' : 'static',
+                                left: frozen ? frozenOffsets[ci]+'px' : 'auto',
+                                zIndex: frozen ? 2 : 'auto',
+                                background: frozen
+                                  ? (ri%2===0 ? '#F5F8FF' : '#EEF3FF')
+                                  : (ri%2===0 ? '#fff' : '#fafbff'),
+                                boxShadow: frozen && ci === FROZEN-1 ? '3px 0 6px rgba(27,79,200,0.07)' : 'none',
+                                fontWeight: frozen ? 600 : 400,
+                              }}>
+                                {content}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            })()}
 
             {/* Paginación */}
             {totalPages > 1 && (
