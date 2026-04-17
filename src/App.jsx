@@ -3695,20 +3695,49 @@ export default function App() {
                     WhatsApp
                   </a>
                 )}
-                {!isLocked && (
-                  <button onClick={async()=>{
-                    const now = new Date().toISOString()
-                    const c = {id:'c-'+Date.now(),text:'📞 Contactado',author_name:me.name,date:now}
-                    const nc = [...(sel.comments||[]),c]
-                    const ls = leads.map(l=>l.id===sel.id?{...l,comments:nc,stage_moved_at:now}:l)
-                    setLeads(ls); setSel(ls.find(l=>l.id===sel.id))
-                    if(dbReady) await supabase.from('crm_leads').update({comments:nc,stage_moved_at:now}).eq('id',sel.id)
-                    msg('✓ Contacto registrado')
-                  }} style={{fontSize:12,padding:'6px 14px',borderRadius:8,border:'1px solid #E2E8F0',
-                    background:'#fff',color:'#475569',fontWeight:700,cursor:'pointer'}}>
-                    ✓ Contacté hoy
-                  </button>
-                )}
+                {!isLocked && (() => {
+                  const [modalNote, setModalNote] = React.useState('')
+                  return (
+                    <div style={{display:'flex',gap:6,flex:1,alignItems:'center'}}>
+                      <input
+                        value={modalNote}
+                        onChange={e=>setModalNote(e.target.value)}
+                        onKeyDown={async e=>{
+                          if(e.key==='Enter'&&modalNote.trim()){
+                            const now=new Date().toISOString()
+                            const c={id:'c-'+Date.now(),text:'📞 '+modalNote.trim(),author_name:me.name,date:now}
+                            const nc=[...(sel.comments||[]),c]
+                            const ls=leads.map(l=>l.id===sel.id?{...l,comments:nc,stage_moved_at:now}:l)
+                            setLeads(ls);setSel(ls.find(l=>l.id===sel.id))
+                            if(dbReady)await supabase.from('crm_leads').update({comments:nc,stage_moved_at:now}).eq('id',sel.id)
+                            setModalNote('')
+                            msg('✓ Contacto registrado')
+                          }
+                        }}
+                        placeholder="¿Qué pasó? Escribe y presiona Enter..."
+                        style={{flex:1,padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',
+                          fontSize:12,background:'#fff',outline:'none',minWidth:120}}
+                      />
+                      <button onClick={async()=>{
+                        if(!modalNote.trim())return
+                        const now=new Date().toISOString()
+                        const c={id:'c-'+Date.now(),text:'📞 '+modalNote.trim(),author_name:me.name,date:now}
+                        const nc=[...(sel.comments||[]),c]
+                        const ls=leads.map(l=>l.id===sel.id?{...l,comments:nc,stage_moved_at:now}:l)
+                        setLeads(ls);setSel(ls.find(l=>l.id===sel.id))
+                        if(dbReady)await supabase.from('crm_leads').update({comments:nc,stage_moved_at:now}).eq('id',sel.id)
+                        setModalNote('')
+                        msg('✓ Contacto registrado')
+                      }} disabled={!modalNote.trim()}
+                        style={{fontSize:12,padding:'6px 12px',borderRadius:8,fontWeight:700,
+                          border:'none',cursor:modalNote.trim()?'pointer':'not-allowed',flexShrink:0,
+                          background:modalNote.trim()?B.primary:'#e5e7eb',
+                          color:modalNote.trim()?'#fff':'#9ca3af'}}>
+                        Guardar
+                      </button>
+                    </div>
+                  )
+                })()}
               </div>
             )
           })()}
@@ -4646,7 +4675,12 @@ function PromiseDocsPanel({p, idx, setEditingProps, me, isReviewer}) {
 // ─── Broker Home View ────────────────────────────────────────────────────────
 function BrokerHomeView({ leads, users, stages, commissions, indicators, me, setSel, setNav, setModal, dbReady, supabase, setLeads }) {
   const isMob = typeof window !== 'undefined' && window.innerWidth < 768
-  const [logging, setLogging] = React.useState({})
+  const [saving, setSaving]     = React.useState({})
+  const [noteText, setNoteText] = React.useState({})   // {leadId: texto}
+  const [padText, setPadText]   = React.useState(() => {
+    try { return localStorage.getItem('rabbitts_pad_' + (me?.id||'')) || '' } catch { return '' }
+  })
+  const [padSaved, setPadSaved] = React.useState(false)
   const misLeads = (leads||[]).filter(l => l.assigned_to === me?.id)
 
   // Leads activos (no terminales, no bloqueados por ops)
@@ -4690,38 +4724,68 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
   const saludo = hora<12?'Buenos días':hora<19?'Buenas tardes':'Buenas noches'
   const nombre = (me?.name||'').split(' ')[0]
 
-  // Marcar contactado (registra comment + actualiza timestamp)
-  const marcarContactado = async (lead) => {
-    setLogging(p=>({...p,[lead.id]:true}))
+  // Guardar nota de contacto (requiere texto)
+  const guardarNota = async (lead, texto) => {
+    if (!texto.trim()) return
+    setSaving(p=>({...p,[lead.id]:true}))
     const now = new Date().toISOString()
-    const c = {id:'c-'+Date.now(), text:'📞 Contactado', author_name:me.name, date:now}
+    const c = {id:'c-'+Date.now(), text:'📞 '+texto.trim(), author_name:me.name, date:now}
     const newComments = [...(lead.comments||[]), c]
     if (dbReady) {
       await supabase.from('crm_leads').update({comments:newComments, stage_moved_at:now}).eq('id',lead.id)
       setLeads(prev=>prev.map(l=>l.id===lead.id?{...l,comments:newComments,stage_moved_at:now}:l))
     }
-    setLogging(p=>({...p,[lead.id]:false}))
+    setNoteText(p=>({...p,[lead.id]:''}))
+    setSaving(p=>({...p,[lead.id]:false}))
+  }
+
+  // Guardar bloc de notas en localStorage
+  const savePad = (txt) => {
+    setPadText(txt)
+    setPadSaved(false)
+    clearTimeout(window._padTimer)
+    window._padTimer = setTimeout(() => {
+      try { localStorage.setItem('rabbitts_pad_' + (me?.id||''), txt); setPadSaved(true) } catch {}
+      setTimeout(()=>setPadSaved(false), 1500)
+    }, 600)
   }
 
   const urgBg  = d => d>=7?'#FEF2F2':d>=3?'#FFFBEB':'#F0FDF4'
   const urgCol = d => d>=7?'#991b1b':d>=3?'#92400e':'#166534'
 
   const LeadRow = ({l, showAction=true}) => {
-    const dias = daysIn(l)
+    const dias  = daysIn(l)
     const stage = stages.find(s=>s.id===l.stage)
-    const tel = l.telefono&&l.telefono!=='—'?l.telefono.replace(/[^0-9+]/g,'').replace(/^\+/,''):'';
+    const tel   = l.telefono&&l.telefono!=='—'?l.telefono.replace(/[^0-9+]/g,'').replace(/^\+/,''):'';
+    const nota  = noteText[l.id] || ''
+    // Último comentario del broker (excluye los del sistema)
+    const comments = (l.comments||[]).filter(c => !c.system && c.text && !c.text.startsWith('[Sistema]'))
+    const lastC = comments.length > 0 ? comments[comments.length - 1] : null
+    const lastCDate = lastC ? new Date(lastC.date) : null
+    const lastCAge = lastCDate ? Math.floor((Date.now() - lastCDate.getTime()) / 86400000) : null
+    const lastCText = lastC ? lastC.text.replace(/^📞\s*/,'') : null
+
     return (
-      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'11px 14px',
-        display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:6}}>
-        <div style={{flex:1,minWidth:160}}>
-          <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:3}}>{l.nombre}</div>
-          <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center'}}>
-            {stage && <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:stage.bg,color:stage.col,fontWeight:700}}>{stage.label}</span>}
-            {dias>0 && <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:urgBg(dias),color:urgCol(dias),fontWeight:700}}>⏱ {dias}d</span>}
-            {l.renta&&l.renta!=='—'&&<span style={{fontSize:10,color:'#64748B'}}>{l.renta}</span>}
+      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'11px 14px',marginBottom:6}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <div style={{flex:1,minWidth:160}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#0F172A',marginBottom:3}}>{l.nombre}</div>
+            <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center'}}>
+              {stage && <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:stage.bg,color:stage.col,fontWeight:700}}>{stage.label}</span>}
+              {dias>0 && <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,background:urgBg(dias),color:urgCol(dias),fontWeight:700}}>⏱ {dias}d</span>}
+              {l.renta&&l.renta!=='—'&&<span style={{fontSize:10,color:'#64748B'}}>{l.renta}</span>}
+            </div>
+            {/* Último comentario */}
+            {lastCText && (
+              <div style={{marginTop:4,fontSize:11,color:'#64748B',fontStyle:'italic',
+                overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:240}}>
+                💬 {lastCText}
+                {lastCAge !== null && <span style={{color:'#94a3b8',marginLeft:4}}>
+                  {lastCAge===0?'hoy':lastCAge===1?'ayer':lastCAge+'d atrás'}
+                </span>}
+              </div>
+            )}
           </div>
-        </div>
-        {showAction && (
           <div style={{display:'flex',gap:5,flexShrink:0}}>
             {tel && (
               <a href={`https://wa.me/${tel}`} target="_blank" rel="noopener noreferrer"
@@ -4732,17 +4796,80 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
                 WA
               </a>
             )}
-            <button onClick={()=>marcarContactado(l)} disabled={logging[l.id]}
-              style={{fontSize:11,padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',
-                background:'#F8FAFC',color:'#475569',fontWeight:600,cursor:'pointer'}}>
-              {logging[l.id]?'...':'✓ Contacté'}
-            </button>
             <button onClick={()=>{setSel(l);setModal('lead')}}
               style={{fontSize:11,padding:'5px 10px',borderRadius:8,border:`1px solid ${B.primary}`,
                 background:B.light,color:B.primary,fontWeight:700,cursor:'pointer'}}>
               Abrir
             </button>
           </div>
+        </div>
+        {showAction && (
+          <>
+            {/* Comentario para Rabito — expandible */}
+            <div style={{marginTop:8}}>
+              {!l.comentario_venta ? (
+                <button
+                  onClick={()=>setNoteText(p=>({...p,['cv_open_'+l.id]:true}))}
+                  style={{fontSize:11,color:'#94a3b8',background:'none',border:'none',
+                    cursor:'pointer',padding:0,textDecoration:'underline',textDecorationStyle:'dotted'}}>
+                  + Agregar contexto para Rabito
+                </button>
+              ) : (
+                <div style={{fontSize:11,color:'#5b21b6',background:'#F5F3FF',
+                  borderRadius:6,padding:'4px 8px',display:'inline-block',maxWidth:'100%',
+                  overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}
+                  onClick={()=>setNoteText(p=>({...p,['cv_open_'+l.id]:true}))}
+                  title="Clic para editar">
+                  🧠 {l.comentario_venta}
+                </div>
+              )}
+              {noteText['cv_open_'+l.id] && (
+                <div style={{marginTop:5}}>
+                  <textarea
+                    autoFocus
+                    defaultValue={l.comentario_venta||''}
+                    onChange={e=>{
+                      const val = e.target.value
+                      clearTimeout(window['_cv_'+l.id])
+                      window['_cv_'+l.id] = setTimeout(async()=>{
+                        setLeads(prev=>prev.map(x=>x.id===l.id?{...x,comentario_venta:val}:x))
+                        if(dbReady)await supabase.from('crm_leads').update({comentario_venta:val}).eq('id',l.id)
+                      }, 800)
+                    }}
+                    onBlur={()=>setNoteText(p=>({...p,['cv_open_'+l.id]:false}))}
+                    placeholder="Intereses, objeciones, próximos pasos... Rabito lee esto antes de responder al cliente"
+                    style={{width:'100%',padding:'6px 10px',borderRadius:8,border:'1px solid #c4b5fd',
+                      fontSize:12,minHeight:52,resize:'none',boxSizing:'border-box',
+                      background:'#FAFAFF',outline:'none',lineHeight:1.5,fontFamily:'inherit'}}
+                  />
+                  <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>
+                    🧠 Rabito lee esto · se guarda solo · clic fuera para cerrar
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Nota de contacto */}
+            <div style={{display:'flex',gap:6,marginTop:6,alignItems:'center'}}>
+              <input
+                value={nota}
+                onChange={e=>setNoteText(p=>({...p,[l.id]:e.target.value}))}
+                onKeyDown={e=>{if(e.key==='Enter'&&nota.trim())guardarNota(l,nota)}}
+                placeholder="¿Qué pasó en el contacto? Escribe y presiona Enter..."
+                style={{flex:1,padding:'6px 10px',borderRadius:8,border:'1px solid #dce8ff',
+                  fontSize:12,background:'#F8FAFC',outline:'none',minWidth:0}}
+              />
+              <button
+                onClick={()=>guardarNota(l,nota)}
+                disabled={!nota.trim()||saving[l.id]}
+                style={{fontSize:11,padding:'6px 12px',borderRadius:8,fontWeight:700,flexShrink:0,
+                  border:'none',cursor:nota.trim()?'pointer':'not-allowed',
+                  background:nota.trim()?B.primary:'#e5e7eb',
+                  color:nota.trim()?'#fff':'#9ca3af'}}>
+                {saving[l.id]?'...':'Guardar'}
+              </button>
+            </div>
+          </>
         )}
       </div>
     )
@@ -4875,6 +5002,23 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
           </div>
         </div>
       )}
+
+      {/* Bloc de notas personal */}
+      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:14,marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+          <span style={{fontSize:13,fontWeight:900,color:'#0F172A'}}>📝 Mis notas</span>
+          <span style={{fontSize:10,color:'#94a3b8'}}>Solo tú las ves · se guardan automático</span>
+          {padSaved && <span style={{fontSize:10,color:'#166534',background:'#F0FDF4',padding:'1px 8px',borderRadius:99,marginLeft:'auto'}}>✓ Guardado</span>}
+        </div>
+        <textarea
+          value={padText}
+          onChange={e=>savePad(e.target.value)}
+          placeholder="Anota aquí lo que quieras: recordatorios, pendientes, ideas..."
+          style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0',
+            fontSize:12,minHeight:80,resize:'vertical',boxSizing:'border-box',
+            background:'#FDFEF5',outline:'none',lineHeight:1.6,fontFamily:'inherit'}}
+        />
+      </div>
 
       {/* Acciones rápidas */}
       <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:16}}>
