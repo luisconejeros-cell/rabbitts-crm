@@ -1768,10 +1768,10 @@ export default function App() {
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
             : isOps      ? ['operaciones','kanban','lista','visitas','rabito_interno']
             : isFinanzas ? ['dashboard_finanzas','finanzas_360','kanban','rabito_interno']
-            :              ['broker_home','kanban','lista','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
+            :              ['broker_home','kanban','lista','mis_notas','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
 
   const NAV_LABELS = {
-    broker_home:'Inicio', dashboard:'Dashboard', kanban:'Leads', lista:'Lista', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
+    broker_home:'Inicio', dashboard:'Dashboard', kanban:'Leads', lista:'Lista', mis_notas:'Mis Notas', usuarios:'Usuarios', ranking:'Ranking', finanzas:'Finanzas', ia:'Panel IA', conversaciones:'WhatsApp', agenda:'Agenda', etapas:'Etapas', importar:'Importar', extraer:'Extraer', marketplace:'Marketplace',
     operaciones:'Operaciones 360', condiciones:'Condiciones Comerciales', finanzas_360:'Finanzas 360', portal_broker:'Mis Comisiones', mi_equipo:'Mi Equipo', rabito_interno:'Rabito Interno', pool:'Pool', dashboard_finanzas:'Dashboard Finanzas', comisiones:'Comisiones Brokers', 'mis comisiones':'Mis Comisiones', 'mi agenda':'Mi Agenda', 'nuevo lead':'Nuevo Lead','team_dashboard':'Mi Equipo','visitas':'Visitas','mis_visitas':'Mis Visitas'
   }
   const navLabel = n => NAV_LABELS[n] || n.charAt(0).toUpperCase()+n.slice(1).replace('_',' ')
@@ -2074,7 +2074,7 @@ export default function App() {
               </div>
             </div>
             {NAV.map(n => {
-              const icons = {broker_home:'🏠',dashboard:'📊',kanban:'📋',lista:'📝',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬',rabito_interno:'🐰',operaciones:'🧩',finanzas_360:'🏦',condiciones:'📋',visitas:'📅',mis_visitas:'📅',agenda:'📅','mi agenda':'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪',pool:'🌐',comisiones:'💰','mis comisiones':'💵','portal_broker':'💵','team_dashboard':'👥','nuevo lead':'➕',dashboard_finanzas:'📊'}
+              const icons = {broker_home:'🏠',dashboard:'📊',kanban:'📋',lista:'📝',mis_notas:'📓',usuarios:'👥',ranking:'🏆',finanzas:'💰',ia:'🤖',conversaciones:'💬',rabito_interno:'🐰',operaciones:'🧩',finanzas_360:'🏦',condiciones:'📋',visitas:'📅',mis_visitas:'📅',agenda:'📅','mi agenda':'📅',etapas:'⚙️',importar:'📥',extraer:'🧠',marketplace:'🏪',pool:'🌐',comisiones:'💰','mis comisiones':'💵','portal_broker':'💵','team_dashboard':'👥','nuevo lead':'➕',dashboard_finanzas:'📊'}
               return (
                 <button key={n} onClick={()=>{setNav(n);setMobileMenuOpen(false)}}
                   style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:10,border:'none',background:nav===n?B.light:'transparent',cursor:'pointer',color:nav===n?B.primary:'#374151',fontWeight:nav===n?700:400,fontSize:14,textAlign:'left',width:'100%'}}>
@@ -3632,6 +3632,10 @@ export default function App() {
           <PortalBrokerView leads={leads} users={users} stages={stages} commissions={commissions} indicators={indicators} me={me}/>
         )}
 
+        {nav==='mis_notas' && isAgent && (
+          <NotebookView me={me}/>
+        )}
+
         {/* RABITO INTERNO */}
 
 
@@ -5002,30 +5006,6 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
         </div>
       )}
 
-      {/* Bloc de notas personal */}
-      <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:14,marginBottom:20}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-          <span style={{fontSize:13,fontWeight:900,color:'#0F172A'}}>📝 Mis notas</span>
-          <span style={{fontSize:10,color:'#94a3b8'}}>Solo tú las ves · se guardan automático</span>
-          {padSaved && <span style={{fontSize:10,color:'#166534',background:'#F0FDF4',padding:'1px 8px',borderRadius:99,marginLeft:'auto'}}>✓ Guardado</span>}
-        </div>
-        <textarea
-          value={padText}
-          onChange={e=>savePad(e.target.value)}
-          placeholder="Anota aquí lo que quieras: recordatorios, pendientes, ideas..."
-          style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid #E2E8F0',
-            fontSize:12,minHeight:80,resize:'vertical',boxSizing:'border-box',
-            background:'#FDFEF5',outline:'none',lineHeight:1.6,fontFamily:'inherit'}}
-        />
-      </div>
-
-      {/* Acciones rápidas */}
-      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:16}}>
-        <button onClick={()=>setNav('nuevo lead')} style={{padding:'9px 18px',borderRadius:10,background:B.primary,color:'#fff',border:'none',cursor:'pointer',fontWeight:700,fontSize:13}}>+ Nuevo lead</button>
-        <button onClick={()=>setNav('kanban')} style={{padding:'9px 18px',borderRadius:10,background:'#fff',color:B.primary,border:`1px solid ${B.primary}`,cursor:'pointer',fontWeight:700,fontSize:13}}>📋 Kanban</button>
-        <button onClick={()=>setNav('portal_broker')} style={{padding:'9px 18px',borderRadius:10,background:'#fff',color:'#92400e',border:'1px solid #fcd34d',cursor:'pointer',fontWeight:700,fontSize:13}}>💰 Mis comisiones</button>
-      </div>
-
       {/* Empty state */}
       {misLeads.length===0 && (
         <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:40,textAlign:'center',marginTop:20}}>
@@ -5035,6 +5015,113 @@ function BrokerHomeView({ leads, users, stages, commissions, indicators, me, set
           <button onClick={()=>setNav('nuevo lead')} style={{padding:'10px 22px',borderRadius:10,background:B.primary,color:'#fff',border:'none',cursor:'pointer',fontWeight:700,fontSize:13}}>+ Crear mi primer lead</button>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Mis Notas — Bloc de cuaderno ────────────────────────────────────────────
+function NotebookView({ me }) {
+  const key = 'rabbitts_pad_' + (me?.id||'anon')
+  const [text, setText] = React.useState(() => {
+    try { return localStorage.getItem(key) || '' } catch { return '' }
+  })
+  const [saved, setSaved] = React.useState(false)
+
+  const onChange = (val) => {
+    setText(val)
+    setSaved(false)
+    clearTimeout(window._nbTimer)
+    window._nbTimer = setTimeout(() => {
+      try { localStorage.setItem(key, val); setSaved(true) } catch {}
+      setTimeout(() => setSaved(false), 1500)
+    }, 500)
+  }
+
+  const lineCount = Math.max(30, text.split('\n').length + 5)
+  const lineHeight = 28 // px por línea — igual al background-size
+
+  return (
+    <div style={{maxWidth:720, margin:'0 auto', padding:'8px 0'}}>
+      {/* Cabecera */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:900,color:'#0F172A'}}>📓 Mis Notas</div>
+          <div style={{fontSize:12,color:'#94a3b8',marginTop:1}}>
+            Solo tú las ves · se guardan automático en este dispositivo
+          </div>
+        </div>
+        {saved && (
+          <span style={{marginLeft:'auto',fontSize:11,color:'#166534',background:'#F0FDF4',
+            padding:'3px 10px',borderRadius:99,border:'1px solid #86efac',fontWeight:600}}>
+            ✓ Guardado
+          </span>
+        )}
+      </div>
+
+      {/* Hoja de cuaderno */}
+      <div style={{
+        background:'#fff',
+        borderRadius:4,
+        boxShadow:'2px 2px 8px rgba(0,0,0,0.10), -1px 0 0 #e0e0e0',
+        border:'1px solid #e8e8e8',
+        position:'relative',
+        overflow:'hidden',
+      }}>
+        {/* Margen izquierdo rojo */}
+        <div style={{
+          position:'absolute', top:0, left:48, bottom:0, width:2,
+          background:'#ff9999', zIndex:1, pointerEvents:'none'
+        }}/>
+        {/* Espiral simulada */}
+        <div style={{
+          position:'absolute', top:0, left:0, bottom:0, width:48,
+          background:'#F0F0F0', borderRight:'1px solid #ddd',
+          display:'flex', flexDirection:'column', alignItems:'center',
+          gap:20, paddingTop:18, zIndex:1, pointerEvents:'none'
+        }}>
+          {Array.from({length:Math.ceil(lineCount/3)}).map((_,i)=>(
+            <div key={i} style={{
+              width:18, height:18, borderRadius:'50%',
+              border:'3px solid #b0bec5', background:'#fff',
+              flexShrink:0
+            }}/>
+          ))}
+        </div>
+
+        {/* Área de escritura con líneas de cuaderno */}
+        <textarea
+          value={text}
+          onChange={e => onChange(e.target.value)}
+          placeholder="Escribe aquí tus notas, recordatorios, pendientes..."
+          spellCheck={true}
+          style={{
+            display:'block',
+            width:'100%',
+            minHeight: lineCount * lineHeight + 'px',
+            padding:`16px 20px 20px 64px`,
+            boxSizing:'border-box',
+            border:'none',
+            outline:'none',
+            resize:'none',
+            fontSize:15,
+            lineHeight: lineHeight + 'px',
+            fontFamily:"'Georgia', 'Times New Roman', serif",
+            color:'#1a1a2e',
+            background:`repeating-linear-gradient(
+              transparent,
+              transparent ${lineHeight - 1}px,
+              #d4e8f7 ${lineHeight - 1}px,
+              #d4e8f7 ${lineHeight}px
+            )`,
+            backgroundAttachment:'local',
+            caretColor:'#2563EB',
+          }}
+        />
+      </div>
+
+      <div style={{fontSize:11,color:'#cbd5e1',textAlign:'right',marginTop:6}}>
+        {text.length > 0 ? `${text.split('\n').filter(l=>l.trim()).length} líneas con contenido` : 'Cuaderno vacío'}
+      </div>
     </div>
   )
 }
