@@ -380,6 +380,244 @@ function AgendaPublicaView({settings={}, brokerSlug=''}) {
 const EU = {name:'',rut:'',phone:'',email:'',username:'',pin:'',role:'agent'}
 const EL = {nombre:'',telefono:'',email:'',renta:'',tag:'lead'}
 
+// ─── Vista de Usuarios (lista + tarjeta lateral) ─────────────────────────────
+function UsuariosView({ users, leads, sessions, me, isAdmin, isMobile, dbReady, supabase,
+  setModal, setEditUser, deleteUser, genTempPin, setUsers, msg }) {
+  const B = { primary:'#2563EB', light:'#EFF6FF', mid:'#64748B', border:'#E2E8F0' }
+  const sty = { inp:{padding:'8px 12px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,width:'100%',boxSizing:'border-box'}, btnP:{padding:'8px 16px',borderRadius:8,border:'none',background:B.primary,color:'#fff',cursor:'pointer',fontWeight:600,fontSize:13}, btn:{padding:'8px 14px',borderRadius:8,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',fontWeight:600,fontSize:13,color:'#374151'}, btnD:{padding:'8px 14px',borderRadius:8,border:'1px solid #fca5a5',background:'#FEF2F2',cursor:'pointer',fontWeight:600,fontSize:13,color:'#991b1b'} }
+  const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],team_leader:['#F5F3FF','#7c3aed'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
+  const ROLE_LABEL = {admin:'Admin',agent:'Agente',team_leader:'Team Leader',operaciones:'Operaciones',finanzas:'Finanzas',partner:'Partner'}
+
+  const [busqU, setBusqU] = React.useState('')
+  const [selU,  setSelU]  = React.useState(null)
+
+  const filtrados = (users||[]).filter(u =>
+    !busqU ||
+    u.name?.toLowerCase().includes(busqU.toLowerCase()) ||
+    u.username?.toLowerCase().includes(busqU.toLowerCase()) ||
+    u.email?.toLowerCase().includes(busqU.toLowerCase()) ||
+    (ROLE_LABEL[u.role]||u.role||'').toLowerCase().includes(busqU.toLowerCase())
+  )
+
+  const now = new Date()
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const uSelLeads    = selU ? leads.filter(l => l.assigned_to === selU.id) : []
+  const uSelSess     = selU ? sessions.filter(s => s.user_id === selU.id) : []
+  const selLastLogin = uSelSess[0]?.logged_at ? new Date(uSelSess[0].logged_at) : null
+  const selMinsAgo   = selLastLogin ? Math.floor((now - selLastLogin) / 60000) : null
+  const selIsOnline  = selMinsAgo !== null && selMinsAgo < 30
+  const selSessMonth = uSelSess.filter(s => new Date(s.logged_at) >= startOfMonth).length
+
+  const resetClave = async (u) => {
+    const tempPin = genTempPin(8)
+    const patch = { pin: tempPin, mustChange: true }
+    setUsers(prev => prev.map(x => x.id === u.id ? {...x, ...patch} : x))
+    if (selU?.id === u.id) setSelU(p => ({...p, ...patch}))
+    if (dbReady && supabase) await supabase.from('crm_users').update(patch).eq('id', u.id)
+    if (u.email) {
+      try {
+        await fetch('/api/notify', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            type: 'reset_password', to: u.email,
+            agentName: u.name, adminName: me.name,
+            username: u.username, tempPin, phone: u.phone || ''
+          })
+        })
+      } catch(e) {}
+    }
+    msg(`✅ Clave temporal enviada a ${u.name}`)
+  }
+
+  return (
+    <div style={{display:'flex', gap:16, alignItems:'flex-start'}}>
+      {/* ── Lista ── */}
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+          marginBottom:12,flexWrap:'wrap',gap:8}}>
+          <span style={{fontSize:14,fontWeight:700,color:B.primary}}>
+            {filtrados.length} de {(users||[]).length} usuarios
+          </span>
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={()=>setModal('importUsers')} style={{...sty.btn,fontSize:12}}>📥 Importar masivo</button>
+            <button onClick={()=>setModal('newUser')} style={{...sty.btnP,fontSize:12}}>+ Nuevo usuario</button>
+          </div>
+        </div>
+
+        <input value={busqU} onChange={e=>setBusqU(e.target.value)}
+          placeholder="🔍 Buscar por nombre, usuario, email o rol..."
+          style={{...sty.inp, marginBottom:10, background:'#fff'}}/>
+
+        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
+          {/* Cabecera tabla */}
+          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 2fr 70px 36px',
+            padding:'8px 14px',background:B.light,borderBottom:'1px solid #dce8ff',
+            fontSize:11,fontWeight:700,color:B.primary}}>
+            <span>Nombre</span><span>Rol</span><span>Email</span><span>Leads</span><span></span>
+          </div>
+
+          {filtrados.length === 0 && (
+            <div style={{padding:32,textAlign:'center',color:'#9ca3af',fontSize:13}}>
+              Sin resultados para "{busqU}"
+            </div>
+          )}
+
+          {filtrados.map((u, i) => {
+            const uL    = leads.filter(l => l.assigned_to === u.id)
+            const uSess = sessions.filter(s => s.user_id === u.id)
+            const lastL = uSess[0]?.logged_at ? new Date(uSess[0].logged_at) : null
+            const minsA = lastL ? Math.floor((now - lastL) / 60000) : null
+            const online = minsA !== null && minsA < 30
+            const [rb,rc] = RC[u.role] || RC.agent
+            const isSel = selU?.id === u.id
+            return (
+              <div key={u.id} onClick={()=>setSelU(isSel ? null : u)}
+                style={{display:'grid',gridTemplateColumns:'2fr 1fr 2fr 70px 36px',
+                  padding:'10px 14px',cursor:'pointer',
+                  borderBottom: i<filtrados.length-1 ? '1px solid #f0f4ff' : 'none',
+                  background: isSel ? B.light : 'transparent',
+                  transition:'background .12s'}}>
+
+                <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                  <div style={{position:'relative',flexShrink:0}}>
+                    <div style={{width:30,height:30,borderRadius:'50%',
+                      background:B.primary,display:'flex',alignItems:'center',justifyContent:'center',
+                      fontSize:12,fontWeight:700,color:'#fff',flexShrink:0}}>
+                      {u.name?.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
+                    </div>
+                    <div style={{position:'absolute',bottom:0,right:0,width:8,height:8,
+                      borderRadius:'50%',background:online?'#22c55e':'#d1d5db',border:'2px solid #fff'}}/>
+                  </div>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:13,color:'#0F172A',
+                      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.name}</div>
+                    <div style={{fontSize:11,color:'#9ca3af'}}>
+                      @{u.username}
+                      {u.mustChange && <span style={{marginLeft:5,color:'#d97706',fontWeight:600}}>⚠ temp</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{display:'flex',alignItems:'center'}}>
+                  <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,
+                    background:rb,color:rc,fontWeight:700}}>
+                    {ROLE_LABEL[u.role]||u.role}
+                  </span>
+                </div>
+
+                <div style={{display:'flex',alignItems:'center',minWidth:0}}>
+                  <span style={{fontSize:12,color:'#6b7280',overflow:'hidden',
+                    textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email||'—'}</span>
+                </div>
+
+                <div style={{display:'flex',alignItems:'center'}}>
+                  <span style={{fontSize:12,fontWeight:600,color:B.primary}}>{uL.length}</span>
+                </div>
+
+                <div style={{display:'flex',alignItems:'center'}}
+                  onClick={e=>e.stopPropagation()}>
+                  {u.id !== me.id && (
+                    <button onClick={()=>{ if(selU?.id===u.id)setSelU(null); deleteUser(u.id) }}
+                      style={{fontSize:10,padding:'2px 5px',borderRadius:5,
+                        border:'1px solid #fca5a5',background:'#FEF2F2',
+                        color:'#991b1b',cursor:'pointer',lineHeight:1.4}}>✕</button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── Tarjeta lateral ── */}
+      {selU && (
+        <div style={{width:isMobile?'100%':300,flexShrink:0,
+          background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,
+          padding:18,position:'sticky',top:16,
+          boxShadow:'0 4px 24px rgba(27,79,200,0.08)'}}>
+
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <div style={{position:'relative'}}>
+                <div style={{width:44,height:44,borderRadius:'50%',background:B.primary,
+                  display:'flex',alignItems:'center',justifyContent:'center',
+                  fontSize:16,fontWeight:800,color:'#fff'}}>
+                  {selU.name?.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
+                </div>
+                <div style={{position:'absolute',bottom:0,right:0,width:12,height:12,
+                  borderRadius:'50%',background:selIsOnline?'#22c55e':'#d1d5db',border:'2px solid #fff'}}/>
+              </div>
+              <div>
+                <div style={{fontWeight:800,fontSize:14,color:'#0F172A'}}>{selU.name}</div>
+                <div style={{fontSize:11,color:'#9ca3af'}}>@{selU.username}</div>
+                <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,marginTop:3,display:'inline-block',
+                  background:(RC[selU.role]||RC.agent)[0],color:(RC[selU.role]||RC.agent)[1],fontWeight:700}}>
+                  {ROLE_LABEL[selU.role]||selU.role}
+                </span>
+              </div>
+            </div>
+            <button onClick={()=>setSelU(null)}
+              style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:'#9ca3af'}}>×</button>
+          </div>
+
+          {/* Datos */}
+          <div style={{borderTop:'1px solid #f0f4ff',paddingTop:10,marginBottom:10}}>
+            {[['📞',selU.phone],['✉️',selU.email],['🪪',selU.rut]]
+              .filter(([,v])=>v).map(([k,v])=>(
+              <div key={k} style={{display:'flex',gap:8,marginBottom:5,fontSize:12,alignItems:'flex-start'}}>
+                <span>{k}</span>
+                <span style={{color:'#374151',wordBreak:'break-all'}}>{v}</span>
+              </div>
+            ))}
+            {selU.mustChange && (
+              <div style={{background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:6,
+                padding:'6px 10px',fontSize:11,color:'#92400e',marginTop:6}}>
+                ⚠️ Clave temporal pendiente de cambio
+              </div>
+            )}
+          </div>
+
+          {/* Stats */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:12}}>
+            {[
+              ['Leads activos', uSelLeads.filter(l=>!['ganado','perdido','desistio'].includes(l.stage)).length, B.primary],
+              ['Leads ganados', uSelLeads.filter(l=>l.stage==='ganado').length, '#14532d'],
+              ['Sesiones mes',  selSessMonth, '#5b21b6'],
+              ['Última conexión',
+                selLastLogin
+                  ? selMinsAgo<60 ? selMinsAgo+'m'
+                    : selMinsAgo<1440 ? Math.floor(selMinsAgo/60)+'h'
+                    : selLastLogin.toLocaleDateString('es-CL',{day:'2-digit',month:'short'})
+                  : 'Nunca',
+                selIsOnline?'#166534':'#9ca3af'],
+            ].map(([label,val,col])=>(
+              <div key={label} style={{background:'#f9fbff',borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                <div style={{fontSize:17,fontWeight:800,color:col}}>{val}</div>
+                <div style={{fontSize:10,color:'#9ca3af',marginTop:1}}>{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Botones */}
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            <button onClick={()=>{setEditUser({...selU});setSelU(null)}}
+              style={{...sty.btnP,width:'100%',fontSize:12}}>✏️ Editar</button>
+            <button onClick={()=>resetClave(selU)}
+              style={{...sty.btn,width:'100%',fontSize:12,
+                background:'#FFFBEB',borderColor:'#fcd34d',color:'#92400e'}}>
+              🔑 Resetear clave
+            </button>
+            {selU.id !== me.id && (
+              <button onClick={()=>{deleteUser(selU.id);setSelU(null)}}
+                style={{...sty.btnD,width:'100%',fontSize:12}}>🗑️ Eliminar</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Importación masiva de usuarios ──────────────────────────────────────────
 function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbReady, supabase }) {
   const B = { primary:'#2563EB', light:'#EFF6FF', mid:'#64748B' }
@@ -1000,73 +1238,64 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iaConfig, dbReady])
   // ── Alertas de ranking — notifica al broker cuando sube de puesto ──────────
+  const rankingAlertsSent = React.useRef(new Set())
   useEffect(() => {
-    if (!dbReady || !leads.length || !users.length || !me) return
-    const RANK_STAGES = ['firma','escritura','ganado']
-    const agents = users.filter(u => u.role === 'agent')
-    const ranked = agents.map(ag => {
-      const total = leads.filter(l => l.assigned_to===ag.id && RANK_STAGES.includes(l.stage))
-        .reduce((s,l) => s + (l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((ss,p)=>ss+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0), 0)
-      return { id: ag.id, name: ag.name, email: ag.email, phone: ag.phone, total }
-    }).sort((a,b) => b.total - a.total)
+    if (!dbReady || !leads.length || !users.length || !me || !isAdmin) return
+    // Debounce — esperar 10s para evitar spam por actualizaciones en tiempo real
+    clearTimeout(window._rankingAlertTimer)
+    window._rankingAlertTimer = setTimeout(() => {
+      const RANK_STAGES = ['firma','escritura','ganado']
+      const agents = users.filter(u => u.role === 'agent' || u.role === 'team_leader')
+      const ranked = agents.map(ag => {
+        const total = leads.filter(l => l.assigned_to===ag.id && RANK_STAGES.includes(l.stage))
+          .reduce((s,l) => s + (l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((ss,p)=>ss+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0), 0)
+        return { id: ag.id, name: ag.name, email: ag.email, phone: ag.phone, total }
+      }).sort((a,b) => b.total - a.total)
 
-    const posMap = {}
-    ranked.forEach((r,i) => { posMap[r.id] = i+1 })
+      const posMap = {}
+      ranked.forEach((r,i) => { posMap[r.id] = i+1 })
 
-    const stored = JSON.parse(localStorage.getItem('rcrm_ranking_pos') || '{}')
-    const alerts = []
+      const stored = JSON.parse(localStorage.getItem('rcrm_ranking_pos') || '{}')
+      const alerts = []
 
-    for (const ag of ranked) {
-      const prev = stored[ag.id]
-      const curr = posMap[ag.id]
-      if (prev && curr < prev) {
-        // Subió de puesto
-        alerts.push({ ag, prev, curr })
-      }
-    }
-
-    // Save current positions
-    localStorage.setItem('rcrm_ranking_pos', JSON.stringify(posMap))
-
-    // Send alerts for rank improvements (only admin triggers, but notifies each broker)
-    if (isAdmin && alerts.length > 0) {
-      for (const { ag, prev, curr } of alerts) {
-        const medals = {1:'🥇',2:'🥈',3:'🥉'}
-        const medal = medals[curr] || '🏅'
-        // Email
-        if (ag.email) {
-          fetch('/api/notify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: 'ranking_subida',
-              to: ag.email,
-              agentName: ag.name,
-              prevPos: prev,
-              currPos: curr,
-              medal,
-              total: ranked.length
-            })
-          }).catch(() => {})
-        }
-        // WhatsApp
-        if (ag.phone) {
-          fetch('/api/notify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: 'ranking_subida_wa',
-              phone: ag.phone,
-              agentName: ag.name,
-              prevPos: prev,
-              currPos: curr,
-              medal,
-              total: ranked.length
-            })
-          }).catch(() => {})
+      for (const ag of ranked) {
+        const prev = stored[ag.id]
+        const curr = posMap[ag.id]
+        if (prev && curr < prev) {
+          // Clave única por broker + posición para evitar duplicados en esta sesión
+          const alertKey = `${ag.id}_${prev}_${curr}`
+          if (!rankingAlertsSent.current.has(alertKey)) {
+            alerts.push({ ag, prev, curr })
+            rankingAlertsSent.current.add(alertKey)
+          }
         }
       }
-    }
+
+      // Save current positions
+      localStorage.setItem('rcrm_ranking_pos', JSON.stringify(posMap))
+
+      // Send alerts
+      if (alerts.length > 0) {
+        for (const { ag, prev, curr } of alerts) {
+          const medals = {1:'🥇',2:'🥈',3:'🥉'}
+          const medal = medals[curr] || '🏅'
+          if (ag.email) {
+            fetch('/api/notify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type:'ranking_subida', to:ag.email, agentName:ag.name, prevPos:prev, currPos:curr, medal, total:ranked.length })
+            }).catch(() => {})
+          }
+          if (ag.phone) {
+            fetch('/api/notify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type:'ranking_subida_wa', phone:ag.phone, agentName:ag.name, prevPos:prev, currPos:curr, medal, total:ranked.length })
+            }).catch(() => {})
+          }
+        }
+      }
+    }, 10000) // 10 segundos de debounce
   }, [leads, users, dbReady])
 
 
@@ -1176,7 +1405,11 @@ export default function App() {
         const saved = us.find(u => u.id === window.__sessionUserId)
         if (saved) {
           setMe(saved)
-          setNav(saved.role === 'admin' || saved.role === 'partner' ? 'dashboard' : saved.role === 'operaciones' ? 'operaciones' : saved.role === 'finanzas' ? 'dashboard_finanzas' : 'broker_home')
+          if (saved.mustChange) {
+            setNav('__cambiar_clave__')
+          } else {
+            setNav(saved.role === 'admin' || saved.role === 'partner' ? 'dashboard' : saved.role === 'operaciones' ? 'operaciones' : saved.role === 'finanzas' ? 'dashboard_finanzas' : 'broker_home')
+          }
         }
         window.__sessionUserId = null
       }
@@ -1240,7 +1473,14 @@ export default function App() {
       setUsers(us)
       if (window.__sessionUserId) {
         const saved = us.find(u => u.id === window.__sessionUserId)
-        if (saved) { setMe(saved); setNav(saved.role==='admin'||saved.role==='partner'?'dashboard':saved.role==='finanzas'?'dashboard_finanzas':'kanban') }
+        if (saved) {
+          setMe(saved)
+          if (saved.mustChange) {
+            setNav('__cambiar_clave__')
+          } else {
+            setNav(saved.role==='admin'||saved.role==='partner'?'dashboard':saved.role==='finanzas'?'dashboard_finanzas':'kanban')
+          }
+        }
       // Load condiciones comerciales
       try {
         const { data: condData } = await supabase.from('crm_settings').select('value').eq('key','condiciones_comerciales').single()
@@ -1548,10 +1788,13 @@ export default function App() {
 
   // Olvidé mi clave
   async function olvideClave() {
-    const username = lu.trim().toLowerCase()
-    if (!username) { setLerr('Ingresa tu usuario primero'); return }
-    const u = (users||[]).find(x => x.username === username)
-    if (!u) { setLerr('Usuario no encontrado'); return }
+    const input = lu.trim().toLowerCase()
+    if (!input) { setLerr('Ingresa tu usuario o email primero'); return }
+    const u = (users||[]).find(x =>
+      x.username === input ||
+      x.email?.toLowerCase() === input
+    )
+    if (!u) { setLerr('Usuario no encontrado. Verifica tu usuario o email.'); return }
     if (!u.email) { setLerr('Este usuario no tiene email registrado. Contacta al admin.'); return }
     setLerr('')
     const tempPin = genTempPin(8)
@@ -2199,7 +2442,7 @@ export default function App() {
           </div>
         </div>
         <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:28,boxShadow:'0 4px 24px rgba(27,79,200,0.10)'}}>
-          <Fld label="Usuario"><input value={lu} onChange={e=>setLu(e.target.value)} placeholder="tu.usuario" style={sty.inp}/></Fld>
+          <Fld label="Usuario"><input value={lu} onChange={e=>setLu(e.target.value)} placeholder="tu.usuario o email" style={sty.inp}/></Fld>
           <Fld label="Clave"><input type="password" value={lp} onChange={e=>setLp(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()} placeholder="••••" style={sty.inp}/></Fld>
           {lerr && <p style={{margin:'0 0 10px',fontSize:12,color:'#991b1b'}}>{lerr}</p>}
           <button onClick={login} style={{...sty.btnP,width:'100%',padding:'11px 16px',fontSize:14,borderRadius:10}}>Ingresar</button>
@@ -2469,7 +2712,7 @@ export default function App() {
           )}
           {/* Ranking badge for agents */}
           {isAgent && (() => {
-            const agents = (users||[]).filter(u => u.role === 'agent')
+            const agents = (users||[]).filter(u => u.role === 'agent' || u.role === 'team_leader')
             const rankingStages = ['firma','escritura','ganado']
             const ranked = agents.map(ag => {
               const ufTotal = leads.filter(l=>l.assigned_to===ag.id&&rankingStages.includes(l.stage)).reduce((s,l)=>s+(l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((ss,p)=>ss+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0),0)
@@ -2723,261 +2966,14 @@ export default function App() {
         )}
 
         {/* USUARIOS */}
-        {nav==='usuarios' && (isAdmin||isOps) && (()=>{
-          const [busqU, setBusqU] = React.useState('')
-          const [selU,  setSelU]  = React.useState(null)
-          const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],team_leader:['#F0FDF4','#7c3aed'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
-          const ROLE_LABEL = {admin:'Admin',agent:'Agente',team_leader:'Team Leader',operaciones:'Operaciones',finanzas:'Finanzas',partner:'Partner'}
-
-          const filtrados = (users||[]).filter(u =>
-            !busqU ||
-            u.name?.toLowerCase().includes(busqU.toLowerCase()) ||
-            u.username?.toLowerCase().includes(busqU.toLowerCase()) ||
-            u.email?.toLowerCase().includes(busqU.toLowerCase()) ||
-            u.role?.toLowerCase().includes(busqU.toLowerCase())
-          )
-
-          const uSelLeads   = selU ? leads.filter(l=>l.assigned_to===selU.id) : []
-          const uSelSessions = selU ? sessions.filter(s=>s.user_id===selU.id) : []
-          const now = new Date()
-          const startOfMonth = new Date(now.getFullYear(),now.getMonth(),1)
-          const selLastLogin = uSelSessions[0]?.logged_at ? new Date(uSelSessions[0].logged_at) : null
-          const selMinsAgo   = selLastLogin ? Math.floor((now-selLastLogin)/60000) : null
-          const selIsOnline  = selMinsAgo !== null && selMinsAgo < 30
-          const selSessMonth = uSelSessions.filter(s=>new Date(s.logged_at)>=startOfMonth).length
-
-          return (
-            <div style={{display:'flex',gap:16,alignItems:'flex-start'}}>
-
-              {/* ── Lista ── */}
-              <div style={{flex:1,minWidth:0}}>
-                {/* Header */}
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
-                  marginBottom:12,flexWrap:'wrap',gap:8}}>
-                  <span style={{fontSize:14,fontWeight:700,color:B.primary}}>
-                    {filtrados.length} de {(users||[]).length} usuarios
-                  </span>
-                  <div style={{display:'flex',gap:8}}>
-                    <button onClick={()=>setModal('importUsers')} style={{...sty.btnO,fontSize:12}}>📥 Importar masivo</button>
-                    <button onClick={()=>setModal('newUser')} style={sty.btnP}>+ Nuevo usuario</button>
-                  </div>
-                </div>
-
-                {/* Buscador */}
-                <input
-                  value={busqU} onChange={e=>setBusqU(e.target.value)}
-                  placeholder="🔍 Buscar por nombre, usuario, email o rol..."
-                  style={{...sty.inp,marginBottom:10,background:'#fff'}}
-                />
-
-                {/* Tabla */}
-                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
-                  {/* Cabecera */}
-                  <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 2fr 80px 60px',
-                    padding:'8px 14px',background:B.light,borderBottom:'1px solid #dce8ff',
-                    fontSize:11,fontWeight:700,color:B.primary}}>
-                    <span>Nombre</span>
-                    <span>Rol</span>
-                    <span>Email</span>
-                    <span>Leads</span>
-                    <span></span>
-                  </div>
-
-                  {filtrados.length === 0 && (
-                    <div style={{padding:'32px',textAlign:'center',color:'#9ca3af',fontSize:13}}>
-                      Sin resultados para "{busqU}"
-                    </div>
-                  )}
-
-                  {filtrados.map((u, i) => {
-                    const uL = leads.filter(l=>l.assigned_to===u.id)
-                    const uSess = sessions.filter(s=>s.user_id===u.id)
-                    const lastL = uSess[0]?.logged_at ? new Date(uSess[0].logged_at) : null
-                    const minsA = lastL ? Math.floor((now-lastL)/60000) : null
-                    const online = minsA !== null && minsA < 30
-                    const [rb,rc] = RC[u.role]||RC.agent
-                    const isSelected = selU?.id === u.id
-                    return (
-                      <div key={u.id}
-                        onClick={()=>setSelU(isSelected?null:u)}
-                        style={{
-                          display:'grid',gridTemplateColumns:'2fr 1fr 2fr 80px 60px',
-                          padding:'10px 14px',cursor:'pointer',
-                          borderBottom: i<filtrados.length-1?'1px solid #f0f4ff':'none',
-                          background: isSelected?B.light:'transparent',
-                          transition:'background .1s'
-                        }}>
-                        {/* Nombre */}
-                        <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
-                          <div style={{position:'relative',flexShrink:0}}>
-                            <AV name={u.name} size={30}/>
-                            <div style={{position:'absolute',bottom:0,right:0,width:8,height:8,
-                              borderRadius:'50%',background:online?'#22c55e':'#d1d5db',border:'2px solid #fff'}}/>
-                          </div>
-                          <div style={{minWidth:0}}>
-                            <div style={{fontWeight:600,fontSize:13,color:'#0F172A',
-                              overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                              {u.name}
-                            </div>
-                            <div style={{fontSize:11,color:'#9ca3af'}}>@{u.username}
-                              {u.mustChange && <span style={{marginLeft:6,color:'#d97706',fontWeight:600}}>⚠ clave temporal</span>}
-                            </div>
-                          </div>
-                        </div>
-                        {/* Rol */}
-                        <div style={{display:'flex',alignItems:'center'}}>
-                          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,
-                            background:rb,color:rc,fontWeight:700}}>
-                            {ROLE_LABEL[u.role]||u.role}
-                          </span>
-                        </div>
-                        {/* Email */}
-                        <div style={{display:'flex',alignItems:'center',minWidth:0}}>
-                          <span style={{fontSize:12,color:'#6b7280',overflow:'hidden',
-                            textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email||'—'}</span>
-                        </div>
-                        {/* Leads */}
-                        <div style={{display:'flex',alignItems:'center'}}>
-                          <span style={{fontSize:12,color:B.primary,fontWeight:600}}>{uL.length}</span>
-                        </div>
-                        {/* Acciones rápidas */}
-                        <div style={{display:'flex',alignItems:'center',gap:4}}
-                          onClick={e=>e.stopPropagation()}>
-                          {u.id!==me.id && (
-                            <button onClick={()=>deleteUser(u.id)}
-                              style={{fontSize:10,padding:'2px 6px',borderRadius:5,
-                                border:'1px solid #fca5a5',background:'#FEF2F2',
-                                color:'#991b1b',cursor:'pointer'}}>✕</button>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* ── Tarjeta lateral ── */}
-              {selU && (()=>{
-                const [rb,rc] = RC[selU.role]||RC.agent
-                return (
-                  <div style={{width:isMobile?'100%':320,flexShrink:0,
-                    background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,
-                    padding:20,position:'sticky',top:16,
-                    boxShadow:'0 4px 24px rgba(27,79,200,0.08)'}}>
-
-                    {/* Header tarjeta */}
-                    <div style={{display:'flex',justifyContent:'space-between',
-                      alignItems:'flex-start',marginBottom:16}}>
-                      <div style={{display:'flex',alignItems:'center',gap:10}}>
-                        <div style={{position:'relative'}}>
-                          <AV name={selU.name} size={44}/>
-                          <div style={{position:'absolute',bottom:0,right:0,width:12,height:12,
-                            borderRadius:'50%',background:selIsOnline?'#22c55e':'#d1d5db',
-                            border:'2px solid #fff'}}/>
-                        </div>
-                        <div>
-                          <div style={{fontWeight:800,fontSize:15,color:'#0F172A'}}>{selU.name}</div>
-                          <div style={{fontSize:11,color:'#9ca3af'}}>@{selU.username}</div>
-                          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,
-                            background:rb,color:rc,fontWeight:700,marginTop:3,display:'inline-block'}}>
-                            {ROLE_LABEL[selU.role]||selU.role}
-                          </span>
-                        </div>
-                      </div>
-                      <button onClick={()=>setSelU(null)}
-                        style={{background:'none',border:'none',cursor:'pointer',
-                          fontSize:18,color:'#9ca3af',lineHeight:1}}>×</button>
-                    </div>
-
-                    {/* Datos */}
-                    <div style={{borderTop:'1px solid #f0f4ff',paddingTop:12,marginBottom:12}}>
-                      {[
-                        ['📞 Teléfono', selU.phone],
-                        ['✉️ Email',    selU.email],
-                        ['🪪 RUT',      selU.rut],
-                      ].filter(([,v])=>v).map(([k,v])=>(
-                        <div key={k} style={{display:'flex',justifyContent:'space-between',
-                          marginBottom:6,fontSize:12}}>
-                          <span style={{color:'#9ca3af'}}>{k}</span>
-                          <span style={{color:'#374151',fontWeight:500,maxWidth:170,
-                            textAlign:'right',overflow:'hidden',textOverflow:'ellipsis',
-                            whiteSpace:'nowrap'}}>{v}</span>
-                        </div>
-                      ))}
-                      {selU.mustChange && (
-                        <div style={{background:'#FFFBEB',border:'1px solid #fcd34d',
-                          borderRadius:6,padding:'6px 10px',fontSize:11,color:'#92400e',marginTop:6}}>
-                          ⚠️ Tiene clave temporal pendiente de cambio
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Stats */}
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:14}}>
-                      {[
-                        ['Leads activos', uSelLeads.filter(l=>!['ganado','perdido','desistio'].includes(l.stage)).length, B.primary],
-                        ['Leads ganados', uSelLeads.filter(l=>l.stage==='ganado').length, '#14532d'],
-                        ['Sesiones mes', selSessMonth, '#5b21b6'],
-                        ['Última conexión',
-                          selLastLogin
-                            ? selMinsAgo < 60 ? selMinsAgo+'m atrás'
-                              : selMinsAgo < 1440 ? Math.floor(selMinsAgo/60)+'h atrás'
-                              : selLastLogin.toLocaleDateString('es-CL',{day:'2-digit',month:'short'})
-                            : 'Nunca',
-                          selIsOnline?'#166534':'#9ca3af'
-                        ],
-                      ].map(([label,val,col])=>(
-                        <div key={label} style={{background:'#f9fbff',borderRadius:8,
-                          padding:'8px 10px',textAlign:'center'}}>
-                          <div style={{fontSize:18,fontWeight:800,color:col}}>{val}</div>
-                          <div style={{fontSize:10,color:'#9ca3af',marginTop:1}}>{label}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Acciones */}
-                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                      <button onClick={()=>{setEditUser({...selU});setSelU(null)}}
-                        style={{...sty.btnP,width:'100%',fontSize:12}}>
-                        ✏️ Editar usuario
-                      </button>
-                      {/* Resetear clave */}
-                      <button onClick={async()=>{
-                        const tempPin = genTempPin(8)
-                        const patch = {pin:tempPin, mustChange:true}
-                        const nextUsers = users.map(u => u.id===selU.id ? {...u,...patch} : u)
-                        setUsers(nextUsers); setSelU(p=>({...p,...patch}))
-                        if (dbReady) await supabase.from('crm_users').update(patch).eq('id', selU.id)
-                        if (selU.email) {
-                          try {
-                            await fetch('/api/notify', {
-                              method:'POST', headers:{'Content-Type':'application/json'},
-                              body: JSON.stringify({
-                                type:'reset_password', to:selU.email,
-                                agentName:selU.name, adminName:me.name,
-                                username:selU.username, tempPin, phone:selU.phone||''
-                              })
-                            })
-                          } catch(e) {}
-                        }
-                        msg(`✅ Clave temporal enviada a ${selU.name}`)
-                      }} style={{...sty.btn,width:'100%',fontSize:12,
-                        background:'#FFFBEB',borderColor:'#fcd34d',color:'#92400e'}}>
-                        🔑 Resetear clave
-                      </button>
-                      {selU.id !== me.id && (
-                        <button onClick={()=>{deleteUser(selU.id);setSelU(null)}}
-                          style={{...sty.btnD,width:'100%',fontSize:12}}>
-                          🗑️ Eliminar usuario
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })()}
-            </div>
-          )
-        })()}
+        {nav==='usuarios' && (isAdmin||isOps) && (
+          <UsuariosView
+            users={users} leads={leads} sessions={sessions} me={me}
+            isAdmin={isAdmin} isMobile={isMobile} dbReady={dbReady} supabase={supabase}
+            setModal={setModal} setEditUser={setEditUser} deleteUser={deleteUser}
+            genTempPin={genTempPin} setUsers={setUsers} msg={msg}
+          />
+        )}
 
         {/* ETAPAS */}
         {nav==='etapas' && isAdmin && (
@@ -3138,7 +3134,7 @@ export default function App() {
           }))
 
           // Leads por agente (filtrados)
-          const agents = (users||[]).filter(u => u.role === 'agent')
+          const agents = (users||[]).filter(u => u.role === 'agent' || u.role === 'team_leader')
           const byAgent = agents.map(ag => {
             const agLeads = filteredLeads.filter(l => l.assigned_to === ag.id)
             const agGanados = agLeads.filter(l => ['firma','escritura'].includes(l.stage)).length
@@ -3382,7 +3378,7 @@ export default function App() {
           })).filter(st => st.count > 0)
 
           // Pool por agente
-          const agents = (users||[]).filter(u => u.role === 'agent')
+          const agents = (users||[]).filter(u => u.role === 'agent' || u.role === 'team_leader')
           const byAgent = agents.map(ag => {
             const agLeads = poolLeads.filter(l => l.assigned_to === ag.id)
             const agGanados = agLeads.filter(l => ['firma','escritura'].includes(l.stage)).length
@@ -3712,7 +3708,7 @@ export default function App() {
           }
 
           const rankingStages = ['firma','escritura']
-          const agents = (users||[]).filter(u => u.role === 'agent')
+          const agents = (users||[]).filter(u => u.role === 'agent' || u.role === 'team_leader')
 
           const calcUF = agLeads => agLeads.reduce((sum,l) => {
             return sum + (l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((s,p)=>s+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0)
@@ -9543,7 +9539,7 @@ function ConversacionesView({conversations, convMessages, activeConv, setActiveC
 
 function AgendaEquipoView({users, setUsers, saveUsers, supabase, dbReady, agendaSettings={}, setAgendaSettings}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
-  const todosAgentes = (users||[]).filter(u => u.role === 'agent')
+  const todosAgentes = (users||[]).filter(u => u.role === 'agent' || u.role === 'team_leader')
   
   // Brokers que están en la agenda (tienen agenda_config.enAgenda = true)
   const [saving, setSaving] = React.useState(false)
