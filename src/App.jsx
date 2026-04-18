@@ -2723,124 +2723,261 @@ export default function App() {
         )}
 
         {/* USUARIOS */}
-        {nav==='usuarios' && (isAdmin||isOps) && (
-          <div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
-              <span style={{fontSize:14,fontWeight:700,color:B.primary}}>{(users||[]).length} usuarios</span>
-              <div style={{display:'flex',gap:8}}>
-                <button onClick={()=>setModal('importUsers')} style={{...sty.btnO,fontSize:12}}>📥 Importar masivo</button>
-                <button onClick={()=>setModal('newUser')} style={sty.btnP}>+ Nuevo usuario</button>
-              </div>
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
-              {(users||[]).map(u => {
-                const uL = leads.filter(l=>l.assigned_to===u.id)
-                const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],team_leader:['#F0FDF4','#7c3aed'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
-                const [rb,rc] = RC[u.role]||RC.agent
-                return (
-                  <div key={u.id} style={sty.card}>
-                    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
-                      <AV name={u.name} size={38}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontWeight:700,fontSize:14,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.name}</div>
-                        <div style={{fontSize:12,color:'#9ca3af'}}>@{u.username}</div>
-                      </div>
-                      <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:rb,color:rc,fontWeight:700}}>{u.role}</span>
+        {nav==='usuarios' && (isAdmin||isOps) && (()=>{
+          const [busqU, setBusqU] = React.useState('')
+          const [selU,  setSelU]  = React.useState(null)
+          const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],team_leader:['#F0FDF4','#7c3aed'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
+          const ROLE_LABEL = {admin:'Admin',agent:'Agente',team_leader:'Team Leader',operaciones:'Operaciones',finanzas:'Finanzas',partner:'Partner'}
+
+          const filtrados = (users||[]).filter(u =>
+            !busqU ||
+            u.name?.toLowerCase().includes(busqU.toLowerCase()) ||
+            u.username?.toLowerCase().includes(busqU.toLowerCase()) ||
+            u.email?.toLowerCase().includes(busqU.toLowerCase()) ||
+            u.role?.toLowerCase().includes(busqU.toLowerCase())
+          )
+
+          const uSelLeads   = selU ? leads.filter(l=>l.assigned_to===selU.id) : []
+          const uSelSessions = selU ? sessions.filter(s=>s.user_id===selU.id) : []
+          const now = new Date()
+          const startOfMonth = new Date(now.getFullYear(),now.getMonth(),1)
+          const selLastLogin = uSelSessions[0]?.logged_at ? new Date(uSelSessions[0].logged_at) : null
+          const selMinsAgo   = selLastLogin ? Math.floor((now-selLastLogin)/60000) : null
+          const selIsOnline  = selMinsAgo !== null && selMinsAgo < 30
+          const selSessMonth = uSelSessions.filter(s=>new Date(s.logged_at)>=startOfMonth).length
+
+          return (
+            <div style={{display:'flex',gap:16,alignItems:'flex-start'}}>
+
+              {/* ── Lista ── */}
+              <div style={{flex:1,minWidth:0}}>
+                {/* Header */}
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                  marginBottom:12,flexWrap:'wrap',gap:8}}>
+                  <span style={{fontSize:14,fontWeight:700,color:B.primary}}>
+                    {filtrados.length} de {(users||[]).length} usuarios
+                  </span>
+                  <div style={{display:'flex',gap:8}}>
+                    <button onClick={()=>setModal('importUsers')} style={{...sty.btnO,fontSize:12}}>📥 Importar masivo</button>
+                    <button onClick={()=>setModal('newUser')} style={sty.btnP}>+ Nuevo usuario</button>
+                  </div>
+                </div>
+
+                {/* Buscador */}
+                <input
+                  value={busqU} onChange={e=>setBusqU(e.target.value)}
+                  placeholder="🔍 Buscar por nombre, usuario, email o rol..."
+                  style={{...sty.inp,marginBottom:10,background:'#fff'}}
+                />
+
+                {/* Tabla */}
+                <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,overflow:'hidden'}}>
+                  {/* Cabecera */}
+                  <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 2fr 80px 60px',
+                    padding:'8px 14px',background:B.light,borderBottom:'1px solid #dce8ff',
+                    fontSize:11,fontWeight:700,color:B.primary}}>
+                    <span>Nombre</span>
+                    <span>Rol</span>
+                    <span>Email</span>
+                    <span>Leads</span>
+                    <span></span>
+                  </div>
+
+                  {filtrados.length === 0 && (
+                    <div style={{padding:'32px',textAlign:'center',color:'#9ca3af',fontSize:13}}>
+                      Sin resultados para "{busqU}"
                     </div>
-                    <div style={{borderTop:'1px solid #f0f4ff',paddingTop:10,fontSize:12}}>
-                      {[['RUT',u.rut],['Teléfono',u.phone],['Email',u.email]].filter(([,v])=>v).map(([k,v])=>(
-                        <div key={k} style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                  )}
+
+                  {filtrados.map((u, i) => {
+                    const uL = leads.filter(l=>l.assigned_to===u.id)
+                    const uSess = sessions.filter(s=>s.user_id===u.id)
+                    const lastL = uSess[0]?.logged_at ? new Date(uSess[0].logged_at) : null
+                    const minsA = lastL ? Math.floor((now-lastL)/60000) : null
+                    const online = minsA !== null && minsA < 30
+                    const [rb,rc] = RC[u.role]||RC.agent
+                    const isSelected = selU?.id === u.id
+                    return (
+                      <div key={u.id}
+                        onClick={()=>setSelU(isSelected?null:u)}
+                        style={{
+                          display:'grid',gridTemplateColumns:'2fr 1fr 2fr 80px 60px',
+                          padding:'10px 14px',cursor:'pointer',
+                          borderBottom: i<filtrados.length-1?'1px solid #f0f4ff':'none',
+                          background: isSelected?B.light:'transparent',
+                          transition:'background .1s'
+                        }}>
+                        {/* Nombre */}
+                        <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                          <div style={{position:'relative',flexShrink:0}}>
+                            <AV name={u.name} size={30}/>
+                            <div style={{position:'absolute',bottom:0,right:0,width:8,height:8,
+                              borderRadius:'50%',background:online?'#22c55e':'#d1d5db',border:'2px solid #fff'}}/>
+                          </div>
+                          <div style={{minWidth:0}}>
+                            <div style={{fontWeight:600,fontSize:13,color:'#0F172A',
+                              overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                              {u.name}
+                            </div>
+                            <div style={{fontSize:11,color:'#9ca3af'}}>@{u.username}
+                              {u.mustChange && <span style={{marginLeft:6,color:'#d97706',fontWeight:600}}>⚠ clave temporal</span>}
+                            </div>
+                          </div>
+                        </div>
+                        {/* Rol */}
+                        <div style={{display:'flex',alignItems:'center'}}>
+                          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,
+                            background:rb,color:rc,fontWeight:700}}>
+                            {ROLE_LABEL[u.role]||u.role}
+                          </span>
+                        </div>
+                        {/* Email */}
+                        <div style={{display:'flex',alignItems:'center',minWidth:0}}>
+                          <span style={{fontSize:12,color:'#6b7280',overflow:'hidden',
+                            textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email||'—'}</span>
+                        </div>
+                        {/* Leads */}
+                        <div style={{display:'flex',alignItems:'center'}}>
+                          <span style={{fontSize:12,color:B.primary,fontWeight:600}}>{uL.length}</span>
+                        </div>
+                        {/* Acciones rápidas */}
+                        <div style={{display:'flex',alignItems:'center',gap:4}}
+                          onClick={e=>e.stopPropagation()}>
+                          {u.id!==me.id && (
+                            <button onClick={()=>deleteUser(u.id)}
+                              style={{fontSize:10,padding:'2px 6px',borderRadius:5,
+                                border:'1px solid #fca5a5',background:'#FEF2F2',
+                                color:'#991b1b',cursor:'pointer'}}>✕</button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* ── Tarjeta lateral ── */}
+              {selU && (()=>{
+                const [rb,rc] = RC[selU.role]||RC.agent
+                return (
+                  <div style={{width:isMobile?'100%':320,flexShrink:0,
+                    background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,
+                    padding:20,position:'sticky',top:16,
+                    boxShadow:'0 4px 24px rgba(27,79,200,0.08)'}}>
+
+                    {/* Header tarjeta */}
+                    <div style={{display:'flex',justifyContent:'space-between',
+                      alignItems:'flex-start',marginBottom:16}}>
+                      <div style={{display:'flex',alignItems:'center',gap:10}}>
+                        <div style={{position:'relative'}}>
+                          <AV name={selU.name} size={44}/>
+                          <div style={{position:'absolute',bottom:0,right:0,width:12,height:12,
+                            borderRadius:'50%',background:selIsOnline?'#22c55e':'#d1d5db',
+                            border:'2px solid #fff'}}/>
+                        </div>
+                        <div>
+                          <div style={{fontWeight:800,fontSize:15,color:'#0F172A'}}>{selU.name}</div>
+                          <div style={{fontSize:11,color:'#9ca3af'}}>@{selU.username}</div>
+                          <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,
+                            background:rb,color:rc,fontWeight:700,marginTop:3,display:'inline-block'}}>
+                            {ROLE_LABEL[selU.role]||selU.role}
+                          </span>
+                        </div>
+                      </div>
+                      <button onClick={()=>setSelU(null)}
+                        style={{background:'none',border:'none',cursor:'pointer',
+                          fontSize:18,color:'#9ca3af',lineHeight:1}}>×</button>
+                    </div>
+
+                    {/* Datos */}
+                    <div style={{borderTop:'1px solid #f0f4ff',paddingTop:12,marginBottom:12}}>
+                      {[
+                        ['📞 Teléfono', selU.phone],
+                        ['✉️ Email',    selU.email],
+                        ['🪪 RUT',      selU.rut],
+                      ].filter(([,v])=>v).map(([k,v])=>(
+                        <div key={k} style={{display:'flex',justifyContent:'space-between',
+                          marginBottom:6,fontSize:12}}>
                           <span style={{color:'#9ca3af'}}>{k}</span>
-                          <span style={{color:'#6b7280',maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',textAlign:'right'}}>{v}</span>
+                          <span style={{color:'#374151',fontWeight:500,maxWidth:170,
+                            textAlign:'right',overflow:'hidden',textOverflow:'ellipsis',
+                            whiteSpace:'nowrap'}}>{v}</span>
+                        </div>
+                      ))}
+                      {selU.mustChange && (
+                        <div style={{background:'#FFFBEB',border:'1px solid #fcd34d',
+                          borderRadius:6,padding:'6px 10px',fontSize:11,color:'#92400e',marginTop:6}}>
+                          ⚠️ Tiene clave temporal pendiente de cambio
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Stats */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:14}}>
+                      {[
+                        ['Leads activos', uSelLeads.filter(l=>!['ganado','perdido','desistio'].includes(l.stage)).length, B.primary],
+                        ['Leads ganados', uSelLeads.filter(l=>l.stage==='ganado').length, '#14532d'],
+                        ['Sesiones mes', selSessMonth, '#5b21b6'],
+                        ['Última conexión',
+                          selLastLogin
+                            ? selMinsAgo < 60 ? selMinsAgo+'m atrás'
+                              : selMinsAgo < 1440 ? Math.floor(selMinsAgo/60)+'h atrás'
+                              : selLastLogin.toLocaleDateString('es-CL',{day:'2-digit',month:'short'})
+                            : 'Nunca',
+                          selIsOnline?'#166534':'#9ca3af'
+                        ],
+                      ].map(([label,val,col])=>(
+                        <div key={label} style={{background:'#f9fbff',borderRadius:8,
+                          padding:'8px 10px',textAlign:'center'}}>
+                          <div style={{fontSize:18,fontWeight:800,color:col}}>{val}</div>
+                          <div style={{fontSize:10,color:'#9ca3af',marginTop:1}}>{label}</div>
                         </div>
                       ))}
                     </div>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10}}>
-                      <div style={{fontSize:12,color:B.mid}}>
-                        <div>{uL.length} leads</div>
-                        {u.role==='team_leader'&&<div style={{fontSize:10,color:'#7c3aed',fontWeight:700}}>👥 Team Leader</div>}
-                        {u.team_leader_id&&<div style={{fontSize:10,color:'#1d4ed8'}}>supervisor: {(users||[]).find(x=>x.id===u.team_leader_id)?.name||'TL'}</div>}
-                      </div>
-                      <div style={{display:'flex',gap:6}}>
-                        <button onClick={()=>setEditUser({...u})} style={{...sty.btnO,fontSize:11,padding:'3px 10px'}}>Editar</button>
-                        {u.id!==me.id && <button onClick={()=>deleteUser(u.id)} style={{...sty.btnD,fontSize:11,padding:'3px 8px'}}>Eliminar</button>}
-                      </div>
+
+                    {/* Acciones */}
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      <button onClick={()=>{setEditUser({...selU});setSelU(null)}}
+                        style={{...sty.btnP,width:'100%',fontSize:12}}>
+                        ✏️ Editar usuario
+                      </button>
+                      {/* Resetear clave */}
+                      <button onClick={async()=>{
+                        const tempPin = genTempPin(8)
+                        const patch = {pin:tempPin, mustChange:true}
+                        const nextUsers = users.map(u => u.id===selU.id ? {...u,...patch} : u)
+                        setUsers(nextUsers); setSelU(p=>({...p,...patch}))
+                        if (dbReady) await supabase.from('crm_users').update(patch).eq('id', selU.id)
+                        if (selU.email) {
+                          try {
+                            await fetch('/api/notify', {
+                              method:'POST', headers:{'Content-Type':'application/json'},
+                              body: JSON.stringify({
+                                type:'reset_password', to:selU.email,
+                                agentName:selU.name, adminName:me.name,
+                                username:selU.username, tempPin, phone:selU.phone||''
+                              })
+                            })
+                          } catch(e) {}
+                        }
+                        msg(`✅ Clave temporal enviada a ${selU.name}`)
+                      }} style={{...sty.btn,width:'100%',fontSize:12,
+                        background:'#FFFBEB',borderColor:'#fcd34d',color:'#92400e'}}>
+                        🔑 Resetear clave
+                      </button>
+                      {selU.id !== me.id && (
+                        <button onClick={()=>{deleteUser(selU.id);setSelU(null)}}
+                          style={{...sty.btnD,width:'100%',fontSize:12}}>
+                          🗑️ Eliminar usuario
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
-              })}
+              })()}
             </div>
-
-            {/* Activity stats */}
-            <div style={{marginTop:24}}>
-              <p style={{margin:'0 0 12px',fontSize:14,fontWeight:700,color:B.primary}}>Actividad de usuarios</p>
-              <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
-                {(users||[]).map(u => {
-                  const uSess = sessions.filter(s => s.user_id === u.id)
-                  const lastLogin = uSess[0]?.logged_at ? new Date(uSess[0].logged_at) : null
-                  const now = new Date()
-                  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0)
-                  const startOfMonth = new Date(now.getFullYear(),now.getMonth(),1)
-                  const daysThisWeek = [...new Set(uSess.filter(s=>new Date(s.logged_at)>=startOfWeek).map(s=>new Date(s.logged_at).toDateString()))].length
-                  const sessMonth = uSess.filter(s=>new Date(s.logged_at)>=startOfMonth).length
-                  const minsAgo = lastLogin ? Math.floor((now-lastLogin)/60000) : null
-                  const isOnline = minsAgo !== null && minsAgo < 30
-                  const RC = {admin:[B.light,B.primary],agent:['#EFF6FF','#1d4ed8'],team_leader:['#F0FDF4','#7c3aed'],partner:['#F5F3FF','#5b21b6'],operaciones:['#FEF9C3','#713f12'],finanzas:['#F0FDF4','#166534']}
-                  const [rb,rc] = RC[u.role]||RC.agent
-                  return (
-                    <div key={u.id} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:'14px 16px'}}>
-                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-                        <div style={{position:'relative'}}>
-                          <AV name={u.name} size={34}/>
-                          <div style={{position:'absolute',bottom:0,right:0,width:10,height:10,borderRadius:'50%',background:isOnline?'#22c55e':'#d1d5db',border:'2px solid #fff'}}/>
-                        </div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:700,fontSize:13,color:'#0F172A',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.name}</div>
-                          <span style={{fontSize:10,padding:'1px 6px',borderRadius:99,background:rb,color:rc,fontWeight:700}}>{u.role}</span>
-                        </div>
-                        <div style={{flexShrink:0}}>
-                          {isOnline
-                            ? <span style={{fontSize:11,color:'#166534',background:'#DCFCE7',padding:'2px 8px',borderRadius:99,fontWeight:600}}>● En línea</span>
-                            : <span style={{fontSize:11,color:'#9ca3af'}}>● Offline</span>
-                          }
-                        </div>
-                      </div>
-                      <div style={{borderTop:'1px solid #f0f4ff',paddingTop:10,display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:6}}>
-                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px',gridColumn:'1/-1'}}>
-                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Última conexión</div>
-                          <div style={{fontSize:12,fontWeight:600,color:'#374151'}}>
-                            {lastLogin
-                              ? minsAgo < 60 ? minsAgo+'m atrás'
-                                : minsAgo < 1440 ? Math.floor(minsAgo/60)+'h atrás'
-                                : lastLogin.toLocaleDateString('es-CL',{weekday:'short',day:'2-digit',month:'short'})+' '+lastLogin.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})
-                              : 'Nunca ha ingresado'
-                            }
-                          </div>
-                        </div>
-                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px'}}>
-                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Esta semana</div>
-                          <div style={{fontSize:13,fontWeight:700,color:B.primary}}>{daysThisWeek} {daysThisWeek===1?'día':'días'}</div>
-                        </div>
-                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px'}}>
-                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Este mes</div>
-                          <div style={{fontSize:13,fontWeight:700,color:B.primary}}>{sessMonth} sesiones</div>
-                        </div>
-                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px'}}>
-                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Total histórico</div>
-                          <div style={{fontSize:13,fontWeight:700,color:'#374151'}}>{uSess.length} sesiones</div>
-                        </div>
-                        <div style={{background:'#f9fbff',borderRadius:8,padding:'6px 10px'}}>
-                          <div style={{fontSize:10,color:'#9ca3af',marginBottom:2}}>Días activo/mes</div>
-                          <div style={{fontSize:13,fontWeight:700,color:'#374151'}}>{[...new Set(uSess.filter(s=>new Date(s.logged_at)>=startOfMonth).map(s=>new Date(s.logged_at).toDateString()))].length}</div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        )}
+          )
+        })()}
 
         {/* ETAPAS */}
         {nav==='etapas' && isAdmin && (
