@@ -543,7 +543,94 @@ async function autoCreateLeads(db) {
   } catch(e) { console.warn('[WA] autoCreateLeads error:', e.message) }
 }
 
+// ── Resumen diario brokers (Jefe de Ventas) ───────────────────────────────────
+async function runCron(db) {
+  const EVO_URL = 'https://wa.rabbittscapital.com'
+  const EVO_KEY = 'rabbitts2024'
+
+  const daysIn = (lead) => {
+    const d = new Date(lead.stage_moved_at || lead.fecha || lead.created_at)
+    return Math.floor((Date.now() - d.getTime()) / 86400000)
+  }
+
+  const sendMsg = async (instanceName, phone, text) => {
+    const cleanPhone = phone.replace(/[^0-9]/g, '')
+    try {
+      const r = await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
+        body: JSON.stringify({ number: cleanPhone, text, delay: 1000 })
+      })
+      return r.ok
+    } catch { return false }
+  }
+
+  const { data: configRow } = await db.from('crm_settings').select('value').eq('key','jefe_ventas_config').single().catch(()=>({data:null}))
+  const config = configRow?.value || {}
+  if (config.activo === false) return { skipped: 'jefe_ventas_off' }
+
+  const { data: numerosRow } = await db.from('crm_settings').select('value').eq('key','wa_numeros').single().catch(()=>({data:null}))
+  const numeros = numerosRow?.value || []
+  const instanciaInterna = numeros.find(n => n.tipo === 'interno' && n.activo !== false)
+  if (!instanciaInterna) return { skipped: 'no_instancia_interna' }
+
+  const { data: leads }  = await db.from('crm_leads').select('*').catch(()=>({data:[]}))
+  const { data: users }  = await db.from('crm_users').select('*').catch(()=>({data:[]}))
+  const { data: visitas } = await db.from('crm_visitas').select('*').catch(()=>({data:[]}))
+
+  const brokers = (users||[]).filter(u => ['agent','team_leader'].includes(u.role))
+  const hoy    = new Date().toISOString().slice(0,10)
+  const manana = new Date(Date.now()+86400000).toISOString().slice(0,10)
+  const results = []
+
+  for (const broker of brokers) {
+    if (!broker.phone) continue
+    const misLeads = (leads||[]).filter(l => l.assigned_to===broker.id && !['ganado','perdido','desistio'].includes(l.stage))
+    const criticos  = misLeads.filter(l => daysIn(l) >= 7)
+    const urgentes  = misLeads.filter(l => daysIn(l) >= 3 && daysIn(l) < 7)
+    const visitasHoy    = (visitas||[]).filter(v => v.fecha===hoy    && misLeads.find(l=>l.id===v.lead_id))
+    const visitasManana = (visitas||[]).filter(v => v.fecha===manana && misLeads.find(l=>l.id===v.lead_id))
+
+    const nombre = broker.name?.split(' ')[0] || broker.username || 'Broker'
+    const lines = [`Buenos días ${nombre} 👋`, `Aquí tu resumen Rabbitts para hoy:`, '']
+    if (criticos.length)      lines.push(`🔴 ${criticos.length} lead${criticos.length>1?'s':''} crítico${criticos.length>1?'s':''} (+7 días sin actividad)`)
+    if (urgentes.length)      lines.push(`🟡 ${urgentes.length} lead${urgentes.length>1?'s':''} urgente${urgentes.length>1?'s':''} (3-6 días)`)
+    if (visitasHoy.length)    lines.push(`📅 ${visitasHoy.length} visita${visitasHoy.length>1?'s':''} hoy`)
+    if (visitasManana.length) lines.push(`📆 ${visitasManana.length} visita${visitasManana.length>1?'s':''} mañana`)
+    if (misLeads.length)      lines.push(`📋 ${misLeads.length} leads activos en total`)
+    if (criticos.length) {
+      lines.push('', 'Leads críticos de hoy:')
+      criticos.slice(0,3).forEach(l => lines.push(`• ${l.nombre} — ${daysIn(l)} días sin contacto`))
+      if (criticos.length>3) lines.push(`...y ${criticos.length-3} más`)
+    }
+    if (visitasHoy.length) {
+      lines.push('', 'Visitas de hoy:')
+      visitasHoy.forEach(v => {
+        const lead = misLeads.find(l=>l.id===v.lead_id)
+        lines.push(`• ${v.hora||''} — ${lead?.nombre||'Cliente'} en ${v.proyecto||v.lugar||'?'}`)
+      })
+    }
+    lines.push('', config.mensajeCierre || '¡Mucho éxito hoy! Cualquier consulta sobre proyectos o estrategias, escríbeme acá 🐰')
+
+    const ok = await sendMsg(instanciaInterna.instanceName, broker.phone, lines.join('\n'))
+    await db.from('crm_cron_log').insert({ fecha: nowIso(), broker_id: broker.id, broker_nombre: broker.name, enviado: ok }).catch(()=>{})
+    results.push({ broker: broker.name, ok })
+  }
+  return { enviados: results.length, results }
+}
+
 export default async function handler(req, res) {
+  // ── Cron endpoint ─────────────────────────────────────────────────────────
+  if (req.method === 'GET' && req.query?.action === 'cron') {
+    const secret = req.query?.secret || req.headers?.['x-cron-secret']
+    const CRON_SECRET = clean(process.env.CRON_SECRET || 'rabbitts2024')
+    if (secret !== CRON_SECRET) return res.status(401).json({ error: 'Unauthorized' })
+    const db = sb()
+    if (!db) return res.status(500).json({ error: 'No Supabase' })
+    const result = await runCron(db)
+    return res.status(200).json({ ok: true, ...result })
+  }
+
   if (req.method === 'GET') return res.status(200).json({ ok: true, endpoint: 'api/whatsapp', mode: 'stable-v9-direct' })
   if (req.method !== 'POST') return res.status(405).json({ ok: false })
 
