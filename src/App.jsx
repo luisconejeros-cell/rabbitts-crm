@@ -744,12 +744,28 @@ function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbRead
       if (ok % 5 === 0) await new Promise(res => setTimeout(res, 500))
     }
 
-    await saveUsers([...users, ...newUsers])
+    // Insertar SOLO los nuevos directamente en Supabase (no iterar todos)
+    if (newUsers.length > 0) {
+      if (dbReady && supabase) {
+        try {
+          // Insertar en lotes de 10
+          for (let i = 0; i < newUsers.length; i += 10) {
+            const batch = newUsers.slice(i, i + 10)
+            const { error } = await supabase.from('crm_users').insert(batch)
+            if (error) console.warn('Insert batch error:', error)
+          }
+        } catch(e) { console.warn('Bulk insert error:', e) }
+      } else {
+        // Fallback localStorage
+        const all = [...users, ...newUsers]
+        localStorage.setItem('rcrm_users', JSON.stringify(all))
+      }
+      // Actualizar estado local
+      saveUsers([...users, ...newUsers])
+    }
     setImporting(false)
     setDone({ ok, skipped })
   }
-
-  const existentes = rows.filter(r => users.find(u => u.username === r.username))
 
   return (
     <Modal title="📥 Importar usuarios masivo" onClose={onClose} wide>
@@ -1238,10 +1254,8 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iaConfig, dbReady])
   // ── Alertas de ranking — notifica al broker cuando sube de puesto ──────────
-  const rankingAlertsSent = React.useRef(new Set())
   useEffect(() => {
     if (!dbReady || !leads.length || !users.length || !me || !isAdmin) return
-    // Debounce — esperar 10s para evitar spam por actualizaciones en tiempo real
     clearTimeout(window._rankingAlertTimer)
     window._rankingAlertTimer = setTimeout(() => {
       const RANK_STAGES = ['firma','escritura','ganado']
@@ -1254,48 +1268,51 @@ export default function App() {
 
       const posMap = {}
       ranked.forEach((r,i) => { posMap[r.id] = i+1 })
-
       const stored = JSON.parse(localStorage.getItem('rcrm_ranking_pos') || '{}')
-      const alerts = []
 
+      // Alertas ya enviadas HOY — persiste entre recargas
+      const today = new Date().toISOString().slice(0,10)
+      const sentKey = 'rcrm_ranking_sent_' + today
+      const sentToday = new Set(JSON.parse(localStorage.getItem(sentKey) || '[]'))
+
+      const alerts = []
       for (const ag of ranked) {
         const prev = stored[ag.id]
         const curr = posMap[ag.id]
         if (prev && curr < prev) {
-          // Clave única por broker + posición para evitar duplicados en esta sesión
           const alertKey = `${ag.id}_${prev}_${curr}`
-          if (!rankingAlertsSent.current.has(alertKey)) {
-            alerts.push({ ag, prev, curr })
-            rankingAlertsSent.current.add(alertKey)
+          if (!sentToday.has(alertKey)) {
+            alerts.push({ ag, prev, curr, alertKey })
           }
         }
       }
 
-      // Save current positions
+      // Guardar posiciones actuales
       localStorage.setItem('rcrm_ranking_pos', JSON.stringify(posMap))
 
-      // Send alerts
       if (alerts.length > 0) {
+        // Marcar como enviadas ANTES de enviar para evitar duplicados
+        alerts.forEach(a => sentToday.add(a.alertKey))
+        localStorage.setItem(sentKey, JSON.stringify([...sentToday]))
+
         for (const { ag, prev, curr } of alerts) {
           const medals = {1:'🥇',2:'🥈',3:'🥉'}
           const medal = medals[curr] || '🏅'
           if (ag.email) {
             fetch('/api/notify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ type:'ranking_subida', to:ag.email, agentName:ag.name, prevPos:prev, currPos:curr, medal, total:ranked.length })
-            }).catch(() => {})
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({type:'ranking_subida',to:ag.email,agentName:ag.name,prevPos:prev,currPos:curr,medal,total:ranked.length})
+            }).catch(()=>{})
           }
           if (ag.phone) {
             fetch('/api/notify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ type:'ranking_subida_wa', phone:ag.phone, agentName:ag.name, prevPos:prev, currPos:curr, medal, total:ranked.length })
-            }).catch(() => {})
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({type:'ranking_subida_wa',phone:ag.phone,agentName:ag.name,prevPos:prev,currPos:curr,medal,total:ranked.length})
+            }).catch(()=>{})
           }
         }
       }
-    }, 10000) // 10 segundos de debounce
+    }, 15000) // 15s debounce — ignora actualizaciones en tiempo real intermedias
   }, [leads, users, dbReady])
 
 
