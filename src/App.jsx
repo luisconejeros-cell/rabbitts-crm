@@ -380,6 +380,66 @@ function AgendaPublicaView({settings={}, brokerSlug=''}) {
 const EU = {name:'',rut:'',phone:'',email:'',username:'',pin:'',role:'agent'}
 const EL = {nombre:'',telefono:'',email:'',renta:'',tag:'lead'}
 
+// ─── Cambio forzado de clave (clave temporal expirada) ───────────────────────
+function ForzarCambioClaveForm({ me, users, setUsers, setMe, dbReady, supabase, validarClave, onSuccess }) {
+  const [n1, setN1] = React.useState('')
+  const [n2, setN2] = React.useState('')
+  const [err, setErr] = React.useState('')
+  const [saving, setSaving] = React.useState(false)
+  const B = { primary:'#2563EB', light:'#EFF6FF', mid:'#64748B' }
+
+  const save = async () => {
+    const errV = validarClave(n1)
+    if (errV) { setErr(errV); return }
+    if (n1 !== n2) { setErr('Las claves no coinciden'); return }
+    setSaving(true)
+    const nextUsers = users.map(u => u.id === me.id ? {...u, pin:n1, mustChange:false} : u)
+    setUsers(nextUsers)
+    setMe(m => ({...m, pin:n1, mustChange:false}))
+    if (dbReady && supabase) {
+      await supabase.from('crm_users').update({pin:n1, mustChange:false}).eq('id', me.id)
+    }
+    setSaving(false)
+    onSuccess()
+  }
+
+  return (
+    <div>
+      <div style={{marginBottom:14}}>
+        <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:5}}>
+          Nueva clave
+        </label>
+        <input type="password" value={n1} onChange={e=>{setN1(e.target.value);setErr('')}}
+          placeholder="Mínimo 6 caracteres, letras y números"
+          style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #E2E8F0',
+            fontSize:13,boxSizing:'border-box'}}/>
+      </div>
+      <div style={{marginBottom:14}}>
+        <label style={{display:'block',fontSize:12,fontWeight:600,color:'#374151',marginBottom:5}}>
+          Repetir nueva clave
+        </label>
+        <input type="password" value={n2} onChange={e=>{setN2(e.target.value);setErr('')}}
+          onKeyDown={e=>e.key==='Enter'&&save()}
+          placeholder="Repite la clave"
+          style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #E2E8F0',
+            fontSize:13,boxSizing:'border-box'}}/>
+      </div>
+      <div style={{background:'#EFF6FF',border:'1px solid #bfdbfe',borderRadius:8,
+        padding:'8px 12px',marginBottom:14,fontSize:11,color:'#1d4ed8'}}>
+        La clave debe tener entre 6 y 12 caracteres, con letras y números (ej: Rb4xK2mP)
+      </div>
+      {err && <p style={{margin:'0 0 10px',fontSize:12,color:'#991b1b'}}>{err}</p>}
+      <button onClick={save} disabled={saving||!n1||!n2}
+        style={{width:'100%',padding:'11px',borderRadius:10,border:'none',cursor:'pointer',
+          fontWeight:700,fontSize:14,
+          background:n1&&n2?B.primary:'#e5e7eb',
+          color:n1&&n2?'#fff':'#9ca3af'}}>
+        {saving ? 'Guardando...' : 'Guardar nueva clave'}
+      </button>
+    </div>
+  )
+}
+
 // Componente para el campo de contacto en el modal del lead
 // (debe ser componente propio para poder usar useState — no puede ser IIFE)
 function ModalContactInput({ sel, leads, setLeads, setSel, me, dbReady, supabase, msg, B }) {
@@ -1162,12 +1222,40 @@ export default function App() {
 
   function msg(m) { setToast(m); setTimeout(() => setToast(''), 2500) }
 
+  // ── Generador de clave temporal alfanumérica ───────────────────────────────
+  function genTempPin(len = 8) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+    let result = ''
+    // Garantizar al menos 1 letra y 1 número
+    result += chars[Math.floor(Math.random() * 48)] // letra
+    result += chars[48 + Math.floor(Math.random() * 8)] // número
+    for (let i = 2; i < len; i++) result += chars[Math.floor(Math.random() * chars.length)]
+    return result.split('').sort(() => Math.random() - 0.5).join('')
+  }
+
+  function validarClave(clave) {
+    if (clave.length < 6)  return 'Mínimo 6 caracteres'
+    if (clave.length > 12) return 'Máximo 12 caracteres'
+    const tieneLetra  = /[a-zA-Z]/.test(clave)
+    const tieneNumero = /[0-9]/.test(clave)
+    // PINs de 4 dígitos numéricos siguen siendo válidos (compatibilidad)
+    if (/^\d{4}$/.test(clave)) return null
+    if (!tieneLetra)  return 'Debe contener al menos una letra'
+    if (!tieneNumero) return 'Debe contener al menos un número'
+    return null // válida
+  }
+
   // ── Auth ──────────────────────────────────────────────────────────────────
   async function login() {
     const u = (users||[]).find(x => x.username === lu.trim().toLowerCase())
-    if (!u || u.pin !== lp) { setLerr('Usuario o PIN incorrecto'); return }
+    if (!u || u.pin !== lp) { setLerr('Usuario o clave incorrectos'); return }
     setMe(u); setLerr(''); setLp(''); setLu('')
-    setNav(u.role==='admin'||u.role==='partner'?'dashboard':u.role==='finanzas'?'dashboard_finanzas':u.role==='operaciones'?'operaciones':'broker_home')
+    // Si tiene clave temporal, mostrar pantalla de cambio forzado
+    if (u.mustChange) {
+      setNav('__cambiar_clave__')
+    } else {
+      setNav(u.role==='admin'||u.role==='partner'?'dashboard':u.role==='finanzas'?'dashboard_finanzas':u.role==='operaciones'?'operaciones':'broker_home')
+    }
     // Persist session for 8 hours
     localStorage.setItem('rcrm_session', JSON.stringify({id:u.id, expires: Date.now() + 8*60*60*1000}))
     // Record login for activity tracking
@@ -1182,13 +1270,49 @@ export default function App() {
     }
   }
 
+  // Olvidé mi clave
+  async function olvideClave() {
+    const username = lu.trim().toLowerCase()
+    if (!username) { setLerr('Ingresa tu usuario primero'); return }
+    const u = (users||[]).find(x => x.username === username)
+    if (!u) { setLerr('Usuario no encontrado'); return }
+    if (!u.email) { setLerr('Este usuario no tiene email registrado. Contacta al admin.'); return }
+    setLerr('')
+    const tempPin = genTempPin(8)
+    // Guardar en DB con mustChange = true
+    const nextUsers = users.map(x => x.id === u.id ? {...x, pin: tempPin, mustChange: true} : x)
+    setUsers(nextUsers)
+    if (dbReady) await supabase.from('crm_users').update({pin: tempPin, mustChange: true}).eq('id', u.id)
+    // Enviar email + WhatsApp
+    try {
+      await fetch('/api/notify', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          type: 'reset_password',
+          to: u.email,
+          agentName: u.name,
+          adminName: 'el sistema',
+          username: u.username,
+          tempPin,
+          phone: u.phone || ''
+        })
+      })
+    } catch(e) { console.warn('Reset email failed:', e) }
+    setLerr('')
+    setLu('')
+    alert(`✅ Se envió una clave temporal al email${u.phone ? ' y WhatsApp' : ''} de ${u.name}. Revisa tu correo.`)
+  }
+
   // ── Users ─────────────────────────────────────────────────────────────────
   async function createUser() {
-    if (!nu.name||!nu.username||!nu.pin||!nu.rut||!nu.phone||!nu.email) { msg('Completa todos los campos'); return }
+    if (!nu.name||!nu.username||!nu.rut||!nu.phone||!nu.email) { msg('Completa todos los campos'); return }
     if ((users||[]).find(u => u.username === nu.username.toLowerCase())) { msg('Usuario ya existe'); return }
-    const u = {id:'u-'+Date.now(), ...nu, username:nu.username.toLowerCase()}
+    // Generar clave temporal automática
+    const tempPin = genTempPin(8)
+    const u = {id:'u-'+Date.now(), ...nu, username:nu.username.toLowerCase(), pin:tempPin, mustChange:true}
     await saveUsers([...users, u])
-    // Send welcome email with credentials
+    // Enviar email + WhatsApp con clave temporal
     if (nu.email) {
       try {
         await fetch('/api/notify', {
@@ -1200,13 +1324,14 @@ export default function App() {
             agentName: nu.name,
             adminName: me.name,
             username: nu.username.toLowerCase(),
-            pin: nu.pin,
+            pin: tempPin,
+            phone: nu.phone || '',
             role: nu.role
           })
         })
       } catch(e) { console.warn('Welcome email failed:', e) }
     }
-    setNu(EU); setModal(null); msg('Usuario creado — se envió email de bienvenida')
+    setNu(EU); setModal(null); msg(`Usuario creado — clave temporal enviada por email${nu.phone?' y WhatsApp':''}`)
   }
   async function deleteUser(id) {
     if (dbReady) await supabase.from('crm_users').delete().eq('id', id)
@@ -1241,18 +1366,19 @@ export default function App() {
     setModal(null); setProfErr(''); msg('Perfil actualizado')
   }
   async function changePin() {
-    if (pinF.cur !== me.pin) { setPinErr('PIN actual incorrecto'); return }
-    if (pinF.n1.length < 4)  { setPinErr('Mínimo 4 dígitos'); return }
-    if (pinF.n1 !== pinF.n2) { setPinErr('Los PINs no coinciden'); return }
-    const nextUsers = users.map(u => u.id === me.id ? {...u, pin:pinF.n1} : u)
-    setUsers(nextUsers); setMe(m => ({...m, pin:pinF.n1}))
+    if (pinF.cur !== me.pin) { setPinErr('Clave actual incorrecta'); return }
+    const err = validarClave(pinF.n1)
+    if (err) { setPinErr(err); return }
+    if (pinF.n1 !== pinF.n2) { setPinErr('Las claves no coinciden'); return }
+    const nextUsers = users.map(u => u.id === me.id ? {...u, pin:pinF.n1, mustChange:false} : u)
+    setUsers(nextUsers); setMe(m => ({...m, pin:pinF.n1, mustChange:false}))
     if (dbReady) {
-      const { error } = await supabase.from('crm_users').update({pin:pinF.n1}).eq('id', me.id)
-      if (error) { setPinErr('No se pudo guardar el PIN en Supabase'); return }
+      const { error } = await supabase.from('crm_users').update({pin:pinF.n1, mustChange:false}).eq('id', me.id)
+      if (error) { setPinErr('No se pudo guardar la clave en Supabase'); return }
     } else {
       localStorage.setItem('rcrm_users', JSON.stringify(nextUsers))
     }
-    setPinF({cur:'',n1:'',n2:''}); setPinErr(''); setModal(null); msg('PIN actualizado')
+    setPinF({cur:'',n1:'',n2:''}); setPinErr(''); setModal(null); msg('Clave actualizada ✅')
   }
 
   // ── Leads ─────────────────────────────────────────────────────────────────
@@ -1798,14 +1924,48 @@ export default function App() {
         </div>
         <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:28,boxShadow:'0 4px 24px rgba(27,79,200,0.10)'}}>
           <Fld label="Usuario"><input value={lu} onChange={e=>setLu(e.target.value)} placeholder="tu.usuario" style={sty.inp}/></Fld>
-          <Fld label="PIN"><input type="password" value={lp} onChange={e=>setLp(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()} placeholder="••••" style={sty.inp}/></Fld>
+          <Fld label="Clave"><input type="password" value={lp} onChange={e=>setLp(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()} placeholder="••••" style={sty.inp}/></Fld>
           {lerr && <p style={{margin:'0 0 10px',fontSize:12,color:'#991b1b'}}>{lerr}</p>}
           <button onClick={login} style={{...sty.btnP,width:'100%',padding:'11px 16px',fontSize:14,borderRadius:10}}>Ingresar</button>
+          <button onClick={olvideClave}
+            style={{width:'100%',marginTop:10,padding:'8px',background:'none',border:'none',
+              fontSize:12,color:B.mid,cursor:'pointer',textDecoration:'underline'}}>
+            Olvidé mi clave
+          </button>
         </div>
         {!dbReady && <p style={{textAlign:'center',fontSize:11,color:'#9ca3af',marginTop:12}}>⚠ Modo offline — configura Supabase para datos persistentes entre dispositivos</p>}
       </div>
     </div>
   )
+  // ── CAMBIO FORZADO DE CLAVE ────────────────────────────────────────────────
+  if (me && nav === '__cambiar_clave__') {
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+        padding:32,background:'linear-gradient(135deg,#E8EFFE 0%,#f0f4ff 100%)'}}>
+        <div style={{width:'100%',maxWidth:380}}>
+          <div style={{textAlign:'center',marginBottom:24}}>
+            <div style={{fontSize:40,marginBottom:8}}>🔐</div>
+            <div style={{fontWeight:800,fontSize:20,color:B.primary}}>Crea tu nueva clave</div>
+            <div style={{fontSize:13,color:B.mid,marginTop:6}}>
+              Tu clave temporal ha expirado. Debes crear una nueva para continuar.
+            </div>
+          </div>
+          <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:28,
+            boxShadow:'0 4px 24px rgba(27,79,200,0.10)'}}>
+            <ForzarCambioClaveForm
+              me={me} users={users} setUsers={setUsers} setMe={setMe}
+              dbReady={dbReady} supabase={supabase}
+              validarClave={validarClave}
+              onSuccess={() => {
+                setNav(me.role==='admin'||me.role==='partner'?'dashboard':me.role==='finanzas'?'dashboard_finanzas':me.role==='operaciones'?'operaciones':'broker_home')
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // ── APP ────────────────────────────────────────────────────────────────────
   return (
     <div style={{fontFamily:'Inter,"SF Pro Display",-apple-system,BlinkMacSystemFont,sans-serif',minHeight:'100vh',background:'#F8FAFC'}}>
@@ -4174,9 +4334,6 @@ Responde en español, directo, sin formalismos.`
             <Fld label="Usuario (login)">
               <input value={editUser.username||''} onChange={e=>setEditUser(p=>({...p,username:e.target.value.toLowerCase()}))} style={sty.inp} placeholder="usuario.login"/>
             </Fld>
-            <Fld label="Nuevo PIN (dejar vacío para no cambiar)">
-              <input type="password" value={editUser._newPin||''} onChange={e=>setEditUser(p=>({...p,_newPin:e.target.value}))} style={sty.inp} placeholder="••••"/>
-            </Fld>
           </div>
           <Fld label="Rol">
             <select value={editUser.role} onChange={e=>setEditUser(p=>({...p,role:e.target.value}))} style={sty.sel}>
@@ -4203,7 +4360,44 @@ Responde en español, directo, sin formalismos.`
             )
           })()}
 
-          <div style={{display:'flex',gap:8,marginTop:4}}>
+          {/* Resetear clave */}
+          <div style={{background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:8,
+            padding:'12px 14px',marginTop:8,display:'flex',alignItems:'center',
+            justifyContent:'space-between',gap:10}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:'#92400e'}}>Resetear clave</div>
+              <div style={{fontSize:11,color:'#b45309'}}>
+                {editUser.mustChange ? '⚠️ Tiene clave temporal pendiente de cambio' : 'Genera una clave temporal y la envía por email y WhatsApp'}
+              </div>
+            </div>
+            <button onClick={async()=>{
+              const tempPin = genTempPin(8)
+              const patch = {pin:tempPin, mustChange:true}
+              const nextUsers = users.map(u => u.id===editUser.id ? {...u,...patch} : u)
+              setUsers(nextUsers)
+              setEditUser(p=>({...p,...patch}))
+              if (dbReady) await supabase.from('crm_users').update(patch).eq('id', editUser.id)
+              const u = users.find(x=>x.id===editUser.id)
+              if (u?.email) {
+                try {
+                  await fetch('/api/notify', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                      type:'reset_password', to:u.email,
+                      agentName:u.name, adminName:me.name,
+                      username:u.username, tempPin, phone:u.phone||''
+                    })
+                  })
+                } catch(e) {}
+              }
+              msg(`✅ Clave temporal enviada a ${u?.name || 'usuario'}`)
+            }} style={{fontSize:11,padding:'6px 12px',borderRadius:8,border:'1px solid #fcd34d',
+              background:'#fff',color:'#92400e',cursor:'pointer',fontWeight:700,flexShrink:0}}>
+              🔑 Resetear
+            </button>
+          </div>
+
+          <div style={{display:'flex',gap:8,marginTop:10}}>
             <button
               onClick={()=>{
                 const fields = {
@@ -4212,7 +4406,6 @@ Responde en español, directo, sin formalismos.`
                   agenda_config: editUser.agenda_config || null,
                   team_leader_id: editUser.team_leader_id || null
                 }
-                if (editUser._newPin && editUser._newPin.length>=4) fields.pin = editUser._newPin
                 updateUserData(editUser.id, fields)
               }}
               disabled={!editUser.name?.trim()}
@@ -4337,7 +4530,7 @@ Responde en español, directo, sin formalismos.`
       {modal==='newUser' && (
         <Modal title="Nuevo usuario" onClose={()=>{setModal(null);setNu(EU)}} wide>
           <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:12}}>
-            {[['Nombre completo *','name','text','Juan Pérez'],['RUT *','rut','text','12.345.678-9'],['Teléfono *','phone','text','+56 9 1234 5678'],['Email *','email','email','juan@email.com'],['Usuario (login) *','username','text','juan.perez'],['PIN *','pin','password','••••']].map(([lbl,key,type,ph])=>(
+            {[['Nombre completo *','name','text','Juan Pérez'],['RUT *','rut','text','12.345.678-9'],['Teléfono *','phone','text','+56 9 1234 5678'],['Email *','email','email','juan@email.com'],['Usuario (login) *','username','text','juan.perez']].map(([lbl,key,type,ph])=>(
               <Fld key={key} label={lbl}><input type={type} value={nu[key]} onChange={e=>setNu(p=>({...p,[key]:e.target.value}))} placeholder={ph} style={sty.inp}/></Fld>
             ))}
           </div>
@@ -4420,10 +4613,13 @@ Responde en español, directo, sin formalismos.`
             </div>
           )}
           <HR/>
-          <div style={{fontSize:12,fontWeight:700,color:B.mid,marginBottom:10}}>Cambiar PIN</div>
-          <Fld label="PIN actual"><input type="password" value={pinF.cur} onChange={e=>setPinF(p=>({...p,cur:e.target.value}))} placeholder="••••" style={sty.inp}/></Fld>
-          <Fld label="Nuevo PIN"><input type="password" value={pinF.n1} onChange={e=>setPinF(p=>({...p,n1:e.target.value}))} placeholder="••••" style={sty.inp}/></Fld>
-          <Fld label="Repetir nuevo PIN"><input type="password" value={pinF.n2} onChange={e=>setPinF(p=>({...p,n2:e.target.value}))} placeholder="••••" style={sty.inp}/></Fld>
+          <div style={{fontSize:12,fontWeight:700,color:B.mid,marginBottom:10}}>Cambiar clave</div>
+          <Fld label="Clave actual"><input type="password" value={pinF.cur} onChange={e=>setPinF(p=>({...p,cur:e.target.value}))} placeholder="••••" style={sty.inp}/></Fld>
+          <Fld label="Nueva clave"><input type="password" value={pinF.n1} onChange={e=>setPinF(p=>({...p,n1:e.target.value}))} placeholder="Mínimo 6 caracteres, letras y números" style={sty.inp}/></Fld>
+          <Fld label="Repetir nueva clave"><input type="password" value={pinF.n2} onChange={e=>setPinF(p=>({...p,n2:e.target.value}))} placeholder="••••" style={sty.inp}/></Fld>
+          <div style={{fontSize:11,color:'#6b7280',marginBottom:8,background:'#EFF6FF',padding:'6px 10px',borderRadius:6}}>
+            Entre 6 y 12 caracteres · debe tener letras y números (ej: Rb4xK2mP)
+          </div>
           {pinErr&&<p style={{margin:'0 0 8px',fontSize:12,color:'#991b1b'}}>{pinErr}</p>}
           <button onClick={changePin} style={{...sty.btnO,width:'100%'}}>Actualizar PIN</button>
         </Modal>
