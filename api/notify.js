@@ -441,14 +441,28 @@ Ingresa al CRM y súbelos en la ficha del cliente. Tienes 3 días 💪`
           <table style="width:100%;border-collapse:collapse;font-size:14px;">
             <tr><td style="color:#6b7280;padding:5px 0;width:100px;">🌐 URL</td><td style="font-weight:700;color:#1B4FC8;"><a href="${CRM_URL}" style="color:#1B4FC8;">${CRM_URL}</a></td></tr>
             <tr><td style="color:#6b7280;padding:5px 0;">👤 Usuario</td><td style="font-weight:700;color:#111827;font-size:16px;">${username}</td></tr>
-            <tr><td style="color:#6b7280;padding:5px 0;">🔑 PIN</td><td style="font-weight:700;color:#111827;font-size:20px;letter-spacing:4px;">${pin}</td></tr>
+            <tr><td style="color:#6b7280;padding:5px 0;">🔑 Clave</td><td style="font-weight:700;color:#1B4FC8;font-size:18px;letter-spacing:3px;">${pin}</td></tr>
             <tr><td style="color:#6b7280;padding:5px 0;">🏷️ Rol</td><td style="font-weight:600;color:#374151;">${roleLabel}</td></tr>
           </table>
         </div>
         <div style="background:#FFFBEB;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;margin-bottom:20px;">
           <p style="margin:0;font-size:13px;color:#92400e;">
-            ⚠️ <strong>PIN temporal</strong> — una vez que ingreses, puedes cambiarlo desde 
-            <strong>"Mi perfil"</strong> en la barra superior del CRM.
+            ⚠️ <strong>Clave temporal</strong> — al ingresar deberás crear una nueva clave alfanumérica.
+          </p>
+        </div>
+        <div style="background:#F0FDF4;border:1px solid #86efac;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+          <div style="display:flex;align-items:center;gap:10;margin-bottom:10px;">
+            <span style="font-size:22px;">📅</span>
+            <strong style="color:#14532d;font-size:14px;">Paso importante: conecta tu Google Calendar</strong>
+          </div>
+          <p style="margin:0 0 10px;font-size:13px;color:#166534;">
+            Para que te puedan asignar reuniones con clientes directamente desde el CRM, necesitas conectar tu Google Calendar al entrar por primera vez.
+          </p>
+          <p style="margin:0 0 12px;font-size:13px;color:#166534;">
+            Una vez dentro del CRM, ve a <strong>Mi perfil → Conectar Google Calendar</strong> y sigue los pasos. Solo toma 1 minuto.
+          </p>
+          <p style="margin:0;font-size:12px;color:#4ade80;background:#14532d;border-radius:6px;padding:8px 12px;display:inline-block;">
+            Sin Google Calendar conectado no podrás recibir reuniones agendadas con clientes.
           </p>
         </div>`
 
