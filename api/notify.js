@@ -379,6 +379,54 @@ Ingresa al CRM y súbelos en la ficha del cliente. Tienes 3 días 💪`
       </div>`
       to = body.to
     }
+    // ── Reset de clave — email + WhatsApp ─────────────────────────────────────
+    if (type === 'reset_password') {
+      const { username, tempPin, phone } = body
+      subject = `🔑 Tu clave temporal de Rabbitts CRM`
+      body_html = `
+        <p style="margin:0 0 6px;font-size:14px;color:#6b7280;">Hola <strong style="color:#111827;">${agentName}</strong>,</p>
+        <p style="margin:0 0 20px;font-size:14px;color:#6b7280;">Se generó una clave temporal para tu acceso al CRM de Rabbitts Capital.</p>
+        <div style="background:#E8EFFE;border-radius:10px;padding:20px 24px;margin-bottom:16px;border-left:4px solid #1B4FC8;">
+          <table style="width:100%;border-collapse:collapse;font-size:14px;">
+            <tr><td style="color:#6b7280;padding:5px 0;width:120px;">🌐 URL</td><td style="font-weight:700;color:#1B4FC8;"><a href="${CRM_URL}">${CRM_URL}</a></td></tr>
+            <tr><td style="color:#6b7280;padding:5px 0;">👤 Usuario</td><td style="font-weight:700;color:#111827;font-size:16px;">${username}</td></tr>
+            <tr><td style="color:#6b7280;padding:5px 0;">🔑 Clave temporal</td><td style="font-weight:700;color:#1B4FC8;font-size:20px;letter-spacing:3px;">${tempPin}</td></tr>
+          </table>
+        </div>
+        <div style="background:#FFFBEB;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;margin-bottom:20px;">
+          <p style="margin:0;font-size:13px;color:#92400e;">⚠️ <strong>Clave temporal de un solo uso.</strong> Al ingresar deberás crear una nueva clave alfanumérica de mínimo 6 caracteres.</p>
+        </div>`
+
+      // Enviar también por WhatsApp si tiene teléfono
+      if (phone) {
+        try {
+          const EVO_URL = process.env.EVO_URL || 'https://wa.rabbittscapital.com'
+          const EVO_KEY = process.env.EVO_KEY || 'rabbitts2024'
+          const cleanPhone = String(phone).replace(/[^0-9]/g, '')
+          const waText = `🔑 Hola ${agentName}, se generó una clave temporal para tu acceso al CRM.\n\nUsuario: *${username}*\nClave temporal: *${tempPin}*\n\nIngresa en ${CRM_URL} y crea una nueva clave al entrar.`
+          const sbUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
+          const sbKey = (process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
+          let instanceName = ''
+          if (sbUrl && sbKey) {
+            const r = await fetch(`${sbUrl}/rest/v1/crm_settings?key=eq.wa_numeros&select=value`, {
+              headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
+            })
+            const rows = await r.json()
+            const nums = rows?.[0]?.value || []
+            const active = nums.find(n => n.activo !== false)
+            instanceName = active?.instanceName || ''
+          }
+          if (instanceName && cleanPhone) {
+            await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
+              body: JSON.stringify({ number: cleanPhone, text: waText, delay: 1000 })
+            })
+          }
+        } catch(e) { console.warn('[notify] WA reset_password failed:', e.message) }
+      }
+    }
+
     if (type === 'welcome') {
       const { username, pin, role } = body
       const roleLabel = ROLE_LABELS[role] || role
