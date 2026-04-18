@@ -6079,10 +6079,11 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
   const [loading, setLoading]       = React.useState(true)
   const [showForm, setShowForm]     = React.useState(false)
   const [testing, setTesting]       = React.useState(null)
-  const [qrData, setQrData]         = React.useState(null)   // { instanceName, qr }
+  const [qrData, setQrData]         = React.useState(null)
   const [connecting, setConnecting] = React.useState(false)
   const [newName, setNewName]       = React.useState('')
-  const [statusMsg, setStatusMsg]   = React.useState(null)   // { type, text }
+  const [newTipo, setNewTipo]       = React.useState('cliente')  // 'cliente' | 'interno'
+  const [statusMsg, setStatusMsg]   = React.useState(null)
 
   const EVO_URL = 'https://wa.rabbittscapital.com'
   const EVO_KEY = 'rabbitts2024'
@@ -6162,7 +6163,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
       const managerUrl = `${EVO_URL}/manager`
       window.open(managerUrl, '_blank')
       
-      setQrData({ instanceName, qr: null, nombre: newName.trim(), managerUrl })
+      setQrData({ instanceName, qr: null, nombre: newName.trim(), tipo: newTipo, managerUrl })
       setStatusMsg({type:'info', text:`Instancia creada. Escanea el QR en el panel que se abrió → busca "${instanceName}" → "Get QR Code"`})
 
       // 3. Polling para detectar conexión
@@ -6190,6 +6191,7 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
               evoUrl: EVO_URL,
               evoKey: EVO_KEY,
               activo: true,
+              tipo: qrData?.tipo || newTipo || 'cliente',
               createdAt: new Date().toISOString()
             }
             await saveNumeros([...numeros, newNum])
@@ -6299,13 +6301,30 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
           <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
             <div style={{width:10,height:10,borderRadius:'50%',background:num.activo?'#22c55e':'#9ca3af',flexShrink:0}}/>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{num.nombre}</div>
+              <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                <div style={{fontWeight:700,fontSize:13,color:'#0F172A'}}>{num.nombre}</div>
+                {/* Badge tipo */}
+                <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,fontWeight:700,
+                  background: num.tipo==='interno' ? '#FEF3C7' : '#DCFCE7',
+                  color: num.tipo==='interno' ? '#92400e' : '#14532d',
+                  border: `1px solid ${num.tipo==='interno'?'#fcd34d':'#86efac'}`}}>
+                  {num.tipo==='interno' ? '🤖 Jefe de ventas' : '💬 Clientes'}
+                </span>
+              </div>
               <div style={{fontSize:11,color:'#6b7280',marginTop:1}}>
                 {num.numero && <span style={{marginRight:8}}>📞 {num.numero}</span>}
                 <span style={{fontFamily:'monospace',fontSize:10}}>{num.instanceName?.slice(0,20)}...</span>
               </div>
             </div>
             <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center',flexWrap:'wrap'}}>
+              {/* Toggle tipo */}
+              <button onClick={async()=>{
+                const next = numeros.map(n => n.id===num.id ? {...n, tipo: n.tipo==='interno'?'cliente':'interno'} : n)
+                await saveNumeros(next)
+              }} style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',
+                background:'#F8FAFC',color:'#475569',cursor:'pointer',fontWeight:600}}>
+                {num.tipo==='interno' ? '→ Clientes' : '→ Jefe ventas'}
+              </button>
               <button onClick={()=>toggleActivo(num.id)}
                 style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'none',cursor:'pointer',fontWeight:700,
                   background:num.activo?'#DCFCE7':'#F3F4F6',color:num.activo?'#14532d':'#6b7280'}}>
@@ -6315,7 +6334,6 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
                 style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#fff',cursor:'pointer',color:B.primary,fontWeight:600}}>
                 {testing===num.id?'...':'Probar'}
               </button>
-
               <button onClick={()=>eliminarNumero(num)}
                 style={{fontSize:11,padding:'4px 8px',borderRadius:6,border:'1px solid #fca5a5',background:'#FEF2F2',color:'#991b1b',cursor:'pointer'}}>✕</button>
             </div>
@@ -6353,6 +6371,24 @@ function WhatsAppNumerosPanel({iaConfig, upd, supabase, dbReady}) {
           <Fld label="Nombre descriptivo *">
             <input value={newName} onChange={e=>setNewName(e.target.value)} style={sty.inp} placeholder="Ej: Rabbitts Chile +56 9 6629 9729"/>
           </Fld>
+          <div style={{marginTop:10}}>
+            <div style={{fontSize:11,fontWeight:600,color:'#374151',marginBottom:6}}>Tipo de número</div>
+            <div style={{display:'flex',gap:8}}>
+              {[
+                {val:'cliente', label:'💬 Clientes', sub:'Atiende leads y califica clientes', bg:'#DCFCE7', col:'#14532d', border:'#86efac'},
+                {val:'interno', label:'🤖 Jefe de ventas', sub:'Asiste a brokers, resúmenes, consultas', bg:'#FEF3C7', col:'#92400e', border:'#fcd34d'},
+              ].map(op => (
+                <div key={op.val} onClick={()=>setNewTipo(op.val)}
+                  style={{flex:1,padding:'10px 12px',borderRadius:10,cursor:'pointer',
+                    border:`2px solid ${newTipo===op.val ? op.border : '#E2E8F0'}`,
+                    background: newTipo===op.val ? op.bg : '#fff',
+                    transition:'all .15s'}}>
+                  <div style={{fontWeight:700,fontSize:12,color:newTipo===op.val?op.col:'#374151'}}>{op.label}</div>
+                  <div style={{fontSize:10,color:'#6b7280',marginTop:2}}>{op.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
           <div style={{display:'flex',gap:8,marginTop:10}}>
             <button onClick={conectarNumero} disabled={connecting||!newName.trim()}
               style={{...sty.btnP,flex:1,opacity:connecting||!newName.trim()?0.6:1}}>
@@ -6573,6 +6609,216 @@ function RabitoStageTester({ iaConfig, sty }) {
   )
 }
 
+// ─── Jefe de Ventas Panel ────────────────────────────────────────────────────
+function JefeVentasPanel({ iaConfig, upd, supabase, dbReady }) {
+  const B = { primary:'#2563EB', light:'#EFF6FF', mid:'#64748B' }
+  const sty = { inp:{padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,width:'100%',boxSizing:'border-box'} }
+
+  const [config, setConfig]   = React.useState({})
+  const [saving, setSaving]   = React.useState(false)
+  const [testing, setTesting] = React.useState(false)
+  const [numeros, setNumeros] = React.useState([])
+  const [msg, setMsg]         = React.useState(null)
+
+  React.useEffect(() => {
+    if (!dbReady || !supabase) return
+    supabase.from('crm_settings').select('value').eq('key','jefe_ventas_config').single()
+      .then(({data}) => { if (data?.value) setConfig(data.value) }).catch(()=>{})
+    supabase.from('crm_settings').select('value').eq('key','wa_numeros').single()
+      .then(({data}) => { setNumeros(data?.value || []) }).catch(()=>{})
+  }, [dbReady])
+
+  const save = async (patch) => {
+    const next = { ...config, ...patch }
+    setConfig(next)
+    setSaving(true)
+    if (dbReady && supabase) await supabase.from('crm_settings').upsert({key:'jefe_ventas_config', value:next})
+    setSaving(false)
+  }
+
+  const testCron = async () => {
+    setTesting(true); setMsg(null)
+    try {
+      const r = await fetch('/api/whatsapp?action=cron&secret=rabbitts2024')
+      const d = await r.json()
+      setMsg({ ok: d.ok, txt: d.ok ? `✅ Enviado a ${d.enviados} brokers` : '❌ Error: ' + JSON.stringify(d) })
+    } catch(e) { setMsg({ ok: false, txt: '❌ Error: ' + e.message }) }
+    setTesting(false)
+  }
+
+  const instanciaInterna = numeros.find(n => n.tipo === 'interno' && n.activo !== false)
+  const instanciasInternas = numeros.filter(n => n.tipo === 'interno')
+  const DIAS = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo']
+
+  return (
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+
+      {/* Estado instancia interna */}
+      <div style={{gridColumn:'1/-1',padding:'12px 16px',borderRadius:12,
+        background: instanciaInterna ? '#F0FDF4' : '#FEF3C7',
+        border: `1px solid ${instanciaInterna ? '#86efac' : '#fcd34d'}`}}>
+        {instanciaInterna ? (
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:20}}>🟢</span>
+            <div>
+              <div style={{fontWeight:700,fontSize:13,color:'#14532d'}}>Número interno conectado</div>
+              <div style={{fontSize:12,color:'#166534'}}>{instanciaInterna.nombre} · {instanciaInterna.numero}</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:20}}>⚠️</span>
+            <div>
+              <div style={{fontWeight:700,fontSize:13,color:'#92400e'}}>Sin número interno</div>
+              <div style={{fontSize:12,color:'#78350f'}}>Ve a la pestaña Configuración → Números WhatsApp → Conectar número → Tipo: Jefe de ventas</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Toggle principal */}
+      <div style={{gridColumn:'1/-1',background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:14,color:'#0F172A'}}>🤖 Rabito Jefe de Ventas</div>
+            <div style={{fontSize:12,color:B.mid,marginTop:2}}>
+              Resúmenes diarios automáticos, seguimiento de brokers y consultas de proyectos por WhatsApp
+            </div>
+          </div>
+          <button onClick={()=>save({activo:!config.activo})}
+            style={{width:44,height:24,borderRadius:99,border:'none',cursor:'pointer',
+              background:config.activo?B.primary:'#e5e7eb',position:'relative',transition:'background .2s',flexShrink:0}}>
+            <div style={{position:'absolute',top:2,left:config.activo?22:2,width:20,height:20,
+              borderRadius:'50%',background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+          </button>
+        </div>
+      </div>
+
+      {/* Resumen diario */}
+      <div style={{gridColumn:'1/-1',background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+        <p style={{margin:'0 0 14px',fontSize:13,fontWeight:700,color:B.primary}}>📅 Resumen diario automático</p>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+          <div>
+            <label style={{fontSize:11,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Hora de envío</label>
+            <input type="time" value={config.horaEnvio||'08:30'}
+              onChange={e=>save({horaEnvio:e.target.value})}
+              style={sty.inp}/>
+          </div>
+          <div>
+            <label style={{fontSize:11,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>Días de envío</label>
+            <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+              {DIAS.map((d,i) => {
+                const dias = config.diasEnvio || [1,2,3,4,5]
+                const activo = dias.includes(i)
+                return (
+                  <button key={i} onClick={()=>{
+                    const next = activo ? dias.filter(x=>x!==i) : [...dias,i]
+                    save({diasEnvio:next})
+                  }} style={{fontSize:10,padding:'3px 7px',borderRadius:6,cursor:'pointer',fontWeight:700,
+                    border:activo?`1px solid ${B.primary}`:'1px solid #E2E8F0',
+                    background:activo?B.light:'#fff',color:activo?B.primary:'#6b7280'}}>
+                    {d.slice(0,3)}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+        <div>
+          <label style={{fontSize:11,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>
+            Mensaje de cierre del resumen
+          </label>
+          <textarea value={config.mensajeCierre||''}
+            onChange={e=>save({mensajeCierre:e.target.value})}
+            placeholder="¡Mucho éxito hoy! Cualquier consulta sobre proyectos o estrategias, escríbeme acá 🐰"
+            style={{...sty.inp,minHeight:60,resize:'vertical',fontSize:12}}/>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginTop:12}}>
+          <button onClick={testCron} disabled={testing||!instanciaInterna}
+            style={{padding:'7px 16px',borderRadius:8,border:'none',cursor:instanciaInterna?'pointer':'not-allowed',
+              fontWeight:700,fontSize:12,
+              background:instanciaInterna?B.primary:'#e5e7eb',
+              color:instanciaInterna?'#fff':'#9ca3af'}}>
+            {testing ? '⏳ Enviando...' : '▶ Probar ahora'}
+          </button>
+          {saving && <span style={{fontSize:11,color:B.mid}}>Guardando...</span>}
+          {msg && <span style={{fontSize:12,fontWeight:600,color:msg.ok?'#14532d':'#991b1b'}}>{msg.txt}</span>}
+        </div>
+      </div>
+
+      {/* Comportamiento Rabito interno */}
+      <div style={{gridColumn:'1/-1',background:'#fff',border:'1px solid #E2E8F0',borderRadius:12,padding:16}}>
+        <p style={{margin:'0 0 4px',fontSize:13,fontWeight:700,color:B.primary}}>🧠 Comportamiento de Rabito interno</p>
+        <p style={{margin:'0 0 12px',fontSize:11,color:B.mid}}>
+          Rabito interno tiene acceso al Cerebro Rabito completo. Lee documentos, condiciones comerciales y entrenamiento para responder consultas de brokers.
+        </p>
+        <div style={{marginBottom:10}}>
+          <label style={{fontSize:11,fontWeight:600,color:'#374151',display:'block',marginBottom:4}}>
+            Instrucciones del jefe de ventas
+          </label>
+          <textarea value={config.instrucciones||''}
+            onChange={e=>save({instrucciones:e.target.value})}
+            placeholder="Ej: Responde como un jefe de ventas experimentado. Cuando te consulten proyectos con bono pie, busca en las condiciones comerciales y lista los que aplican. Motiva a los brokers a contactar sus leads urgentes."
+            style={{...sty.inp,minHeight:80,resize:'vertical',fontSize:12}}/>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 12px',
+            borderRadius:8,background:'#F8FAFC',border:'1px solid #E2E8F0'}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:'#0F172A'}}>Leer condiciones comerciales</div>
+              <div style={{fontSize:10,color:B.mid}}>Responde consultas de proyectos y condiciones</div>
+            </div>
+            <button onClick={()=>save({leerCondiciones:!config.leerCondiciones})}
+              style={{width:40,height:22,borderRadius:99,border:'none',cursor:'pointer',
+                background:config.leerCondiciones!==false?B.primary:'#e5e7eb',position:'relative'}}>
+              <div style={{position:'absolute',top:2,left:config.leerCondiciones!==false?20:2,
+                width:18,height:18,borderRadius:'50%',background:'#fff',transition:'left .2s',
+                boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+            </button>
+          </div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 12px',
+            borderRadius:8,background:'#F8FAFC',border:'1px solid #E2E8F0'}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:'#0F172A'}}>Alertar leads críticos</div>
+              <div style={{fontSize:10,color:B.mid}}>Menciona en el resumen leads +7 días</div>
+            </div>
+            <button onClick={()=>save({alertarCriticos:!config.alertarCriticos})}
+              style={{width:40,height:22,borderRadius:99,border:'none',cursor:'pointer',
+                background:config.alertarCriticos!==false?B.primary:'#e5e7eb',position:'relative'}}>
+              <div style={{position:'absolute',top:2,left:config.alertarCriticos!==false?20:2,
+                width:18,height:18,borderRadius:'50%',background:'#fff',transition:'left .2s',
+                boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* URL del cron */}
+      <div style={{gridColumn:'1/-1',background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:12,padding:14}}>
+        <p style={{margin:'0 0 8px',fontSize:12,fontWeight:700,color:'#374151'}}>⏰ Configurar horario automático</p>
+        <p style={{margin:'0 0 8px',fontSize:11,color:B.mid}}>
+          Para que el resumen se envíe automáticamente a la hora configurada, agrega esta URL en un servicio de cron job gratuito como cron-job.org:
+        </p>
+        <div style={{background:'#1e1b4b',color:'#e0e7ff',padding:'10px 14px',borderRadius:8,
+          fontSize:12,fontFamily:'monospace',display:'flex',alignItems:'center',gap:10,justifyContent:'space-between'}}>
+          <span>{typeof window!=='undefined'?window.location.origin:'https://crm.rabbittscapital.com'}/api/whatsapp?action=cron&secret=rabbitts2024</span>
+          <button onClick={()=>{
+            navigator.clipboard.writeText(`${window.location.origin}/api/whatsapp?action=cron&secret=rabbitts2024`)
+            setMsg({ok:true,txt:'✅ Copiado'})
+            setTimeout(()=>setMsg(null),2000)
+          }} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'none',background:'#4c1d95',
+            color:'#e0e7ff',cursor:'pointer',flexShrink:0}}>
+            📋 Copiar
+          </button>
+        </div>
+        <p style={{margin:'8px 0 0',fontSize:10,color:'#94a3b8'}}>
+          En cron-job.org: crear cuenta gratis → New Job → pegar URL → Schedule: todos los días a las {config.horaEnvio||'08:30'} → Save
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const [tab, setTab] = useState('config')
@@ -6623,6 +6869,7 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
   const TABS = [
     {id:'config',    label:'⚙️ Configuración'},
     {id:'cerebro',   label:'🧠 Cerebro Rabito'},
+    {id:'jefe',      label:'🤖 Jefe de Ventas'},
     {id:'eventos',   label:'🔔 Eventos'},
     {id:'plantillas',label:'💬 Plantillas'},
     {id:'entrena',   label:'✏️ Entrenamiento'},
@@ -6881,6 +7128,11 @@ function IAConfigView({iaConfig, setIaConfig, users, leads, supabase, dbReady}) 
           </div>
 
         </div>
+      )}
+
+      {/* TAB: JEFE DE VENTAS */}
+      {tab==='jefe' && (
+        <JefeVentasPanel iaConfig={iaConfig} upd={upd} supabase={supabase} dbReady={dbReady}/>
       )}
 
       {/* TAB: CEREBRO DE RABITO */}
