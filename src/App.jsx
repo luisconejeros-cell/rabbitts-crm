@@ -1787,22 +1787,194 @@ export default function App() {
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (!me) return (
-    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:32,background:'linear-gradient(135deg,#E8EFFE 0%,#f0f4ff 100%)'}}>
-      <div style={{width:'100%',maxWidth:360}}>
-        <div style={{display:'flex',flexDirection:'column',alignItems:'center',marginBottom:28,gap:isMobile?8:12}}>
-          <RabbitsLogo size={80}/>
-          <div style={{textAlign:'center'}}>
-            <div style={{fontWeight:800,fontSize:22,color:B.primary,letterSpacing:'-0.5px'}}>Rabbitts Capital</div>
-            <div style={{fontSize:12,color:B.mid,fontWeight:500,letterSpacing:'0.5px',textTransform:'uppercase'}}>CRM Inmobiliario</div>
+    <div style={{
+      minHeight:'100vh', display:'flex', fontFamily:'"DM Sans","Inter",sans-serif',
+      background:'#0a0f1e', overflow:'hidden', position:'relative'
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Playfair+Display:wght@600&display=swap');
+        @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
+        @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:.8} }
+        @keyframes slideUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes glow { 0%,100%{box-shadow:0 0 40px rgba(99,179,237,0.15)} 50%{box-shadow:0 0 80px rgba(99,179,237,0.3)} }
+        .login-input { transition: border-color .2s, box-shadow .2s; }
+        .login-input:focus { outline:none; border-color:#63b3ed !important; box-shadow:0 0 0 3px rgba(99,179,237,0.15) !important; }
+        .login-btn { transition: transform .15s, box-shadow .15s, background .2s; }
+        .login-btn:hover { transform:translateY(-1px); box-shadow:0 8px 32px rgba(99,179,237,0.4) !important; }
+        .login-btn:active { transform:translateY(0); }
+      `}</style>
+
+      {/* Fondo — ciudad de noche con gradiente */}
+      <div style={{position:'absolute',inset:0,background:'linear-gradient(135deg,#0a0f1e 0%,#0d1832 40%,#0a1628 100%)'}}>
+        {/* Puntos de luz tipo ciudad */}
+        {[
+          {top:'15%',left:'8%',size:2,delay:0},{top:'25%',left:'18%',size:1,delay:1.2},
+          {top:'8%',left:'32%',size:3,delay:0.5},{top:'18%',left:'45%',size:1.5,delay:2},
+          {top:'35%',left:'72%',size:2,delay:0.8},{top:'12%',left:'85%',size:1,delay:1.5},
+          {top:'45%',left:'92%',size:2.5,delay:0.3},{top:'55%',right:'12%',size:1,delay:1.8},
+          {top:'70%',left:'5%',size:1.5,delay:0.9},{top:'80%',left:'22%',size:2,delay:2.2},
+          {top:'65%',left:'88%',size:1,delay:0.6},{top:'85%',left:'65%',size:2,delay:1.4},
+        ].map((p,i)=>(
+          <div key={i} style={{
+            position:'absolute',top:p.top,left:p.left,right:p.right,
+            width:p.size,height:p.size,borderRadius:'50%',
+            background:'#63b3ed',
+            animation:`pulse ${2+i*0.3}s ease-in-out ${p.delay}s infinite`
+          }}/>
+        ))}
+        {/* Líneas de horizonte */}
+        <div style={{position:'absolute',bottom:0,left:0,right:0,height:'35%',
+          background:'linear-gradient(180deg,transparent,rgba(13,24,50,0.8))'}}/>
+        {/* Silhouette ciudad */}
+        <svg style={{position:'absolute',bottom:0,left:0,right:0,width:'100%',opacity:0.12}} viewBox="0 0 1440 200" preserveAspectRatio="none">
+          <path d="M0,200 L0,160 L40,160 L40,120 L60,120 L60,80 L80,80 L80,120 L120,120 L120,100 L140,100 L140,60 L160,60 L160,100 L200,100 L200,130 L240,130 L240,90 L260,90 L260,50 L280,50 L280,90 L320,90 L320,140 L360,140 L360,100 L380,100 L380,70 L400,70 L400,100 L440,100 L440,120 L480,120 L480,80 L500,80 L500,40 L520,40 L520,80 L560,80 L560,110 L600,110 L600,130 L640,130 L640,95 L660,95 L660,55 L680,55 L680,95 L720,95 L720,120 L760,120 L760,85 L800,85 L800,50 L820,50 L820,85 L860,85 L860,115 L900,115 L900,140 L940,140 L940,100 L960,100 L960,65 L980,65 L980,100 L1020,100 L1020,130 L1060,130 L1060,90 L1100,90 L1100,60 L1120,60 L1120,90 L1160,90 L1160,120 L1200,120 L1200,150 L1240,150 L1240,110 L1280,110 L1280,140 L1320,140 L1320,160 L1360,160 L1360,130 L1400,130 L1400,160 L1440,160 L1440,200 Z" fill="#63b3ed"/>
+        </svg>
+        {/* Reflejo de luz central */}
+        <div style={{position:'absolute',top:'20%',left:'50%',transform:'translateX(-50%)',
+          width:600,height:600,borderRadius:'50%',
+          background:'radial-gradient(circle,rgba(99,179,237,0.06) 0%,transparent 70%)'}}/>
+      </div>
+
+      {/* Panel izquierdo — solo desktop */}
+      {!isMobile && (
+        <div style={{flex:1,display:'flex',flexDirection:'column',justifyContent:'center',
+          padding:'60px 80px',position:'relative',zIndex:1,animation:'slideUp .8s ease forwards'}}>
+          <div style={{marginBottom:48}}>
+            <div style={{fontSize:11,letterSpacing:'4px',textTransform:'uppercase',
+              color:'#63b3ed',fontWeight:500,marginBottom:16,opacity:0.8}}>
+              Plataforma de inversión
+            </div>
+            <div style={{fontSize:52,fontFamily:'"Playfair Display",serif',fontWeight:600,
+              color:'#f0f6ff',lineHeight:1.1,marginBottom:20}}>
+              Inversión<br/>
+              <span style={{color:'#63b3ed'}}>inmobiliaria</span><br/>
+              inteligente.
+            </div>
+            <div style={{fontSize:15,color:'rgba(240,246,255,0.45)',lineHeight:1.7,maxWidth:360,fontWeight:300}}>
+              Gestiona tus leads, brokers y operaciones desde un solo lugar. Con IA integrada para que nada quede sin seguimiento.
+            </div>
+          </div>
+          {/* Métricas decorativas */}
+          <div style={{display:'flex',gap:40}}>
+            {[['$15K UF','Revenue primer año'],['50+','Brokers en red'],['300+','Proyectos activos']].map(([v,l])=>(
+              <div key={l}>
+                <div style={{fontSize:22,fontWeight:600,color:'#f0f6ff',fontFamily:'"Playfair Display",serif'}}>{v}</div>
+                <div style={{fontSize:11,color:'rgba(240,246,255,0.35)',marginTop:2,letterSpacing:'0.5px'}}>{l}</div>
+              </div>
+            ))}
           </div>
         </div>
-        <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:28,boxShadow:'0 4px 24px rgba(27,79,200,0.10)'}}>
-          <Fld label="Usuario"><input value={lu} onChange={e=>setLu(e.target.value)} placeholder="tu.usuario" style={sty.inp}/></Fld>
-          <Fld label="PIN"><input type="password" value={lp} onChange={e=>setLp(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()} placeholder="••••" style={sty.inp}/></Fld>
-          {lerr && <p style={{margin:'0 0 10px',fontSize:12,color:'#991b1b'}}>{lerr}</p>}
-          <button onClick={login} style={{...sty.btnP,width:'100%',padding:'11px 16px',fontSize:14,borderRadius:10}}>Ingresar</button>
+      )}
+
+      {/* Panel derecho — login */}
+      <div style={{
+        width: isMobile ? '100%' : 420,
+        display:'flex', flexDirection:'column', justifyContent:'center',
+        padding: isMobile ? 28 : '60px 48px',
+        position:'relative', zIndex:1,
+        background:'rgba(10,15,30,0.6)',
+        backdropFilter:'blur(24px)',
+        borderLeft: isMobile ? 'none' : '1px solid rgba(99,179,237,0.12)',
+        animation:'slideUp .6s ease .2s both'
+      }}>
+        {/* Logo + nombre */}
+        <div style={{marginBottom:40, textAlign: isMobile ? 'center' : 'left'}}>
+          <RabbitsLogo size={44}/>
+          <div style={{marginTop:16,fontSize:11,letterSpacing:'3px',textTransform:'uppercase',
+            color:'rgba(240,246,255,0.4)',fontWeight:400}}>
+            CRM · INMOBILIARIO
+          </div>
         </div>
-        {!dbReady && <p style={{textAlign:'center',fontSize:11,color:'#9ca3af',marginTop:12}}>⚠ Modo offline — configura Supabase para datos persistentes entre dispositivos</p>}
+
+        <div style={{marginBottom:32}}>
+          <div style={{fontSize:24,fontWeight:600,color:'#f0f6ff',fontFamily:'"Playfair Display",serif',marginBottom:6}}>
+            Bienvenido
+          </div>
+          <div style={{fontSize:13,color:'rgba(240,246,255,0.4)',fontWeight:300}}>
+            Ingresa tus credenciales para continuar
+          </div>
+        </div>
+
+        {/* Campos */}
+        <div style={{marginBottom:16}}>
+          <label style={{display:'block',fontSize:11,letterSpacing:'1px',textTransform:'uppercase',
+            color:'rgba(240,246,255,0.4)',fontWeight:500,marginBottom:8}}>
+            Usuario
+          </label>
+          <div style={{position:'relative'}}>
+            <span style={{position:'absolute',left:14,top:'50%',transform:'translateY(-50%)',
+              fontSize:15,opacity:0.35}}>👤</span>
+            <input
+              className="login-input"
+              value={lu} onChange={e=>setLu(e.target.value)}
+              placeholder="tu.usuario"
+              style={{
+                width:'100%', boxSizing:'border-box',
+                padding:'13px 14px 13px 40px',
+                background:'rgba(240,246,255,0.05)',
+                border:'1px solid rgba(99,179,237,0.2)',
+                borderRadius:10, fontSize:14,
+                color:'#f0f6ff',
+              }}
+            />
+          </div>
+        </div>
+
+        <div style={{marginBottom:28}}>
+          <label style={{display:'block',fontSize:11,letterSpacing:'1px',textTransform:'uppercase',
+            color:'rgba(240,246,255,0.4)',fontWeight:500,marginBottom:8}}>
+            PIN
+          </label>
+          <div style={{position:'relative'}}>
+            <span style={{position:'absolute',left:14,top:'50%',transform:'translateY(-50%)',
+              fontSize:15,opacity:0.35}}>🔒</span>
+            <input
+              className="login-input"
+              type="password" value={lp}
+              onChange={e=>setLp(e.target.value)}
+              onKeyDown={e=>e.key==='Enter'&&login()}
+              placeholder="••••"
+              style={{
+                width:'100%', boxSizing:'border-box',
+                padding:'13px 14px 13px 40px',
+                background:'rgba(240,246,255,0.05)',
+                border:'1px solid rgba(99,179,237,0.2)',
+                borderRadius:10, fontSize:14,
+                color:'#f0f6ff', letterSpacing:4,
+              }}
+            />
+          </div>
+        </div>
+
+        {lerr && (
+          <div style={{marginBottom:14,padding:'10px 14px',borderRadius:8,
+            background:'rgba(239,68,68,0.12)',border:'1px solid rgba(239,68,68,0.3)',
+            fontSize:12,color:'#fca5a5'}}>
+            {lerr}
+          </div>
+        )}
+
+        <button className="login-btn" onClick={login} style={{
+          width:'100%', padding:'14px',
+          background:'linear-gradient(135deg,#2563eb,#1d4ed8)',
+          border:'none', borderRadius:10,
+          fontSize:14, fontWeight:600, color:'#fff',
+          cursor:'pointer', letterSpacing:'0.3px',
+          boxShadow:'0 4px 20px rgba(37,99,235,0.3)'
+        }}>
+          Ingresar
+        </button>
+
+        {!dbReady && (
+          <p style={{textAlign:'center',fontSize:11,color:'rgba(240,246,255,0.25)',marginTop:20}}>
+            ⚠ Modo offline — configura Supabase
+          </p>
+        )}
+
+        <div style={{marginTop:40,paddingTop:24,borderTop:'1px solid rgba(99,179,237,0.1)',
+          textAlign:'center',fontSize:10,color:'rgba(240,246,255,0.2)',letterSpacing:'0.5px'}}>
+          RABBITTS CAPITAL · CRM INMOBILIARIO
+        </div>
       </div>
     </div>
   )
