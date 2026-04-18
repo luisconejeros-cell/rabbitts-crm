@@ -137,31 +137,64 @@ async function loadTraining(db, iaConfig) {
   }
 
   if (db) {
-    // De agent_training en DB
+    // De agent_training en DB (incluye feedback de "Sugerir mejora")
     try {
       const { data } = await db.from('crm_settings').select('value').eq('key', 'agent_training').single()
       const items = Array.isArray(data?.value) ? data.value : Array.isArray(data?.value?.items) ? data.value.items : []
       if (items.length) {
-        lines.push('=== REGLAS ADICIONALES ===')
-        for (const item of items) {
-          const ctx  = clean(item.context || item.pregunta || item.original || '')
-          const resp = clean(item.improved || item.respuesta || item.correction || '')
-          if (resp) lines.push(`SI: "${ctx || 'general'}"\nDI: "${resp}"`)
+        const feedbackItems = items.filter(x => x.source === 'feedback_modal' || x.fuente === 'feedback')
+        const manualItems   = items.filter(x => x.source !== 'feedback_modal' && x.fuente !== 'feedback')
+
+        if (feedbackItems.length) {
+          lines.push('=== CORRECCIONES DE COMPORTAMIENTO (MÁXIMA PRIORIDAD) ===')
+          lines.push('Estas correcciones vienen de errores reales. Son obligatorias:')
+          for (const item of feedbackItems) {
+            const ctx  = clean(item.context || item.pregunta || item.original || '')
+            const corr = clean(item.improved || item.respuesta || item.correction || '')
+            const orig = clean(item.original || '')
+            if (corr) {
+              if (ctx && ctx !== orig) {
+                lines.push(`CUANDO EL CLIENTE DIGA: "${ctx.slice(0,100)}"\nDEBES RESPONDER ASÍ: "${corr}"`)
+              } else {
+                lines.push(`REGLA OBLIGATORIA: ${corr}`)
+              }
+            }
+          }
+        }
+
+        if (manualItems.length) {
+          lines.push('=== REGLAS ADICIONALES ===')
+          for (const item of manualItems) {
+            const ctx  = clean(item.context || item.pregunta || item.original || '')
+            const resp = clean(item.improved || item.respuesta || item.correction || '')
+            if (resp) lines.push(`SI: "${ctx || 'general'}"\nDI: "${resp}"`)
+          }
         }
       }
     } catch {}
 
-    // Correcciones de conversaciones reales
+    // Correcciones de conversaciones reales — REGLAS DE COMPORTAMIENTO
     try {
       const { data } = await db.from('crm_conv_feedback')
-        .select('msg_content,correction,improved').order('created_at', { ascending: false }).limit(30)
+        .select('msg_content,correction,improved,context').order('created_at', { ascending: false }).limit(30)
       const fb = (data || []).filter(x => clean(x.correction || x.improved))
       if (fb.length) {
-        lines.push('=== CORRECCIONES APRENDIDAS ===')
+        lines.push('=== CORRECCIONES DE COMPORTAMIENTO (OBLIGATORIAS) ===')
+        lines.push('Estas son correcciones reales de conversaciones. DEBES seguirlas siempre:')
         for (const f of fb) {
-          const orig = clean(f.msg_content || '')
           const corr = clean(f.correction || f.improved || '')
-          if (corr) lines.push(`ORIGINAL: "${orig}"\nCORREGIDO: "${corr}"`)
+          const orig = clean(f.msg_content || '')
+          if (corr) {
+            // Si la corrección empieza con "no" o "nunca", es una regla prohibitiva
+            const isRule = /^(no |nunca |jamás |evitar |no preguntes|no digas)/i.test(corr)
+            if (isRule) {
+              lines.push(`PROHIBIDO: ${corr}`)
+            } else if (orig) {
+              lines.push(`EN VEZ DE: "${orig.slice(0,80)}"\nDEBES DECIR: "${corr}"`)
+            } else {
+              lines.push(`REGLA: ${corr}`)
+            }
+          }
         }
       }
     } catch {}
@@ -327,15 +360,29 @@ REGLAS DEL EMBUDO:
 FORMATO DE RESPUESTA — siempre JSON puro, sin texto antes ni después:
 {"reply":"tu mensaje al cliente","action":"conversando","leadUpdate":{}}`
 
+  // ── Extraer reglas prohibitivas del feedback para el bloque dinámico ──────────
+  // Estas van en el bloque NO cacheado para que apliquen inmediatamente
+  let feedbackRules = ''
+  try {
+    if (db) {
+      const { data: fbData } = await db.from('crm_conv_feedback')
+        .select('correction,improved').order('created_at', { ascending: false }).limit(10)
+      const rules = (fbData||[])
+        .map(f => clean(f.correction || f.improved || ''))
+        .filter(Boolean)
+        .slice(0, 5)
+      if (rules.length) feedbackRules = '\nREGLAS INMEDIATAS (cumplir ahora):\n' + rules.map(r => `- ${r}`).join('\n')
+    }
+  } catch {}
+
   // ── Bloque DINÁMICO: cambia por conversación (no se cachea) ─────────────────
-  // Etapa actual, info del cliente específico. Son pocos tokens.
   const dynamicBlock = `ETAPA ACTUAL: ${stageInfo.label}
 OBJETIVO: ${stageInfo.objetivo}
 HAZ AHORA: ${stageInfo.accion}
 AVANZA A "${nextStageInfo?.label || 'calificado'}" CUANDO: ${stageInfo.avanzar_si}
 
 CLIENTE: ${flatten(leadData) || 'nuevo, sin datos'}${Object.keys(extractedData).length ? `\nDatos del chat: ${JSON.stringify(extractedData)}` : ''}
-
+${feedbackRules}
 action válidos: "conversando" | "calificado" | "no_califica" | "escalar_humano"`
 
   // ── Construir mensajes — sin duplicados, alternancia correcta ────────────────
@@ -420,6 +467,24 @@ action válidos: "conversando" | "calificado" | "no_califica" | "escalar_humano"
       const raw    = (data.content || []).map(b => b.text || '').join('').trim()
       const parsed = parseReply(raw)
       let reply    = parsed.reply
+
+      // ── Limpiar markdown — WhatsApp no lo renderiza ───────────────────────────
+      // Esto garantiza texto limpio sin importar lo que genere el modelo
+      reply = reply
+        // Asteriscos dobles → asterisco simple (negrita WhatsApp) o nada
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        // Headers markdown
+        .replace(/^#{1,4}\s+/gm, '')
+        // Listas con guiones → línea simple
+        .replace(/^[\-•]\s+/gm, '')
+        // Listas numeradas → quitar el número
+        .replace(/^\d+\.\s+/gm, '')
+        // Itálica con guiones bajos (conservar los de WhatsApp es ok, pero dobles no)
+        .replace(/__([^_]+)__/g, '$1')
+        // Más de 2 saltos de línea seguidos → máximo 2
+        .replace(/\n{3,}/g, '\n\n')
+        // Trim final
+        .trim()
 
       const blocked = ['soy una ia', 'soy un bot', 'modelo de lenguaje', 'no estoy disponible', 'alta demanda']
       for (const b of blocked) {
