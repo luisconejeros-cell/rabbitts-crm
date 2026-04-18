@@ -380,6 +380,282 @@ function AgendaPublicaView({settings={}, brokerSlug=''}) {
 const EU = {name:'',rut:'',phone:'',email:'',username:'',pin:'',role:'agent'}
 const EL = {nombre:'',telefono:'',email:'',renta:'',tag:'lead'}
 
+// ─── Importación masiva de usuarios ──────────────────────────────────────────
+function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbReady, supabase }) {
+  const B = { primary:'#2563EB', light:'#EFF6FF', mid:'#64748B' }
+  const sty = { inp:{padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,width:'100%',boxSizing:'border-box'} }
+
+  const [rows,    setRows]    = React.useState([])   // filas parseadas
+  const [errors,  setErrors]  = React.useState([])
+  const [importing, setImporting] = React.useState(false)
+  const [done,    setDone]    = React.useState(null)  // {ok, skipped}
+  const [defRole, setDefRole] = React.useState('agent')
+  const fileRef = React.useRef()
+
+  const ROLE_MAP = {
+    'agente':'agent','agent':'agent','vendedor':'agent','broker':'agent',
+    'team leader':'team_leader','team_leader':'team_leader','lider':'team_leader',
+    'operaciones':'operaciones','ops':'operaciones',
+    'finanzas':'finanzas','admin':'admin','administrador':'admin',
+    'partner':'partner','socio':'partner'
+  }
+
+  const downloadTemplate = () => {
+    const csv = 'Nombre,RUT,Teléfono,Email,Usuario,Rol\nJuan Pérez,12.345.678-9,+56912345678,juan@email.com,juan.perez,agent\nMaría López,11.111.111-1,+56987654321,maria@email.com,maria.lopez,agent\n'
+    const a = document.createElement('a')
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv)
+    a.download = 'plantilla_usuarios_rabbitts.csv'
+    a.click()
+  }
+
+  const parseFile = async (file) => {
+    setRows([]); setErrors([]); setDone(null)
+    if (!window.XLSX) {
+      await new Promise((res,rej)=>{
+        const s = document.createElement('script')
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+        s.onload = res; s.onerror = rej
+        document.head.appendChild(s)
+      })
+    }
+    try {
+      const ab = await file.arrayBuffer()
+      const wb = window.XLSX.read(ab, {type:'array'})
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const raw = window.XLSX.utils.sheet_to_json(ws, {defval:''})
+      const norm = k => String(k||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()
+
+      const errs = []
+      const parsed = raw.map((r, i) => {
+        const keys = Object.keys(r)
+        const get = (...candidates) => {
+          const k = keys.find(k => candidates.some(c => norm(k).includes(c)))
+          return String(r[k]||'').trim()
+        }
+        const nombre   = get('nombre','name','names')
+        const rut      = get('rut','run','documento')
+        const phone    = get('telefono','phone','celular','movil','fono')
+        const email    = get('email','correo','mail')
+        const username = get('usuario','username','login','user').toLowerCase().replace(/[^a-z0-9._]/g,'')
+        const rolRaw   = norm(get('rol','role','cargo','perfil'))
+        const role     = ROLE_MAP[rolRaw] || defRole
+
+        if (!nombre) errs.push(`Fila ${i+2}: falta el nombre`)
+        if (!email)  errs.push(`Fila ${i+2}: falta el email (${nombre||'?'})`)
+
+        // Generar username si no viene
+        const usernameGen = username || nombre.toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+          .replace(/\s+/g,'.').replace(/[^a-z0-9.]/g,'').slice(0,20)
+
+        return { _row:i+2, nombre, rut, phone, email, username:usernameGen, role, _valid:!!nombre&&!!email }
+      }).filter(r => r._valid)
+
+      setErrors(errs)
+      setRows(parsed)
+    } catch(e) {
+      setErrors(['Error al leer el archivo: '+e.message])
+    }
+  }
+
+  const doImport = async () => {
+    setImporting(true)
+    let ok = 0, skipped = 0
+    const newUsers = []
+
+    for (const r of rows) {
+      // Verificar si usuario ya existe
+      const usernameBase = r.username
+      let username = usernameBase
+      let attempt  = 0
+      while ([...users, ...newUsers].find(u => u.username === username)) {
+        attempt++
+        username = usernameBase + attempt
+      }
+      if (attempt > 5) { skipped++; continue }
+
+      const tempPin = genTempPin(8)
+      const newU = {
+        id:       'u-' + Date.now() + '-' + ok,
+        name:     r.nombre,
+        rut:      r.rut || '',
+        phone:    r.phone || '',
+        email:    r.email,
+        username,
+        pin:      tempPin,
+        mustChange: true,
+        role:     r.role
+      }
+      newUsers.push(newU)
+
+      // Enviar email + WhatsApp
+      if (r.email) {
+        try {
+          await fetch('/api/notify', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              type:'welcome', to:r.email,
+              agentName:r.nombre, adminName:me.name,
+              username, pin:tempPin, phone:r.phone||'', role:r.role
+            })
+          })
+        } catch(e) {}
+      }
+      ok++
+      // Pequeña pausa para no saturar la API de email
+      if (ok % 5 === 0) await new Promise(res => setTimeout(res, 500))
+    }
+
+    await saveUsers([...users, ...newUsers])
+    setImporting(false)
+    setDone({ ok, skipped })
+  }
+
+  const existentes = rows.filter(r => users.find(u => u.username === r.username))
+
+  return (
+    <Modal title="📥 Importar usuarios masivo" onClose={onClose} wide>
+      <div style={{marginBottom:14}}>
+        <p style={{margin:'0 0 10px',fontSize:13,color:B.mid}}>
+          Sube un Excel o CSV con los datos de los nuevos usuarios. El sistema generará una clave temporal para cada uno y les enviará las credenciales por email y WhatsApp.
+        </p>
+
+        {/* Plantilla + formato */}
+        <div style={{background:'#FFFBEB',border:'1px solid #fcd34d',borderRadius:8,
+          padding:'10px 14px',marginBottom:12,fontSize:12,color:'#92400e'}}>
+          <strong>Columnas:</strong> Nombre (obligatorio), RUT, Teléfono, Email (obligatorio), Usuario, Rol
+          <br/>Roles válidos: agent, team_leader, operaciones, finanzas, admin, partner
+          <br/>Si no hay columna Usuario, se genera automáticamente del nombre.
+        </div>
+
+        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap',alignItems:'center'}}>
+          <button onClick={downloadTemplate} style={{...sty.inp,width:'auto',padding:'7px 14px',
+            cursor:'pointer',background:B.light,color:B.primary,fontWeight:600,border:`1px solid ${B.primary}`}}>
+            📄 Descargar plantilla CSV
+          </button>
+          <div style={{flex:1,minWidth:160}}>
+            <label style={{fontSize:11,color:B.mid,display:'block',marginBottom:4}}>Rol por defecto (si no viene en el archivo)</label>
+            <select value={defRole} onChange={e=>setDefRole(e.target.value)}
+              style={{...sty.inp,padding:'6px 10px'}}>
+              <option value="agent">Agente</option>
+              <option value="team_leader">Team Leader</option>
+              <option value="operaciones">Operaciones</option>
+              <option value="finanzas">Finanzas</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Drop zone */}
+        <div style={{border:'2px dashed #A8C0F0',borderRadius:12,padding:'24px 20px',
+          textAlign:'center',background:'#f9fbff',marginBottom:14,cursor:'pointer'}}
+          onClick={()=>fileRef.current?.click()}
+          onDragOver={e=>e.preventDefault()}
+          onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)parseFile(f)}}>
+          <div style={{fontSize:28,marginBottom:6}}>👥</div>
+          <div style={{fontSize:14,fontWeight:600,color:B.primary,marginBottom:3}}>
+            Arrastra tu archivo o haz clic para seleccionar
+          </div>
+          <div style={{fontSize:12,color:'#9ca3af'}}>.xlsx · .xls · .csv</div>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}}
+            onChange={e=>e.target.files[0]&&parseFile(e.target.files[0])}/>
+        </div>
+
+        {/* Errores */}
+        {errors.length>0 && (
+          <div style={{background:'#FEF2F2',border:'1px solid #fca5a5',borderRadius:8,
+            padding:'10px 14px',marginBottom:12}}>
+            {errors.map((e,i)=><div key={i} style={{fontSize:12,color:'#991b1b',marginBottom:2}}>⚠ {e}</div>)}
+          </div>
+        )}
+
+        {/* Preview */}
+        {rows.length>0 && !done && (
+          <div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <span style={{fontSize:13,fontWeight:700,color:B.primary}}>
+                {rows.length} usuarios listos para importar
+                {existentes.length>0 && <span style={{color:'#d97706',marginLeft:8}}>· {existentes.length} con usuario existente (se renombrarán)</span>}
+              </span>
+              <button onClick={()=>{setRows([]);setErrors([])}}
+                style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'1px solid #E2E8F0',
+                  background:'#fff',cursor:'pointer',color:B.mid}}>
+                Limpiar
+              </button>
+            </div>
+
+            <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,
+              overflow:'auto',maxHeight:240,marginBottom:12}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{background:B.light}}>
+                    {['#','Nombre','Usuario','Email','Teléfono','Rol'].map(h=>(
+                      <th key={h} style={{padding:'7px 10px',textAlign:'left',fontWeight:700,
+                        color:B.primary,whiteSpace:'nowrap',fontSize:11}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r,i)=>(
+                    <tr key={i} style={{borderBottom:'1px solid #f0f4ff',
+                      background:existentes.find(e=>e._row===r._row)?'#FFFBEB':'transparent'}}>
+                      <td style={{padding:'6px 10px',color:'#9ca3af'}}>{r._row}</td>
+                      <td style={{padding:'6px 10px',fontWeight:600,color:'#0F172A'}}>{r.nombre}</td>
+                      <td style={{padding:'6px 10px',fontFamily:'monospace',fontSize:11}}>{r.username}</td>
+                      <td style={{padding:'6px 10px',color:'#6b7280'}}>{r.email}</td>
+                      <td style={{padding:'6px 10px',color:'#6b7280'}}>{r.phone||'—'}</td>
+                      <td style={{padding:'6px 10px'}}>
+                        <span style={{fontSize:10,padding:'2px 7px',borderRadius:99,
+                          background:B.light,color:B.primary,fontWeight:600}}>{r.role}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{background:'#F0FDF4',border:'1px solid #86efac',borderRadius:8,
+              padding:'8px 12px',marginBottom:12,fontSize:12,color:'#14532d'}}>
+              ✅ Se generará una clave temporal para cada usuario y se enviarán las credenciales por email{' '}
+              {rows.some(r=>r.phone) ? 'y WhatsApp' : ''}.
+            </div>
+
+            <button onClick={doImport} disabled={importing}
+              style={{width:'100%',padding:'11px',borderRadius:10,border:'none',
+                fontWeight:700,fontSize:14,cursor:importing?'wait':'pointer',
+                background:importing?'#93c5fd':B.primary,color:'#fff'}}>
+              {importing ? `⏳ Importando... (esto puede tardar)` : `📥 Importar ${rows.length} usuarios`}
+            </button>
+          </div>
+        )}
+
+        {/* Resultado */}
+        {done && (
+          <div style={{background:'#DCFCE7',border:'1px solid #86efac',borderRadius:10,
+            padding:'20px',textAlign:'center'}}>
+            <div style={{fontSize:36,marginBottom:8}}>✅</div>
+            <div style={{fontSize:16,fontWeight:700,color:'#14532d',marginBottom:4}}>
+              {done.ok} usuarios creados exitosamente
+            </div>
+            {done.skipped>0 && (
+              <div style={{fontSize:12,color:'#166534',marginBottom:8}}>
+                {done.skipped} omitidos (conflicto de usuario)
+              </div>
+            )}
+            <div style={{fontSize:13,color:'#166534',marginBottom:16}}>
+              Cada usuario recibió su clave temporal por email. Al ingresar deberán crear una nueva clave.
+            </div>
+            <button onClick={onClose} style={{padding:'8px 20px',borderRadius:8,border:'none',
+              background:'#14532d',color:'#fff',cursor:'pointer',fontWeight:700,fontSize:13}}>
+              Cerrar
+            </button>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 // ─── Cambio forzado de clave (clave temporal expirada) ───────────────────────
 function ForzarCambioClaveForm({ me, users, setUsers, setMe, dbReady, supabase, validarClave, onSuccess }) {
   const [n1, setN1] = React.useState('')
@@ -1892,7 +2168,7 @@ export default function App() {
   const mpVisible = marketplaceConfig.url && (marketplaceConfig.allowRoles||[]).includes(me?.role) && marketplaceConfig.enabled
   const NAV = isAdmin    ? ['dashboard','kanban','lista','operaciones','finanzas_360','usuarios','ranking','ia','conversaciones','rabito_interno','visitas','condiciones','agenda','etapas','importar','extraer','marketplace']
             : isPartner  ? ['dashboard','pool',                                                                                                          ...(mpVisible?['marketplace']:[]) ]
-            : isOps      ? ['operaciones','kanban','lista','visitas','rabito_interno']
+            : isOps      ? ['operaciones','kanban','lista','visitas','rabito_interno','usuarios']
             : isFinanzas ? ['dashboard_finanzas','finanzas_360','kanban','rabito_interno']
             :              ['broker_home','kanban','lista','mis_notas','condiciones','portal_broker',...(isTeamLeader?['team_dashboard']:[]),'mis_visitas','mi agenda','nuevo lead',...(mpVisible?['marketplace']:[]) ]
 
@@ -2447,11 +2723,14 @@ export default function App() {
         )}
 
         {/* USUARIOS */}
-        {nav==='usuarios' && isAdmin && (
+        {nav==='usuarios' && (isAdmin||isOps) && (
           <div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
               <span style={{fontSize:14,fontWeight:700,color:B.primary}}>{(users||[]).length} usuarios</span>
-              <button onClick={()=>setModal('newUser')} style={sty.btnP}>+ Nuevo usuario</button>
+              <div style={{display:'flex',gap:8}}>
+                <button onClick={()=>setModal('importUsers')} style={{...sty.btnO,fontSize:12}}>📥 Importar masivo</button>
+                <button onClick={()=>setModal('newUser')} style={sty.btnP}>+ Nuevo usuario</button>
+              </div>
             </div>
             <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
               {(users||[]).map(u => {
@@ -4527,7 +4806,19 @@ Responde en español, directo, sin formalismos.`
       )}
 
       {/* Nuevo usuario */}
-      {modal==='newUser' && (
+      {modal==='importUsers' && (
+        <ImportUsuariosModal
+          onClose={()=>setModal(null)}
+          users={users}
+          saveUsers={saveUsers}
+          me={me}
+          genTempPin={genTempPin}
+          dbReady={dbReady}
+          supabase={supabase}
+        />
+      )}
+
+      {modal==='newUser' && (isAdmin||isOps) && (
         <Modal title="Nuevo usuario" onClose={()=>{setModal(null);setNu(EU)}} wide>
           <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'1fr 1fr',gap:isMobile?8:12}}>
             {[['Nombre completo *','name','text','Juan Pérez'],['RUT *','rut','text','12.345.678-9'],['Teléfono *','phone','text','+56 9 1234 5678'],['Email *','email','email','juan@email.com'],['Usuario (login) *','username','text','juan.perez']].map(([lbl,key,type,ph])=>(
@@ -4537,12 +4828,16 @@ Responde en español, directo, sin formalismos.`
           <Fld label="Rol">
             <select value={nu.role} onChange={e=>setNu(p=>({...p,role:e.target.value}))} style={sty.sel}>
               <option value="agent">Agente / Vendedor</option>
+              <option value="team_leader">Team Leader</option>
               <option value="operaciones">Operaciones</option>
               <option value="finanzas">Finanzas</option>
               <option value="partner">Socio Comercial</option>
-              <option value="admin">Administrador</option>
+              {isAdmin && <option value="admin">Administrador</option>}
             </select>
           </Fld>
+          <div style={{fontSize:11,color:'#9ca3af',marginBottom:10}}>
+            🔑 Se generará una clave temporal automáticamente y se enviará al email{nu.phone?' y WhatsApp':''}
+          </div>
           <button onClick={createUser} style={{...sty.btnP,width:'100%',padding:'10px 16px'}}>Crear usuario</button>
         </Modal>
       )}
