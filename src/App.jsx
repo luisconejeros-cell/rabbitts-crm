@@ -674,7 +674,10 @@ function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbRead
         const rut      = get('rut','run','documento')
         const phone    = get('telefono','phone','celular','movil','fono')
         const email    = get('email','correo','mail')
-        const username = get('usuario','username','login','user').toLowerCase().replace(/[^a-z0-9._]/g,'')
+        let usernameRaw = get('usuario','username','login','user')
+        // Si viene el email completo como usuario, usar solo la parte antes del @
+        if (usernameRaw.includes('@')) usernameRaw = usernameRaw.split('@')[0]
+        const username = usernameRaw.toLowerCase().replace(/[^a-z0-9._]/g,'').slice(0,30)
         const rolRaw   = norm(get('rol','role','cargo','perfil'))
         const role     = ROLE_MAP[rolRaw] || defRole
 
@@ -1876,8 +1879,24 @@ export default function App() {
     msg(`✅ Usuario creado — clave temporal enviada${nu.phone?' por email y WhatsApp':' por email'}`)
   }
   async function deleteUser(id) {
-    if (dbReady) await supabase.from('crm_users').delete().eq('id', id)
-    await saveUsers(users.filter(u => u.id !== id))
+    // Actualizar estado local inmediatamente
+    const filtered = users.filter(u => u.id !== id)
+    setUsers(filtered)
+    // Eliminar de Supabase directamente (no pasar por saveUsers)
+    if (dbReady) {
+      try {
+        await Promise.race([
+          supabase.from('crm_users').delete().eq('id', id),
+          new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 6000))
+        ])
+      } catch(e) {
+        console.warn('deleteUser error:', e.message)
+      }
+      // Fallback: guardar lista actualizada en caso de que delete no funcione
+      localStorage.setItem('rcrm_users', JSON.stringify(filtered))
+    } else {
+      localStorage.setItem('rcrm_users', JSON.stringify(filtered))
+    }
     msg('Usuario eliminado')
   }
   async function saveProfile() {
