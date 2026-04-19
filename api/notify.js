@@ -3,6 +3,59 @@
 // type: 'assignment' — lead asignado a agente
 // type: 'comment'    — admin comentó en lead del agente
 
+const EVO_URL = process.env.EVO_URL || 'https://wa.rabbittscapital.com'
+const EVO_KEY = process.env.EVO_KEY || 'rabbitts2024'
+
+// Resuelve el instanceName activo desde Supabase, con fallback a env var
+async function getWaInstance() {
+  // 1. Primero intenta env var directa (más rápido, sin consulta DB)
+  const envInstance = process.env.EVO_INSTANCE || process.env.VITE_EVO_INSTANCE || ''
+  if (envInstance) return envInstance
+
+  // 2. Busca en Supabase
+  try {
+    const sbUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
+    const sbKey = (process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
+    if (!sbUrl || !sbKey) return ''
+    const r = await fetch(`${sbUrl}/rest/v1/crm_settings?key=eq.wa_numeros&select=value`, {
+      headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
+    })
+    const rows = await r.json()
+    const nums = rows?.[0]?.value || []
+    // Preferir instancia de clientes, si no la primera activa
+    const cliente = nums.find(n => n.tipo !== 'interno' && n.activo !== false)
+    const any     = nums.find(n => n.activo !== false)
+    return (cliente || any)?.instanceName || ''
+  } catch(e) {
+    console.warn('[notify] getWaInstance error:', e.message)
+    return ''
+  }
+}
+
+// Envía un mensaje de WhatsApp
+async function sendWA(phone, text) {
+  if (!phone) return false
+  const cleanPhone = String(phone).replace(/[^0-9]/g, '')
+  if (!cleanPhone) return false
+  const instanceName = await getWaInstance()
+  if (!instanceName) {
+    console.warn('[notify] sendWA: no instanceName found — agrega EVO_INSTANCE en Vercel env vars')
+    return false
+  }
+  try {
+    const r = await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
+      body: JSON.stringify({ number: cleanPhone, text, delay: 1000 })
+    })
+    console.log('[notify] WA sent to', cleanPhone, '→', r.status)
+    return r.ok
+  } catch(e) {
+    console.warn('[notify] sendWA error:', e.message)
+    return false
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -394,36 +447,13 @@ Ingresa al CRM y súbelos en la ficha del cliente. Tienes 3 días 💪`
           </table>
         </div>
         <div style="background:#FFFBEB;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;margin-bottom:20px;">
-          <p style="margin:0;font-size:13px;color:#92400e;">⚠️ <strong>Clave temporal de un solo uso.</strong> Al ingresar deberás crear una nueva clave alfanumérica de mínimo 6 caracteres.</p>
+          <p style="margin:0;font-size:13px;color:#92400e;">⚠️ <strong>Clave temporal — válida por 24 horas.</strong> Al ingresar deberás crear una nueva clave alfanumérica de mínimo 6 caracteres.</p>
         </div>`
 
       // Enviar también por WhatsApp si tiene teléfono
       if (phone) {
-        try {
-          const EVO_URL = process.env.EVO_URL || 'https://wa.rabbittscapital.com'
-          const EVO_KEY = process.env.EVO_KEY || 'rabbitts2024'
-          const cleanPhone = String(phone).replace(/[^0-9]/g, '')
-          const waText = `🔑 Hola ${agentName}, se generó una clave temporal para tu acceso al CRM.\n\nUsuario: *${username}*\nClave temporal: *${tempPin}*\n\nIngresa en ${CRM_URL} y crea una nueva clave al entrar.`
-          const sbUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
-          const sbKey = (process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim()
-          let instanceName = ''
-          if (sbUrl && sbKey) {
-            const r = await fetch(`${sbUrl}/rest/v1/crm_settings?key=eq.wa_numeros&select=value`, {
-              headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
-            })
-            const rows = await r.json()
-            const nums = rows?.[0]?.value || []
-            const active = nums.find(n => n.activo !== false)
-            instanceName = active?.instanceName || ''
-          }
-          if (instanceName && cleanPhone) {
-            await fetch(`${EVO_URL}/message/sendText/${instanceName}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY },
-              body: JSON.stringify({ number: cleanPhone, text: waText, delay: 1000 })
-            })
-          }
-        } catch(e) { console.warn('[notify] WA reset_password failed:', e.message) }
+        const waText = `🔑 Hola ${agentName}, se generó una clave temporal para tu acceso al CRM.\n\nUsuario: *${username}*\nClave temporal: *${tempPin}*\n\n⚠️ Esta clave expira en 24 horas.\nIngresa en ${CRM_URL} y crea una nueva clave al entrar.`
+        await sendWA(phone, waText)
       }
     }
 
@@ -447,7 +477,7 @@ Ingresa al CRM y súbelos en la ficha del cliente. Tienes 3 días 💪`
         </div>
         <div style="background:#FFFBEB;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;margin-bottom:20px;">
           <p style="margin:0;font-size:13px;color:#92400e;">
-            ⚠️ <strong>Clave temporal</strong> — al ingresar deberás crear una nueva clave alfanumérica.
+            ⚠️ <strong>Clave temporal — válida por 24 horas.</strong> Al ingresar deberás crear una nueva clave alfanumérica de mínimo 6 caracteres.
           </p>
         </div>
         <div style="background:#F0FDF4;border:1px solid #86efac;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
@@ -465,6 +495,12 @@ Ingresa al CRM y súbelos en la ficha del cliente. Tienes 3 días 💪`
             Sin Google Calendar conectado no podrás recibir reuniones agendadas con clientes.
           </p>
         </div>`
+
+      // Enviar también por WhatsApp si tiene teléfono
+      if (body.phone) {
+        const waText = `👋 Hola ${agentName}, bienvenido/a a Rabbitts Capital CRM.\n\nTus credenciales de acceso:\n👤 Usuario: *${body.username}*\n🔑 Clave temporal: *${pin}*\n\n⚠️ Esta clave expira en 24 horas.\nIngresa en ${CRM_URL} y crea una nueva clave al entrar.\n\n📅 *Importante:* Al ingresar conecta tu Google Calendar para recibir reuniones con clientes.`
+        await sendWA(body.phone, waText)
+      }
 
     } else if (type === 'assignment') {
       const { leadPhone, leadEmail, leadRenta } = body
