@@ -410,7 +410,7 @@ function UsuariosView({ users, leads, sessions, me, isAdmin, isMobile, dbReady, 
 
   const resetClave = async (u) => {
     const tempPin = genTempPin(8)
-    const patch = { pin: tempPin, mustChange: true }
+    const patch = { pin: tempPin, mustChange: true, mustChangeAt: new Date().toISOString() }
     setUsers(prev => prev.map(x => x.id === u.id ? {...x, ...patch} : x))
     if (selU?.id === u.id) setSelU(p => ({...p, ...patch}))
     if (dbReady && supabase) await supabase.from('crm_users').update(patch).eq('id', u.id)
@@ -1253,70 +1253,6 @@ export default function App() {
     window._iaConfigTimer = setTimeout(() => saveIaConfig(iaConfig), 1000)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iaConfig, dbReady])
-  // ── Alertas de ranking — notifica al broker cuando sube de puesto ──────────
-  useEffect(() => {
-    if (!dbReady || !leads.length || !users.length || !me || !isAdmin) return
-    clearTimeout(window._rankingAlertTimer)
-    window._rankingAlertTimer = setTimeout(() => {
-      const RANK_STAGES = ['firma','escritura','ganado']
-      const agents = users.filter(u => u.role === 'agent' || u.role === 'team_leader')
-      const ranked = agents.map(ag => {
-        const total = leads.filter(l => l.assigned_to===ag.id && RANK_STAGES.includes(l.stage))
-          .reduce((s,l) => s + (l.propiedades||[]).filter(p=>p.moneda==='UF').reduce((ss,p)=>ss+(parseFloat(p.bono_pie?p.precio_sin_bono:p.precio)||0),0), 0)
-        return { id: ag.id, name: ag.name, email: ag.email, phone: ag.phone, total }
-      }).sort((a,b) => b.total - a.total)
-
-      const posMap = {}
-      ranked.forEach((r,i) => { posMap[r.id] = i+1 })
-      const stored = JSON.parse(localStorage.getItem('rcrm_ranking_pos') || '{}')
-
-      // Alertas ya enviadas HOY — persiste entre recargas
-      const today = new Date().toISOString().slice(0,10)
-      const sentKey = 'rcrm_ranking_sent_' + today
-      const sentToday = new Set(JSON.parse(localStorage.getItem(sentKey) || '[]'))
-
-      const alerts = []
-      for (const ag of ranked) {
-        const prev = stored[ag.id]
-        const curr = posMap[ag.id]
-        if (prev && curr < prev) {
-          const alertKey = `${ag.id}_${prev}_${curr}`
-          if (!sentToday.has(alertKey)) {
-            alerts.push({ ag, prev, curr, alertKey })
-          }
-        }
-      }
-
-      // Guardar posiciones actuales
-      localStorage.setItem('rcrm_ranking_pos', JSON.stringify(posMap))
-
-      if (alerts.length > 0) {
-        // Marcar como enviadas ANTES de enviar para evitar duplicados
-        alerts.forEach(a => sentToday.add(a.alertKey))
-        localStorage.setItem(sentKey, JSON.stringify([...sentToday]))
-
-        for (const { ag, prev, curr } of alerts) {
-          const medals = {1:'🥇',2:'🥈',3:'🥉'}
-          const medal = medals[curr] || '🏅'
-          if (ag.email) {
-            fetch('/api/notify', {
-              method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({type:'ranking_subida',to:ag.email,agentName:ag.name,prevPos:prev,currPos:curr,medal,total:ranked.length})
-            }).catch(()=>{})
-          }
-          if (ag.phone) {
-            fetch('/api/notify', {
-              method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({type:'ranking_subida_wa',phone:ag.phone,agentName:ag.name,prevPos:prev,currPos:curr,medal,total:ranked.length})
-            }).catch(()=>{})
-          }
-        }
-      }
-    }, 15000) // 15s debounce — ignora actualizaciones en tiempo real intermedias
-  }, [leads, users, dbReady])
-
-
-
   // ── Responsive resize handler ───────────────────────────────────────────────
   useEffect(() => {
     const handle = () => setIsMobile(window.innerWidth < 768)
@@ -1780,16 +1716,29 @@ export default function App() {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   async function login() {
-    const u = (users||[]).find(x => x.username === lu.trim().toLowerCase())
+    const input = lu.trim().toLowerCase()
+    // Buscar por username O por email
+    const u = (users||[]).find(x =>
+      x.username === input ||
+      x.email?.toLowerCase() === input
+    )
     if (!u || u.pin !== lp) { setLerr('Usuario o clave incorrectos'); return }
+
+    // Verificar si la clave temporal expiró (24 horas)
+    if (u.mustChange && u.mustChangeAt) {
+      const createdAt = new Date(u.mustChangeAt).getTime()
+      if (Date.now() - createdAt > 24 * 60 * 60 * 1000) {
+        setLerr('Tu clave temporal expiró (24 horas). Usa "Olvidé mi clave" para obtener una nueva.')
+        return
+      }
+    }
+
     setMe(u); setLerr(''); setLp(''); setLu('')
-    // Si tiene clave temporal, mostrar pantalla de cambio forzado
     if (u.mustChange) {
       setNav('__cambiar_clave__')
     } else {
       setNav(u.role==='admin'||u.role==='partner'?'dashboard':u.role==='finanzas'?'dashboard_finanzas':u.role==='operaciones'?'operaciones':'broker_home')
     }
-    // Persist session for 8 hours
     localStorage.setItem('rcrm_session', JSON.stringify({id:u.id, expires: Date.now() + 8*60*60*1000}))
     // Record login for activity tracking
     if (dbReady) {
@@ -1844,11 +1793,38 @@ export default function App() {
   async function createUser() {
     if (!nu.name||!nu.username||!nu.rut||!nu.phone||!nu.email) { msg('Completa todos los campos'); return }
     if ((users||[]).find(u => u.username === nu.username.toLowerCase())) { msg('Usuario ya existe'); return }
-    // Generar clave temporal automática
     const tempPin = genTempPin(8)
-    const u = {id:'u-'+Date.now(), ...nu, username:nu.username.toLowerCase(), pin:tempPin, mustChange:true}
-    await saveUsers([...users, u])
-    // Enviar email + WhatsApp con clave temporal
+    const now = new Date().toISOString()
+    const newU = {
+      id: 'u-'+Date.now(),
+      name: nu.name.trim(),
+      rut: nu.rut.trim(),
+      phone: nu.phone.trim(),
+      email: nu.email.trim().toLowerCase(),
+      username: nu.username.toLowerCase().trim(),
+      pin: tempPin,
+      role: nu.role,
+      mustChange: true,
+      mustChangeAt: now,
+    }
+    // Actualizar estado local inmediatamente
+    const nextUsers = [...users, newU]
+    setUsers(nextUsers)
+    // Guardar en Supabase directo (no iterar todos los usuarios)
+    if (dbReady) {
+      try {
+        const { error } = await supabase.from('crm_users').insert(newU)
+        if (error) {
+          // Si falla por columna mustChange/mustChangeAt, reintentar sin esas columnas
+          const { mustChange, mustChangeAt, ...safeU } = newU
+          const { error: e2 } = await supabase.from('crm_users').insert(safeU)
+          if (e2) console.warn('createUser error:', e2)
+        }
+      } catch(e) { console.warn('createUser exception:', e) }
+    } else {
+      localStorage.setItem('rcrm_users', JSON.stringify(nextUsers))
+    }
+    // Enviar email + WhatsApp
     if (nu.email) {
       try {
         await fetch('/api/notify', {
@@ -1856,18 +1832,19 @@ export default function App() {
           headers: {'Content-Type':'application/json'},
           body: JSON.stringify({
             type: 'welcome',
-            to: nu.email,
-            agentName: nu.name,
+            to: newU.email,
+            agentName: newU.name,
             adminName: me.name,
-            username: nu.username.toLowerCase(),
+            username: newU.username,
             pin: tempPin,
-            phone: nu.phone || '',
-            role: nu.role
+            phone: newU.phone,
+            role: newU.role
           })
         })
       } catch(e) { console.warn('Welcome email failed:', e) }
     }
-    setNu(EU); setModal(null); msg(`Usuario creado — clave temporal enviada por email${nu.phone?' y WhatsApp':''}`)
+    setNu(EU); setModal(null)
+    msg(`✅ Usuario creado — clave temporal enviada${nu.phone?' por email y WhatsApp':' por email'}`)
   }
   async function deleteUser(id) {
     if (dbReady) await supabase.from('crm_users').delete().eq('id', id)
@@ -3766,6 +3743,34 @@ export default function App() {
                   <div style={{fontSize:11,color:B.mid}}>Total período</div>
                   <div style={{fontSize:18,fontWeight:800,color:B.primary}}>UF {grandTotalUF.toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
                 </div>}
+                {/* Botón de notificación manual */}
+                <button onClick={async()=>{
+                  if (!confirm('¿Notificar a todos los brokers de su posición actual en el ranking?')) return
+                  let sent = 0
+                  for (let i = 0; i < ranked.length; i++) {
+                    const ag = ranked[i]
+                    const curr = i + 1
+                    const medal = ['🥇','🥈','🥉'][i] || '🏅'
+                    if (ag.email) {
+                      await fetch('/api/notify', {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({type:'ranking_subida',to:ag.email,agentName:ag.name,prevPos:curr,currPos:curr,medal,total:ranked.length})
+                      }).catch(()=>{})
+                    }
+                    if (ag.phone) {
+                      await fetch('/api/notify', {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({type:'ranking_subida_wa',phone:ag.phone,agentName:ag.name,prevPos:curr,currPos:curr,medal,total:ranked.length})
+                      }).catch(()=>{})
+                    }
+                    sent++
+                    await new Promise(r=>setTimeout(r,300))
+                  }
+                  msg(`✅ Ranking enviado a ${sent} asesores`)
+                }} style={{fontSize:11,padding:'6px 12px',borderRadius:8,border:'1px solid #A8C0F0',
+                  background:B.light,color:B.primary,cursor:'pointer',fontWeight:600,flexShrink:0,whiteSpace:'nowrap'}}>
+                  📣 Notificar ranking
+                </button>
               </div>
 
               {/* Period filter */}
@@ -4801,7 +4806,7 @@ Responde en español, directo, sin formalismos.`
             </div>
             <button onClick={async()=>{
               const tempPin = genTempPin(8)
-              const patch = {pin:tempPin, mustChange:true}
+              const patch = {pin:tempPin, mustChange:true, mustChangeAt:new Date().toISOString()}
               const nextUsers = users.map(u => u.id===editUser.id ? {...u,...patch} : u)
               setUsers(nextUsers)
               setEditUser(p=>({...p,...patch}))
