@@ -698,71 +698,79 @@ function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbRead
 
   const doImport = async () => {
     setImporting(true)
+    setErrors([])
     let ok = 0, skipped = 0
     const newUsers = []
+    const insertErrs = []
 
     for (const r of rows) {
-      // Verificar si usuario ya existe
       const usernameBase = r.username
       let username = usernameBase
       let attempt  = 0
       while ([...users, ...newUsers].find(u => u.username === username)) {
-        attempt++
-        username = usernameBase + attempt
+        attempt++; username = usernameBase + attempt
       }
       if (attempt > 5) { skipped++; continue }
 
       const tempPin = genTempPin(8)
+      const now = new Date().toISOString()
       const newU = {
-        id:       'u-' + Date.now() + '-' + ok,
-        name:     r.nombre,
-        rut:      r.rut || '',
-        phone:    r.phone || '',
-        email:    r.email,
+        id: 'u-' + Date.now() + '-' + ok,
+        name: r.nombre,
+        rut:  r.rut   || '',
+        phone: r.phone || '',
+        email: r.email,
         username,
-        pin:      tempPin,
+        pin: tempPin,
         mustChange: true,
-        role:     r.role
+        mustChangeAt: now,
+        role: r.role
       }
       newUsers.push(newU)
-
-      // Enviar email + WhatsApp
-      if (r.email) {
-        try {
-          await fetch('/api/notify', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              type:'welcome', to:r.email,
-              agentName:r.nombre, adminName:me.name,
-              username, pin:tempPin, phone:r.phone||'', role:r.role
-            })
-          })
-        } catch(e) {}
-      }
       ok++
-      // Pequeña pausa para no saturar la API de email
-      if (ok % 5 === 0) await new Promise(res => setTimeout(res, 500))
+      if (ok % 5 === 0) await new Promise(res => setTimeout(res, 300))
     }
 
-    // Insertar SOLO los nuevos directamente en Supabase (no iterar todos)
-    if (newUsers.length > 0) {
-      if (dbReady && supabase) {
-        try {
-          // Insertar en lotes de 10
-          for (let i = 0; i < newUsers.length; i += 10) {
-            const batch = newUsers.slice(i, i + 10)
-            const { error } = await supabase.from('crm_users').insert(batch)
-            if (error) console.warn('Insert batch error:', error)
+    if (newUsers.length === 0) { setImporting(false); setDone({ok:0,skipped}); return }
+
+    // 1. Guardar en Supabase — intentar con campos completos, luego sin mustChange si falla
+    if (dbReady && supabase) {
+      for (let i = 0; i < newUsers.length; i += 5) {
+        const batch = newUsers.slice(i, i + 5)
+        let { error } = await supabase.from('crm_users').insert(batch)
+        if (error) {
+          // Reintentar sin campos que pueden no existir en el esquema
+          const safeBatch = batch.map(({ mustChange, mustChangeAt, ...u }) => u)
+          const { error: e2 } = await supabase.from('crm_users').insert(safeBatch)
+          if (e2) {
+            console.error('Bulk insert error:', e2)
+            insertErrs.push(`Lote ${i/5+1}: ${e2.message}`)
           }
-        } catch(e) { console.warn('Bulk insert error:', e) }
-      } else {
-        // Fallback localStorage
-        const all = [...users, ...newUsers]
-        localStorage.setItem('rcrm_users', JSON.stringify(all))
+        }
       }
-      // Actualizar estado local
-      saveUsers([...users, ...newUsers])
+    } else {
+      localStorage.setItem('rcrm_users', JSON.stringify([...users, ...newUsers]))
     }
+
+    // 2. Actualizar estado local siempre (aunque Supabase falle, quedan en memoria)
+    setUsers([...users, ...newUsers])
+
+    // 3. Enviar notificaciones (en paralelo, sin bloquear)
+    for (const u of newUsers) {
+      if (!u.email) continue
+      fetch('/api/notify', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          type: 'welcome', to: u.email,
+          agentName: u.name, adminName: me.name,
+          username: u.username, pin: u.pin,
+          phone: u.phone || '', role: u.role
+        })
+      }).catch(() => {})
+    }
+
+    if (insertErrs.length > 0) setErrors(insertErrs)
     setImporting(false)
     setDone({ ok, skipped })
   }
