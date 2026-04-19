@@ -736,57 +736,39 @@ function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbRead
 
     if (newUsers.length === 0) { setImporting(false); setDone({ok:0,skipped}); return }
 
-    // Helper con timeout para evitar que Supabase se cuelgue (ej: RLS bloqueando)
-    const withTimeout = (promise, ms=8000) =>
-      Promise.race([promise, new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), ms))])
+    // 1. Actualizar estado local INMEDIATAMENTE — no esperar a Supabase
+    setUsers(prev => [...prev, ...newUsers])
 
-    // 1. Guardar en Supabase — intentar con campos completos, luego sin mustChange si falla
+    // 2. Guardar en Supabase en background (fire & forget, no await)
     if (dbReady && supabase) {
-      for (let i = 0; i < newUsers.length; i += 5) {
-        const batch = newUsers.slice(i, i + 5)
-        try {
-          const { error } = await withTimeout(supabase.from('crm_users').insert(batch))
-          if (error) {
-            // Reintentar sin campos opcionales que pueden no existir en el esquema
-            const safeBatch = batch.map(({ mustChange, mustChangeAt, ...u }) => u)
-            const { error: e2 } = await withTimeout(supabase.from('crm_users').insert(safeBatch))
-            if (e2) {
-              console.error('Bulk insert error:', e2)
-              insertErrs.push(`Error: ${e2.message}`)
-            }
-          }
-        } catch(e) {
-          console.warn('Insert timeout/error, intentando sin campos extras:', e.message)
-          try {
-            const safeBatch = batch.map(({ mustChange, mustChangeAt, ...u }) => u)
-            await withTimeout(supabase.from('crm_users').insert(safeBatch))
-          } catch(e2) {
-            console.error('Safe insert también falló:', e2.message)
-            insertErrs.push(`Lote ${i/5+1}: ${e2.message}`)
-          }
-        }
-      }
+      newUsers.forEach((u, i) => {
+        const { mustChange, mustChangeAt, ...safeU } = u
+        setTimeout(() => {
+          supabase.from('crm_users').insert(safeU)
+            .then(({ error }) => { if (error) console.warn('Insert user:', u.username, error.message) })
+            .catch(e => console.warn('Insert user exception:', e.message))
+        }, i * 150) // escalonar 150ms entre cada uno
+      })
     } else {
       localStorage.setItem('rcrm_users', JSON.stringify([...users, ...newUsers]))
     }
 
-    // 2. Actualizar estado local siempre (aunque Supabase falle, quedan en memoria)
-    setUsers([...users, ...newUsers])
-
-    // 3. Enviar notificaciones (en paralelo, sin bloquear)
-    for (const u of newUsers) {
-      if (!u.email) continue
-      fetch('/api/notify', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          type: 'welcome', to: u.email,
-          agentName: u.name, adminName: me.name,
-          username: u.username, pin: u.pin,
-          phone: u.phone || '', role: u.role
-        })
-      }).catch(() => {})
-    }
+    // 3. Enviar notificaciones en background (fire & forget)
+    newUsers.forEach((u, i) => {
+      if (!u.email) return
+      setTimeout(() => {
+        fetch('/api/notify', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            type: 'welcome', to: u.email,
+            agentName: u.name, adminName: me.name,
+            username: u.username, pin: u.pin,
+            phone: u.phone || '', role: u.role
+          })
+        }).catch(() => {})
+      }, i * 500 + 1000) // esperar 1s antes de empezar, 500ms entre cada uno
+    })
 
     if (insertErrs.length > 0) setErrors(insertErrs)
     setImporting(false)
