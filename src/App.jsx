@@ -733,17 +733,32 @@ function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbRead
 
     if (newUsers.length === 0) { setImporting(false); setDone({ok:0,skipped}); return }
 
+    // Helper con timeout para evitar que Supabase se cuelgue (ej: RLS bloqueando)
+    const withTimeout = (promise, ms=8000) =>
+      Promise.race([promise, new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), ms))])
+
     // 1. Guardar en Supabase — intentar con campos completos, luego sin mustChange si falla
     if (dbReady && supabase) {
       for (let i = 0; i < newUsers.length; i += 5) {
         const batch = newUsers.slice(i, i + 5)
-        let { error } = await supabase.from('crm_users').insert(batch)
-        if (error) {
-          // Reintentar sin campos que pueden no existir en el esquema
-          const safeBatch = batch.map(({ mustChange, mustChangeAt, ...u }) => u)
-          const { error: e2 } = await supabase.from('crm_users').insert(safeBatch)
-          if (e2) {
-            console.error('Bulk insert error:', e2)
+        try {
+          const { error } = await withTimeout(supabase.from('crm_users').insert(batch))
+          if (error) {
+            // Reintentar sin campos opcionales que pueden no existir en el esquema
+            const safeBatch = batch.map(({ mustChange, mustChangeAt, ...u }) => u)
+            const { error: e2 } = await withTimeout(supabase.from('crm_users').insert(safeBatch))
+            if (e2) {
+              console.error('Bulk insert error:', e2)
+              insertErrs.push(`Error: ${e2.message}`)
+            }
+          }
+        } catch(e) {
+          console.warn('Insert timeout/error, intentando sin campos extras:', e.message)
+          try {
+            const safeBatch = batch.map(({ mustChange, mustChangeAt, ...u }) => u)
+            await withTimeout(supabase.from('crm_users').insert(safeBatch))
+          } catch(e2) {
+            console.error('Safe insert también falló:', e2.message)
             insertErrs.push(`Lote ${i/5+1}: ${e2.message}`)
           }
         }
@@ -1527,9 +1542,12 @@ export default function App() {
     if (dbReady) {
       for (const u of us) {
         try {
-          await supabase.from('crm_users').upsert(u, {onConflict:'id'})
+          await Promise.race([
+            supabase.from('crm_users').upsert(u, {onConflict:'id'}),
+            new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 6000))
+          ])
         } catch(e) {
-          console.warn('saveUsers error for', u.id, e)
+          console.warn('saveUsers error for', u.id, e.message)
         }
       }
     } else {
