@@ -619,7 +619,7 @@ function UsuariosView({ users, leads, sessions, me, isAdmin, isMobile, dbReady, 
 }
 
 // ─── Importación masiva de usuarios ──────────────────────────────────────────
-function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbReady, supabase }) {
+function ImportUsuariosModal({ onClose, users, setUsers, saveUsers, me, genTempPin, dbReady, supabase }) {
   const B = { primary:'#2563EB', light:'#EFF6FF', mid:'#64748B' }
   const sty = { inp:{padding:'7px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:13,width:'100%',boxSizing:'border-box'} }
 
@@ -2466,7 +2466,7 @@ export default function App() {
           </div>
         </div>
         <div style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:14,padding:28,boxShadow:'0 4px 24px rgba(27,79,200,0.10)'}}>
-          <Fld label="Usuario"><input value={lu} onChange={e=>setLu(e.target.value)} placeholder="tu.usuario o email" style={sty.inp}/></Fld>
+          <Fld label="Email"><input value={lu} onChange={e=>setLu(e.target.value)} placeholder="tu@email.com" style={sty.inp}/></Fld>
           <Fld label="Clave"><input type="password" value={lp} onChange={e=>setLp(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()} placeholder="••••" style={sty.inp}/></Fld>
           {lerr && <p style={{margin:'0 0 10px',fontSize:12,color:'#991b1b'}}>{lerr}</p>}
           <button onClick={login} style={{...sty.btnP,width:'100%',padding:'11px 16px',fontSize:14,borderRadius:10}}>Ingresar</button>
@@ -4995,6 +4995,7 @@ Responde en español, directo, sin formalismos.`
         <ImportUsuariosModal
           onClose={()=>setModal(null)}
           users={users}
+          setUsers={setUsers}
           saveUsers={saveUsers}
           me={me}
           genTempPin={genTempPin}
