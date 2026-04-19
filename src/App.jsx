@@ -824,7 +824,9 @@ function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbRead
         )}
 
         {/* Preview */}
-        {rows.length>0 && !done && (
+        {rows.length>0 && !done && (()=>{
+          const existentes = rows.filter(r => users.find(u => u.username === r.username))
+          return (
           <div>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
               <span style={{fontSize:13,fontWeight:700,color:B.primary}}>
@@ -881,7 +883,8 @@ function ImportUsuariosModal({ onClose, users, saveUsers, me, genTempPin, dbRead
               {importing ? `⏳ Importando... (esto puede tardar)` : `📥 Importar ${rows.length} usuarios`}
             </button>
           </div>
-        )}
+          )
+        })()}
 
         {/* Resultado */}
         {done && (
